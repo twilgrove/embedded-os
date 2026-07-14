@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第卅一章 内存管理:Buddy 与 Slab</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第30章-Linux调度器与CFS.html">← 第三十章</a>
+  <a href="index.html">目录</a>
+  <a href="第32章-Linux-VFS.html">第卅二章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第五卷 · Linux 内核</div>
+  <h1>第卅一章 内存管理:Buddy 与 Slab</h1>
+  <div class="sub">内核自己的内存从哪来——两层分配器的配合</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">内核也要管理自己的内存</a></li>
+    <li><a href="#s2">物理内存的组织:page/zone/node</a></li>
+    <li><a href="#s3">Buddy 系统:按 2 的幂管理页</a></li>
+    <li><a href="#s4">Buddy 的分配与合并</a></li>
+    <li><a href="#s5">Buddy 解决了外部碎片</a></li>
+    <li><a href="#s6">Slab:小对象的分配器</a></li>
+    <li><a href="#s7">Slab 缓存怎么工作</a></li>
+    <li><a href="#s8">SLUB:现代默认</a></li>
+    <li><a href="#s9">两层配合:Buddy + Slab</a></li>
+    <li><a href="#s10">kmalloc / vmalloc / 用户 malloc</a></li>
+    <li><a href="#s11">回扣 RTOS 与全书内存线</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第九、十章讲了虚拟内存(给用户进程用的)。这一章讲<strong>内核自己怎么管理物理内存</strong>——内核创建 task_struct、分配内核栈、给缓冲区,这些内存从哪来?答案是两层分配器:<strong>Buddy(伙伴系统)管理"页"级别的大块,Slab 管理"对象"级别的小块</strong>。它们分别是第24章 FreeRTOS heap_4"合并相邻块"和第27章 RT-Thread"内存池/SLAB"的正统放大版。<strong>你已经见过它们的预习版,这里看全貌。</strong></p></blockquote>
+
+<h2 id="s1">31.1 内核也要管理自己的内存</h2>
+<p>容易忽略的一点:虚拟内存(第十章)是给<strong>用户进程</strong>用的抽象。但<strong>内核自己也要用内存</strong>——创建 task_struct(第28章,几 KB)、分配内核栈、网络收发缓冲、文件缓存……这些内存内核得自己管理。而且内核的内存管理有特殊要求:</p>
+<ul>
+  <li><strong>要能分配物理连续的内存</strong>(有些硬件如 DMA 要求物理连续,第八卷)。</li>
+  <li><strong>要高效</strong>:内核频繁分配释放小对象(如每个网络包一个结构体),分配器慢会拖累整个系统。</li>
+  <li><strong>要对抗碎片</strong>:内核长期运行(服务器几年不关机),碎片是大敌(第24章)。</li>
+</ul>
+<p>Linux 用两层分配器满足这些:<strong>底层 Buddy 系统管理物理页(4KB 及其 2 的幂倍数),上层 Slab 在页之上管理小对象。</strong>一大一小,配合工作。</p>
+
+<h2 id="s2">31.2 物理内存的组织：page/zone/node</h2>
+<p>内核怎么看物理内存?分三个层次:</p>
+<table>
+<tr><th>层次</th><th>是什么</th><th>为什么</th></tr>
+<tr><td><strong>page(页)</strong></td><td>物理内存的最小管理单位(4KB),每个物理页对应一个 <code>struct page</code></td><td>和 MMU 页大小一致(第九章)</td></tr>
+<tr><td><strong>zone(区)</strong></td><td>把物理内存分区:ZONE_DMA(低地址,给老 DMA)、ZONE_NORMAL(常规)、ZONE_HIGHMEM(高端,32 位遗留)</td><td>不同硬件对内存地址有不同限制</td></tr>
+<tr><td><strong>node(节点)</strong></td><td>NUMA 系统里每个 CPU 就近的一块内存</td><td>多路服务器,访问本地内存快</td></tr>
+</table>
+<p>关键是 <strong><code>struct page</code></strong>:内核为<strong>每一个</strong>物理页维护一个 page 结构(记录这页的状态、引用计数、属于谁)。几 GB 内存有上百万个物理页,就有上百万个 struct page(所以这个结构被压缩得很小,几十字节)。<strong>page 是内核内存管理的原子,一切分配最终都是"分配若干个 page"。</strong>zone/node 是为了处理硬件的地址限制和 NUMA 拓扑,嵌入式(RK3588,UMA 单节点)主要接触 zone。</p>
+
+<h2 id="s3">31.3 Buddy 系统：按 2 的幂管理页</h2>
+<p><strong>Buddy(伙伴)系统</strong>是 Linux 管理物理页的底层分配器。核心思想:<strong>把空闲页按"2 的幂"大小分组管理。</strong></p>
+<pre><code>Buddy 把空闲内存按 2^order 页分组(order 0~10):
+
+  order 0: 空闲的【1页】块的链表     (4KB)
+  order 1: 空闲的【2页】块的链表     (8KB)
+  order 2: 空闲的【4页】块的链表     (16KB)
+  order 3: 空闲的【8页】块的链表     (32KB)
+  ...
+  order 10: 空闲的【1024页】块       (4MB)
+
+分配 alloc_pages(order): 从对应order的链表拿一个块
+  要3页? → 向上取整到4页(order 2), 从order 2链表拿</code></pre>
+<p>为什么按 2 的幂?<strong>因为这样"分裂"和"合并"都很规整。</strong>如果需要的 order 没有空闲块,就找更大的块<strong>对半分裂</strong>;释放时,如果它的"伙伴"(相邻的、同大小的那一半)也空闲,就<strong>合并</strong>成更大的块。2 的幂让"分裂成两半""合并两个伙伴"总是对齐、简单。<strong>这就是第24章 FreeRTOS heap_4"合并相邻块"的升级版——Buddy 用 2 的幂结构让合并更系统化。</strong></p>
+
+<h2 id="s4">31.4 Buddy 的分配与合并</h2>
+<p>看分裂和合并的具体过程:</p>
+<pre><code>分配(要1个order-0页, 但order-0/1都空了, order-2有一个4页块):
+  order 2: [████]  ← 有一个4页块
+  分裂: [██][██]   → 一半放回order 1, 另一半继续分
+  order 1: [██]
+  再分裂: [█][█]   → 一半放回order 0, 另一半给你
+  order 0: [█]
+  给你1页 ✓
+
+释放(还回1页, 检查它的"伙伴"):
+  你还的页 [█] 和它的伙伴 [█](相邻的同大小块)都空闲?
+  → 合并成 order 1 的 [██]
+  → 这个[██]的伙伴也空闲? → 继续合并成 order 2 的 [████]
+  → 一直合并到伙伴不空闲为止</code></pre>
+<p>"伙伴"的定义:两个大小相同、地址相邻、且是"从同一个大块分裂出来的"两半,互为伙伴。<strong>释放时不断向上合并伙伴,把小块拼回大块——这就是对抗外部碎片的机制。</strong>Buddy 用地址的位运算(伙伴的地址只差一个 bit)快速找到伙伴,合并判断非常快。</p>
+
+<h2 id="s5">31.5 Buddy 解决了外部碎片</h2>
+<p>回顾第24章:外部碎片是"空闲内存分散成小块,凑不出大块"。Buddy 的合并机制正是对抗它:</p>
+<blockquote><p><strong>Buddy 通过"释放时尽量合并伙伴",让空闲内存尽可能地保持为大块,从而在需要大块时能满足。</strong>没有 Buddy(比如简单的空闲链表),反复分配释放后小块会散落各处,凑不出大块。Buddy 的 2 的幂 + 伙伴合并,是几十年验证的经典抗碎片方案。<strong>但 Buddy 也有内部碎片</strong>:因为按 2 的幂分配,你要 5 页它给你 8 页(order 3),浪费 3 页。<strong>所以 Buddy 适合分配"页级别的大块",不适合分配"几十字节的小对象"</strong>(那样内部碎片太严重——要 32 字节却给你一整页 4KB)。小对象交给上层的 Slab(下节)。这就是"两层分配器"分工的原因:Buddy 管大块抗外部碎片,Slab 管小对象避免内部碎片。</p></blockquote>
+
+<h2 id="s6">31.6 Slab：小对象的分配器</h2>
+<p>内核频繁分配<strong>小对象</strong>:task_struct、inode、dentry、网络包结构……如果每个都用 Buddy 分一整页,浪费巨大(内部碎片)。而且这些对象<strong>大小固定、分配极频繁</strong>。<strong>Slab 分配器</strong>专门优化这种场景,核心思想:<strong>为每种常用对象维护一个"缓存池",预先分配好一批,分配时直接取、释放时还回池子。</strong></p>
+<pre><code>Slab 思想: 为每种对象建一个专用缓存(kmem_cache)
+
+  task_struct 缓存: [obj][obj][obj][obj]...  预分配一批task_struct大小的槽
+  inode 缓存:       [obj][obj][obj]...        预分配一批inode大小的槽
+  ...
+
+  分配 task_struct: 从 task_struct 缓存拿一个空闲槽 → O(1), 无碎片
+  释放: 还回缓存(不还给Buddy, 留着复用)
+
+  每个缓存底层用 Buddy 分几页, 切成 N 个对象大小的槽</code></pre>
+<p><strong>这不就是第27章 RT-Thread 的内存池吗?</strong>——是的!<strong>Slab 本质是"一堆按对象大小分类的内存池"。</strong>第27章说"RT-Thread 的 SLAB 借自 Linux",第24章说"实时系统用内存池",现在你看到了 Linux 的正统 Slab:为每种对象一个池,分配 O(1)、无外部碎片、无内部碎片(槽大小=对象大小)。</p>
+
+<h2 id="s7">31.7 Slab 缓存怎么工作</h2>
+<p>Slab 的三个额外优化,让它比朴素内存池更强:</p>
+<ul>
+  <li><strong>对象复用(不重新初始化)</strong>:释放的对象<strong>保持已初始化状态</strong>(构造好的)留在缓存里,下次分配直接用,省去重复初始化。比如一个 task_struct 里有些字段(锁、链表头)每次都要初始化,Slab 让释放的对象保留这些初始化状态,再分配时不用重做——<strong>这是 Slab 相比内存池的独特优化。</strong></li>
+  <li><strong>Cache 着色(coloring)</strong>:让不同 slab 里的对象在 Cache 里错开(用第八章的 Cache Line 知识),减少 Cache 冲突,提升命中率。</li>
+  <li><strong>per-CPU 缓存</strong>:每个 CPU 核有自己的一小批空闲对象(第28章 per-CPU 手法),分配时先从本核的拿,不用加锁——<strong>多核下极快</strong>。</li>
+</ul>
+<blockquote><p>per-CPU 缓存是 Slab 在多核下的关键优化:<strong>如果所有核都从一个全局对象池分配,就要抢一个锁,多核竞争激烈。让每个核有自己的"本地缓存",大多数分配从本地拿(无锁),只有本地空了才去全局补充。</strong>这个"per-CPU 本地缓存 + 全局池兜底"的两级结构,是多核高性能分配器的通用模式(用户态的 tcmalloc/jemalloc 也这么做)。<strong>又一次,你看到"从单核到多核,一切共享资源都要考虑 per-CPU 化"(第28章 current、第30章 runqueue,这里 Slab)。</strong></p></blockquote>
+
+<h2 id="s8">31.8 SLUB：现代默认</h2>
+<p>Slab 有几个实现变体,了解即可:</p>
+<table>
+<tr><th>实现</th><th>特点</th></tr>
+<tr><td>SLAB(原始)</td><td>经典实现,元数据管理较复杂,多核扩展性一般</td></tr>
+<tr><td><strong>SLUB(现在默认)</strong></td><td>简化了元数据(信息存在 struct page 里)、更好的多核扩展性、更少内存开销</td></tr>
+<tr><td>SLOB</td><td>极简,给内存极小的嵌入式设备用</td></tr>
+</table>
+<p>现代 Linux(包括 RK3588)默认用 <strong>SLUB</strong>。它保留了 Slab 的核心思想(按对象缓存、per-CPU),但实现更简洁、多核性能更好。<strong>本章讲的"为每种对象建缓存"的思想,SLAB/SLUB/SLOB 都一样,只是实现细节和优化不同</strong>——你抓住思想即可,不用纠结变体。它们统称"slab 分配器",接口是 <code>kmem_cache_create/alloc/free</code>。</p>
+
+<h2 id="s9">31.9 两层配合：Buddy + Slab</h2>
+<p>把两层分配器的配合画出来,这是内核内存分配的完整图景:</p>
+<pre><code>内核内存分配的两层架构:
+
+  ┌─────────────────────────────────────┐
+  │  内核代码要内存                        │
+  └─────────────────────────────────────┘
+       │                    │
+   要小对象              要大块/整页
+   (task_struct等)      (页缓冲/DMA)
+       ▼                    ▼
+  ┌──────────┐        ┌──────────┐
+  │  Slab    │        │  直接找   │
+  │ (SLUB)   │        │  Buddy   │
+  │ 按对象缓存 │        │          │
+  └────┬─────┘        └────┬─────┘
+       │ 缓存不够时         │
+       │ 向Buddy要几页       │
+       ▼                    ▼
+  ┌─────────────────────────────────────┐
+  │      Buddy 系统 (管理所有物理页)        │
+  │      按2^order, 分裂/合并伙伴           │
+  └─────────────────────────────────────┘
+       │
+       ▼
+     物理内存 (struct page 数组)</code></pre>
+<p><strong>分工清晰:Buddy 是"批发商"(管所有物理页,按大块出货);Slab 是"零售商"(从 Buddy 批发几页,切成小对象零售)。</strong>要小对象找 Slab(它已经切好了,拿了就走);要大块/整页直接找 Buddy。Slab 的对象池空了,就向 Buddy 批发更多页来补。<strong>这个"批发+零售"两层结构,既让大块分配抗外部碎片(Buddy),又让小对象分配无内部碎片且极快(Slab)——各取所长。</strong></p>
+
+<h2 id="s10">31.10 kmalloc / vmalloc / 用户 malloc</h2>
+<p>厘清几个容易混的内存分配接口(面试常问):</p>
+<table>
+<tr><th>接口</th><th>谁用</th><th>物理连续?</th><th>底层</th><th>用途</th></tr>
+<tr><td><code>kmalloc</code></td><td>内核</td><td>✅ 连续</td><td>Slab(小)/Buddy(大)</td><td>内核小块内存,可能给 DMA</td></tr>
+<tr><td><code>vmalloc</code></td><td>内核</td><td>❌ 虚拟连续,物理可不连续</td><td>Buddy 拿零散页 + 页表映射成连续虚拟地址</td><td>大块内存(物理凑不出连续的)</td></tr>
+<tr><td><code>alloc_pages</code></td><td>内核</td><td>✅ 连续</td><td>Buddy 直接</td><td>要整页</td></tr>
+<tr><td><code>malloc</code></td><td>用户态</td><td>虚拟连续</td><td>C 库(brk/mmap 系统调用)→ 缺页 → Buddy</td><td>用户程序动态内存</td></tr>
+</table>
+<blockquote><p>关键区分:<strong>kmalloc 保证物理连续(所以能给 DMA 用),但受 Buddy 大块限制(太大的连续物理内存可能因碎片分不出);vmalloc 只保证虚拟连续,物理上是零散页拼的(用页表映射,第九章),能分很大但不能给要物理连续的 DMA 用,且有页表开销。</strong>用户态的 <code>malloc</code> 则是 C 库在用户空间管理堆(通过 <code>brk</code>/<code>mmap</code> 系统调用向内核要虚拟内存),真正的物理页在你访问时才由缺页异常从 Buddy 分配(第十章按需分页)。<strong>所以一次用户 malloc + 首次访问,会一路穿过:C 库堆管理 → 缺页异常 → 内核 Buddy 分物理页——第十章和本章在这里连起来了。</strong>面试常问"kmalloc 和 vmalloc 的区别""为什么 DMA 用 kmalloc",这就是答案。</p></blockquote>
+
+<h2 id="s11">31.11 回扣 RTOS 与全书内存线</h2>
+<p>把全书的"内存管理"这条线收束——你会发现从 FreeRTOS 到 Linux 是同一套思想的放大:</p>
+<table>
+<tr><th>概念</th><th>FreeRTOS(第24章)</th><th>RT-Thread(第27章)</th><th>Linux(本章)</th></tr>
+<tr><td>大块分配 + 抗碎片(合并)</td><td>heap_4(合并相邻块)</td><td>小内存算法</td><td><strong>Buddy(伙伴合并)</strong></td></tr>
+<tr><td>固定对象池(无碎片,快)</td><td>(概念)内存池</td><td>内存池 / SLAB</td><td><strong>Slab/SLUB</strong></td></tr>
+<tr><td>多块非连续</td><td>heap_5</td><td>memheap</td><td>vmalloc(拼零散页)</td></tr>
+<tr><td>抗碎片核心手法</td><td>合并相邻空闲块</td><td>同</td><td>Buddy 伙伴合并</td></tr>
+</table>
+<blockquote><p><strong>内存管理的核心矛盾从始至终是同一个:碎片化 vs 效率 vs 确定性。</strong>解决手法也是同一套:<strong>合并相邻空闲块对抗外部碎片(heap_4→Buddy)、固定大小对象池避免内部碎片并加速(内存池→Slab)、per-CPU 本地缓存应对多核。</strong>你从 FreeRTOS 那个几百行的 heap_4 出发,现在完全能理解 Linux 那个复杂得多的 Buddy+Slab——因为核心思想你早就懂了,Linux 只是把它做得更大、更精、加了多核和 NUMA 的考虑。<strong>这再次证明"先精读小系统,再看大系统"的价值:骨架和核心思想是可迁移的,复杂性只是同一思想的规模化。</strong></p></blockquote>
+
+<h2 id="s12">31.12 面试常问问题</h2>
+<p><strong>Q1:Linux 内核内存分配的两层结构?</strong><br>底层 Buddy 管理物理页(按 2^order,分裂/合并伙伴,抗外部碎片,出大块);上层 Slab 管理小对象(按对象建缓存,无碎片、O(1)、per-CPU)。Buddy 批发、Slab 零售。</p>
+<p><strong>Q2:Buddy 系统如何工作?怎么对抗碎片?</strong><br>空闲页按 2^order 分组;分配时大块对半分裂,释放时和"伙伴"(相邻同大小块)合并成大块。合并机制让空闲内存尽量保持大块,抗外部碎片。</p>
+<p><strong>Q3:为什么需要 Slab?它解决 Buddy 的什么问题?</strong><br>Buddy 按页(4KB)分配,给小对象用内部碎片严重。Slab 为每种常用对象建缓存,预切成对象大小的槽,分配 O(1)、无内部碎片,还有对象复用/Cache 着色/per-CPU 优化。本质是按大小分类的内存池。</p>
+<p><strong>Q4:kmalloc 和 vmalloc 的区别?</strong><br>kmalloc 物理连续(能给 DMA),底层 Slab/Buddy,受大块碎片限制;vmalloc 只虚拟连续(物理零散页拼),能分很大但不能给物理连续 DMA、有页表开销。</p>
+<p><strong>Q5:用户 malloc 到内核的完整路径?</strong><br>C 库在用户堆管理(brk/mmap 向内核要虚拟地址)→ 首次访问触发缺页异常 → 内核从 Buddy 分物理页填页表(按需分页,第十章)。</p>
+<p><strong>Q6:Slab 的 per-CPU 缓存有什么用?</strong><br>每核有本地空闲对象缓存,分配先从本地拿(无锁),本地空了才去全局补。避免多核抢全局锁,极大提升多核分配性能。</p>
+<p><strong>Q7:SLAB/SLUB/SLOB 的区别?</strong><br>都是 slab 分配器,思想同(按对象缓存)。SLUB 是现代默认(元数据简化、多核扩展好);SLAB 是原始版;SLOB 给极小内存设备。</p>
+
+<h2 id="s13">31.13 常见误区</h2>
+<ol>
+  <li><strong>"内核用 malloc 分配内存"</strong>——内核用 kmalloc/vmalloc/alloc_pages,malloc 是用户态的。</li>
+  <li><strong>"Buddy 能高效分配小对象"</strong>——Buddy 按页分配,小对象内部碎片严重,该用 Slab。</li>
+  <li><strong>"kmalloc 和 vmalloc 一样"</strong>——kmalloc 物理连续(可 DMA),vmalloc 只虚拟连续。</li>
+  <li><strong>"Slab 就是普通内存池"</strong>——多了对象复用、Cache 着色、per-CPU 缓存等优化。</li>
+  <li><strong>"malloc 成功就分配了物理内存"</strong>——只给虚拟地址,访问时缺页才分物理页(第十章)。</li>
+  <li><strong>"Buddy 没有碎片"</strong>——抗外部碎片,但有内部碎片(2 的幂向上取整)。</li>
+</ol>
+
+<h2 id="s14">31.14 本章总结</h2>
+<ul>
+  <li>内核自己也要管物理内存(task_struct、栈、缓冲),用两层分配器。</li>
+  <li>物理内存组织:<strong>page(4KB,每页一个 struct page)/ zone(地址限制分区)/ node(NUMA)</strong>。</li>
+  <li><strong>Buddy 系统</strong>:空闲页按 2^order 分组;分配对半<strong>分裂</strong>,释放合并<strong>伙伴</strong>→ 抗外部碎片,出大块。有内部碎片(2 的幂取整)。</li>
+  <li><strong>Slab/SLUB</strong>:为每种小对象建缓存(=按大小分类的内存池),O(1)、无碎片,加对象复用/Cache 着色/<strong>per-CPU 缓存</strong>(多核快)。</li>
+  <li>两层配合:<strong>Buddy 批发页,Slab 零售对象</strong>;要小对象找 Slab,要大块找 Buddy。</li>
+  <li>接口:<strong>kmalloc</strong>(物理连续,可 DMA)、<strong>vmalloc</strong>(虚拟连续,物理零散)、alloc_pages(整页)、用户 <strong>malloc</strong>(经缺页到 Buddy)。</li>
+  <li>回扣:Buddy=heap_4"合并"的放大,Slab=内存池的放大;<strong>内存管理核心矛盾(碎片vs效率vs确定性)和手法从 FreeRTOS 到 Linux 一以贯之</strong>。</li>
+</ul>
+
+<h2 id="s15">31.15 思维导图 / 课后题</h2>
+<pre><code>内存管理:Buddy 与 Slab
+├─ 一、内核自己也要管物理内存
+├─ 二、组织:page(4KB)/zone(地址限制)/node(NUMA)
+├─ 三、★Buddy:空闲页按2^order分组
+├─ 四、分配对半分裂; 释放合并伙伴(位运算找伙伴)
+├─ 五、Buddy抗外部碎片; 但有内部碎片(2幂取整)→不适合小对象
+├─ 六、★Slab:为每种对象建缓存(=分类内存池)
+├─ 七、Slab优化:对象复用/Cache着色/★per-CPU缓存(多核)
+├─ 八、SLAB/SLUB(默认)/SLOB
+├─ 九、★两层配合:Buddy批发页, Slab零售对象
+├─ 十、kmalloc(物理连续,可DMA)/vmalloc(虚拟连续)/malloc(经缺页到Buddy)
+└─ 十一、回扣:Buddy=heap_4放大, Slab=内存池放大(思想一贯)</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>看 <code>/proc/buddyinfo</code>,观察各 order 的空闲块数量,理解 Buddy 的分组;运行占内存的程序后再看,观察变化。</li>
+  <li>看 <code>/proc/slabinfo</code>(或 <code>slabtop</code>),观察 task_struct、dentry、inode 等对象的缓存使用,理解 Slab 按对象缓存。</li>
+  <li>写内核模块用 kmalloc 和 vmalloc 各分配一块,打印地址,理解物理连续 vs 虚拟连续(进阶)。</li>
+  <li>读内核 <code>mm/page_alloc.c</code> 的 <code>__alloc_pages</code> 和伙伴合并 <code>__free_one_page</code>,对照本章。</li>
+  <li>读 <code>mm/slub.c</code> 的 <code>kmem_cache_alloc</code>,找到 per-CPU 缓存(cpu_slab)的快速路径。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>Linux 内核内存分配的两层结构及分工?</li>
+  <li>Buddy 系统如何分配和合并?怎么抗碎片?</li>
+  <li>为什么需要 Slab?它比直接用 Buddy 好在哪?</li>
+  <li>kmalloc 和 vmalloc 的区别?为什么 DMA 用 kmalloc?</li>
+  <li>用户 malloc 到物理内存的完整路径?</li>
+  <li>Slab 的 per-CPU 缓存解决什么问题?</li>
+  <li>把 Linux 的 Buddy/Slab 和 FreeRTOS 的 heap/内存池联系起来。</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第卅一章 完 · 下一章《第卅二章 VFS 虚拟文件系统》</p>
+<div class="nav">
+  <a href="第30章-Linux调度器与CFS.html">← 第三十章</a>
+  <a href="index.html">目录</a>
+  <a href="第32章-Linux-VFS.html">第卅二章 →</a>
+</div>
+
+</div>
+</body>
+</html>

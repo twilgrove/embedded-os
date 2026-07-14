@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第十九章 Queue 队列</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第18章-FreeRTOS-SysTick与PendSV.html">← 第十八章</a>
+  <a href="index.html">目录</a>
+  <a href="第20章-FreeRTOS-Semaphore信号量.html">第二十章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第三卷 · FreeRTOS 源码</div>
+  <h1>第十九章 Queue 队列</h1>
+  <div class="sub">FreeRTOS 的 IPC 基石——信号量、互斥量都是它的马甲</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么任务之间需要"通信"</a></li>
+    <li><a href="#s2">共享变量的陷阱</a></li>
+    <li><a href="#s3">生活类比：食堂的传菜窗口</a></li>
+    <li><a href="#s4">队列的数据结构 Queue_t</a></li>
+    <li><a href="#s5">队列的内存布局</a></li>
+    <li><a href="#s6">拷贝语义：为什么传值不传指针</a></li>
+    <li><a href="#s7">发送:xQueueSend 源码</a></li>
+    <li><a href="#s8">阻塞与唤醒:两个等待列表</a></li>
+    <li><a href="#s9">接收:xQueueReceive 源码</a></li>
+    <li><a href="#s10">中断版:xQueueSendFromISR</a></li>
+    <li><a href="#s11">唤醒后的抢占:portYIELD_FROM_ISR</a></li>
+    <li><a href="#s12">一切 IPC 皆队列</a></li>
+    <li><a href="#s13">面试常问</a></li>
+    <li><a href="#s14">常见误区</a></li>
+    <li><a href="#s15">本章总结</a></li>
+    <li><a href="#s16">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第16-18 章打通了"多任务如何运行"。但任务不是孤岛,它们要<strong>交换数据、互相协调</strong>——生产者算出数据交给消费者、中断把事件通知任务。这就是 IPC(任务间通信)。FreeRTOS 的 IPC 全部建立在<strong>队列(Queue)</strong>之上:信号量、互斥量本质都是特殊的队列。所以吃透队列,后面几章就势如破竹。学完你要能讲清队列如何拷贝数据、如何让任务阻塞等待、中断里怎么安全发送并触发抢占。</p></blockquote>
+
+<h2 id="s1">19.1 为什么任务之间需要"通信"</h2>
+<p>回到饭店类比。厨师 A 负责切菜,厨师 B 负责炒。A 切好的菜怎么交给 B?两种任务协作的根本需求:</p>
+<ul>
+  <li><strong>传数据</strong>:A 产出的数据要给 B 用(切好的菜 → 炒)。典型:传感器任务采集数据 → 处理任务计算。</li>
+  <li><strong>做同步</strong>:B 要等 A 完成才能开始(菜没切好不能炒)。典型:任务等中断"数据就绪"的通知。</li>
+</ul>
+<p>这两个需求(通信 + 同步),就是 IPC(Inter-Process/Task Communication)要解决的。<strong>而队列一个机制,同时优雅地解决了这两者</strong>——既能传数据,又天然带阻塞同步(队列空时接收方等,队列满时发送方等)。这就是为什么 FreeRTOS 把队列作为一切 IPC 的地基。</p>
+
+<h2 id="s2">19.2 共享变量的陷阱</h2>
+<p>新手第一反应:任务间传数据,用个全局变量不就行了?A 写全局变量,B 读。看似简单,但有致命问题(呼应第七、十四章):</p>
+<pre><code>volatile int shared_data;   // 全局共享
+
+任务A:  shared_data = compute();   // 写
+任务B:  use(shared_data);          // 读</code></pre>
+<ul>
+  <li><strong>竞态:</strong>A 写到一半(比如写一个多字节结构体)被 B 抢占,B 读到半新半旧的数据(数据撕裂)。</li>
+  <li><strong>无同步:</strong>B 怎么知道 A 什么时候写好了?只能不停轮询(浪费 CPU,第七章),或者读到旧数据。</li>
+  <li><strong>无缓冲:</strong>A 连续产出 3 个数据,B 还没读走,后面的就覆盖前面的,丢数据。</li>
+  <li><strong>volatile 不够:</strong>第14章讲过,volatile 不保证原子、不防重排,多核上更危险。</li>
+</ul>
+<p><strong>队列一次性解决这四个问题:</strong>它内部有互斥保护(不撕裂)、有阻塞机制(B 可以睡着等数据,不轮询)、有缓冲(存多个数据,不丢)、还处理了内存序。<strong>用队列传数据,是 RTOS 里最推荐、最安全的方式</strong>——这也是本章要讲透它内部怎么做到这些的原因。</p>
+
+<h2 id="s3">19.3 生活类比：食堂的传菜窗口</h2>
+<p>队列就是食堂后厨到前厅的<strong>传菜窗口 + 一排保温格</strong>:</p>
+<ul>
+  <li>厨师(生产者任务)把做好的菜放进保温格(<strong>入队 send</strong>);</li>
+  <li>服务员(消费者任务)从保温格取菜端走(<strong>出队 receive</strong>);</li>
+  <li>保温格<strong>先放的先取</strong>(FIFO,先进先出);</li>
+  <li>格子满了,厨师<strong>等</strong>着有空位(<strong>发送阻塞</strong>);</li>
+  <li>格子空了,服务员<strong>等</strong>着有菜来(<strong>接收阻塞</strong>);</li>
+  <li>取菜放菜时窗口有人管着,不会两人同时抢一个格子(<strong>内部互斥</strong>)。</li>
+</ul>
+<p>这个"带缓冲、带阻塞、先进先出、内部互斥"的窗口,就是队列。<strong>生产者-消费者模型</strong>——计算机里最经典的协作模式——就是靠队列实现的。</p>
+
+<h2 id="s4">19.4 队列的数据结构 Queue_t</h2>
+<p>打开 <code>queue.c</code>,看队列的定义(精简核心字段):</p>
+<pre><code>typedef struct QueueDefinition
+{
+    int8_t *pcHead;              /* 队列存储区的起始地址 */
+    int8_t *pcWriteTo;          /* 下一个要写入的位置(入队写这里) */
+
+    union {
+        int8_t  *pcReadFrom;    /* 下一个要读的位置(出队读这里) —— 队列用 */
+        UBaseType_t uxRecursiveCallCount; /* 递归互斥量用(第21章) */
+    } u;
+
+    List_t xTasksWaitingToSend;    /* ★ 等待"发送"而阻塞的任务列表(队列满时) */
+    List_t xTasksWaitingToReceive; /* ★ 等待"接收"而阻塞的任务列表(队列空时) */
+
+    volatile UBaseType_t uxMessagesWaiting; /* 当前队列里有几条消息 */
+    UBaseType_t uxLength;          /* 队列容量(能放几条) */
+    UBaseType_t uxItemSize;        /* 每条消息的大小(字节) */
+
+    volatile int8_t cRxLock;       /* 接收锁(临界区计数) */
+    volatile int8_t cTxLock;       /* 发送锁 */
+} xQUEUE;
+typedef xQUEUE Queue_t;</code></pre>
+<p>关键字段串起来看:</p>
+<ul>
+  <li><strong>存储三件套</strong>:<code>pcHead</code>(存储区起点)、<code>pcWriteTo</code>(写指针)、<code>pcReadFrom</code>(读指针)——环形缓冲区(19.5)。</li>
+  <li><strong>两个等待列表</strong>:<code>xTasksWaitingToSend</code>(满了想发的任务在这排队)、<code>xTasksWaitingToReceive</code>(空了想收的任务在这排队)。<strong>这两个列表是队列"阻塞同步"能力的核心</strong>(19.8)。</li>
+  <li><strong>计数</strong>:<code>uxMessagesWaiting</code>(现有几条)、<code>uxLength</code>(容量)、<code>uxItemSize</code>(每条多大)。</li>
+</ul>
+<blockquote><p>注意那个 <code>union</code>:<code>pcReadFrom</code> 和 <code>uxRecursiveCallCount</code> 共用一块内存。这是因为<strong>普通队列用 pcReadFrom(读指针),而递归互斥量不需要读指针、却需要一个"递归计数"</strong>——两者不会同时用,共用内存省空间。<strong>这已经透露了本卷的核心秘密:互斥量、信号量都是"复用队列结构、赋予不同含义"的产物。</strong>队列结构是母体,后面几章都是它的变体。</p></blockquote>
+
+<h2 id="s5">19.5 队列的内存布局</h2>
+<p>队列创建时(<code>xQueueCreate</code>),分配一块连续内存:前面是 <code>Queue_t</code> 结构体,紧接着是存消息的存储区:</p>
+<pre><code>xQueueCreate(uxQueueLength, uxItemSize) 分配的内存:
+
+  ┌────────────────────┐ ← pxNewQueue(结构体地址)
+  │   Queue_t 结构体     │   (pcHead, 指针, 计数, 等待列表...)
+  ├────────────────────┤ ← pcHead 指向这里(存储区起点)
+  │   消息槽 0          │
+  │   消息槽 1          │   共 uxLength 个槽,
+  │   ...              │   每个 uxItemSize 字节
+  │   消息槽 N-1        │
+  └────────────────────┘ ← pcTail(存储区末尾)
+
+存储区当成"环形缓冲区"用:
+  pcWriteTo 写到末尾就绕回 pcHead(环形)
+  pcReadFrom 同理</code></pre>
+<p>存储区被当作<strong>环形缓冲区(ring buffer)</strong>使用:写指针 <code>pcWriteTo</code> 一直往后移,到末尾就绕回开头;读指针 <code>pcReadFrom</code> 同理。<strong>环形缓冲区是"用固定内存实现 FIFO 队列"的经典结构</strong>,不用搬移数据,只移动读写指针,高效。你在很多驱动(串口收发)里也会见到它。</p>
+
+<h2 id="s6">19.6 拷贝语义：为什么传值不传指针</h2>
+<p>一个重要设计决策,面试常问。FreeRTOS 队列传的是<strong>数据的拷贝</strong>,不是指针。你 send 一个数据,它把数据<strong>整个复制</strong>进队列存储区;receive 时再从存储区<strong>复制</strong>到你的接收缓冲。为什么用拷贝而不是传指针(那样更快)?</p>
+<table>
+<tr><th></th><th>拷贝语义(FreeRTOS 队列的选择)</th><th>传指针</th></tr>
+<tr><td>数据所有权</td><td>清晰:发送后发送方可立即复用/释放原数据</td><td>混乱:接收方用时发送方能不能改?谁释放?</td></tr>
+<tr><td>生命周期</td><td>安全:数据在队列里有独立副本</td><td>危险:发送方的局部变量可能已失效(第5章野指针)</td></tr>
+<tr><td>开销</td><td>有拷贝开销(小数据可忽略)</td><td>快,但要自己管理内存和同步</td></tr>
+</table>
+<blockquote><p>拷贝语义的价值:<strong>发送后,发送方和接收方彻底解耦——发送方可以立刻销毁原数据、复用栈变量,不用担心接收方还在用。</strong>这避免了第5章"返回栈上局部变量地址"那类野指针 bug。代价是拷贝开销,但对小数据(几字节~几十字节)微不足道。<strong>如果数据很大(如一帧图像),才传指针</strong>——把数据放堆/静态区,队列里只传一个指针(此时 uxItemSize=sizeof(指针)),但你要自己负责数据的生命周期和释放。这是面试常考的"大数据怎么用队列传"的标准答案。</p></blockquote>
+
+<h2 id="s7">19.7 发送:xQueueSend 源码</h2>
+<p>看发送的核心逻辑 <code>xQueueGenericSend</code>(简化):</p>
+<pre><code>BaseType_t xQueueGenericSend( QueueHandle_t xQueue, const void *pvItemToQueue,
+                              TickType_t xTicksToWait, BaseType_t xCopyPosition )
+{
+    Queue_t * const pxQueue = xQueue;
+
+    for( ;; )
+    {
+        taskENTER_CRITICAL();   /* 关中断保护, 操作队列不被打断(第17章) */
+        {
+            /* ① 队列没满? 直接放进去 */
+            if( pxQueue->uxMessagesWaiting < pxQueue->uxLength )
+            {
+                prvCopyDataToQueue( pxQueue, pvItemToQueue, xCopyPosition ); /* 拷贝数据入队 */
+
+                /* ★ 有任务在等接收? 唤醒它! */
+                if( listLIST_IS_EMPTY( &( pxQueue->xTasksWaitingToReceive ) ) == pdFALSE )
+                {
+                    /* 把等接收的任务从等待列表移回就绪列表 */
+                    if( xTaskRemoveFromEventList( &( pxQueue->xTasksWaitingToReceive ) ) != pdFALSE )
+                    {
+                        queueYIELD_IF_USING_PREEMPTION();  /* 被唤醒的优先级更高→立即切换 */
+                    }
+                }
+                taskEXIT_CRITICAL();
+                return pdPASS;
+            }
+            else  /* ② 队列满了 */
+            {
+                if( xTicksToWait == 0 )   /* 不等待? 直接返回失败 */
+                {
+                    taskEXIT_CRITICAL();
+                    return errQUEUE_FULL;
+                }
+                /* 否则: 准备阻塞(下面出临界区后真正阻塞) */
+            }
+        }
+        taskEXIT_CRITICAL();
+
+        /* ③ 队列满且愿意等: 把自己加入"等发送"列表, 阻塞 */
+        vTaskPlaceOnEventList( &( pxQueue->xTasksWaitingToSend ), xTicksToWait );
+        portYIELD_WITHIN_API();   /* 让出CPU, 睡到有空位或超时 */
+        /* 被唤醒后回到 for 循环顶部, 重试入队 */
+    }
+}</code></pre>
+<p>三条分支逻辑清晰:</p>
+<ol>
+  <li><strong>没满 → 拷贝入队,若有任务等接收就唤醒它</strong>(甚至立即抢占)。</li>
+  <li><strong>满了且不等 → 返回 errQUEUE_FULL</strong>。</li>
+  <li><strong>满了且愿意等 → 把自己挂进 xTasksWaitingToSend 阻塞,睡到有空位/超时,醒了重试</strong>。</li>
+</ol>
+<p>注意分支①里的<strong>唤醒逻辑</strong>:发送方放入数据后,发现有任务正等着接收,就把它唤醒——这就是队列"同步"能力的实现。生产者一放数据,等待的消费者立刻被唤醒去处理。</p>
+
+<h2 id="s8">19.8 阻塞与唤醒：两个等待列表</h2>
+<p>队列同步的精髓在那两个等待列表。把它讲透:</p>
+<pre><code>队列满/空时, 任务如何阻塞和唤醒:
+
+发送方(队列满):                    接收方(队列空):
+  vTaskPlaceOnEventList(              vTaskPlaceOnEventList(
+    &xTasksWaitingToSend)              &xTasksWaitingToReceive)
+       │                                 │
+  把TCB挂进"等发送"列表                把TCB挂进"等接收"列表
+  同时挂进延时列表(带超时)             同时挂进延时列表(带超时)
+       │                                 │
+  让出CPU, 阻塞                        让出CPU, 阻塞
+
+唤醒时机:
+  接收方取走一个数据(腾出空位)      发送方放入一个数据
+       │                                 │
+  从 xTasksWaitingToSend 取出        从 xTasksWaitingToReceive 取出
+  一个任务, 移回就绪列表(唤醒)      一个任务, 移回就绪列表(唤醒)</code></pre>
+<p>关键理解:<strong>任务阻塞在队列上,本质是它的 TCB 被挂进了队列的等待列表(用 TCB 里的 <code>xEventListItem</code>,第16章那个"事件列表项")。</strong>队列状态改变时(有空位/有数据),就从对应等待列表里取出一个任务唤醒。</p>
+<blockquote><p>为什么等待列表要<strong>按优先级排序</strong>?因为唤醒时应该先唤醒<strong>优先级最高</strong>的等待任务(实时性!)。<code>vTaskPlaceOnEventList</code> 会按优先级把 TCB 插入等待列表,唤醒时取头部(最高优先级)。<strong>这保证了"多个任务等同一个队列时,高优先级的先被服务"</strong>——又一次体现 FreeRTOS 处处贯彻优先级。同时,任务阻塞时也挂在延时列表上(第17章),所以支持"等待带超时"——超时了 tick 中断会把它从两个列表都移除、唤醒并返回超时。<strong>一个任务可以同时挂在两个列表上(事件列表+延时列表),这是 xEventListItem 和 xStateListItem 两个列表项分工的意义。</strong></p></blockquote>
+
+<h2 id="s9">19.9 接收:xQueueReceive 源码</h2>
+<p>接收和发送对称。<code>xQueueReceive</code> 核心(简化):</p>
+<pre><code>BaseType_t xQueueReceive( QueueHandle_t xQueue, void *pvBuffer, TickType_t xTicksToWait )
+{
+    for( ;; )
+    {
+        taskENTER_CRITICAL();
+        {
+            /* ① 队列有数据? 取出来 */
+            if( pxQueue->uxMessagesWaiting > 0 )
+            {
+                prvCopyDataFromQueue( pxQueue, pvBuffer );  /* 从队列拷贝到用户缓冲 */
+                pxQueue->uxMessagesWaiting--;
+
+                /* ★ 有任务在等发送(之前队列满)? 唤醒它(现在腾出空位了) */
+                if( listLIST_IS_EMPTY( &( pxQueue->xTasksWaitingToSend ) ) == pdFALSE )
+                {
+                    if( xTaskRemoveFromEventList( &( pxQueue->xTasksWaitingToSend ) ) != pdFALSE )
+                        queueYIELD_IF_USING_PREEMPTION();
+                }
+                taskEXIT_CRITICAL();
+                return pdPASS;
+            }
+            else  /* ② 队列空 */
+            {
+                if( xTicksToWait == 0 ) { taskEXIT_CRITICAL(); return errQUEUE_EMPTY; }
+            }
+        }
+        taskEXIT_CRITICAL();
+
+        /* ③ 队列空且愿意等: 挂进"等接收"列表, 阻塞 */
+        vTaskPlaceOnEventList( &( pxQueue->xTasksWaitingToReceive ), xTicksToWait );
+        portYIELD_WITHIN_API();
+    }
+}</code></pre>
+<p>完美对称:<strong>接收方取走数据后,唤醒等发送的任务(空位来了);发送方放入数据后,唤醒等接收的任务(数据来了)。</strong>两个方向互相唤醒,这就是生产者-消费者协作的完整闭环。</p>
+
+<h2 id="s10">19.10 中断版：xQueueSendFromISR</h2>
+<p>一个关键场景(第七章上半部/下半部):中断里收到数据,要发给任务处理。但中断上下文<strong>不能阻塞</strong>(第七章铁律)!所以有专门的 <code>FromISR</code> 版本:</p>
+<pre><code>BaseType_t xQueueSendFromISR( QueueHandle_t xQueue, const void *pvItemToQueue,
+                              BaseType_t *pxHigherPriorityTaskWoken )
+{
+    UBaseType_t uxSavedInterruptStatus;
+
+    /* 用FromISR版临界区(不能用会阻塞的普通版) */
+    uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
+    {
+        if( pxQueue->uxMessagesWaiting < pxQueue->uxLength )
+        {
+            prvCopyDataToQueue( pxQueue, pvItemToQueue, queueSEND_TO_BACK );
+
+            /* 有任务等接收? 唤醒它, 但★不在这里切换★ */
+            if( listLIST_IS_EMPTY( &( pxQueue->xTasksWaitingToReceive ) ) == pdFALSE )
+            {
+                if( xTaskRemoveFromEventList( &( pxQueue->xTasksWaitingToReceive ) ) != pdFALSE )
+                {
+                    /* 只是标记"有更高优先级任务被唤醒了", 不切换 */
+                    *pxHigherPriorityTaskWoken = pdTRUE;
+                }
+            }
+        }
+    }
+    taskEXIT_CRITICAL_FROM_ISR( uxSavedInterruptStatus );
+    return xReturn;
+}</code></pre>
+<p>两个关键区别:</p>
+<ul>
+  <li><strong>绝不阻塞:</strong>队列满了直接返回失败(errQUEUE_FULL),不能像任务版那样阻塞等待——因为中断不能睡(第七章)。所以 <code>FromISR</code> 版没有 <code>xTicksToWait</code> 参数。</li>
+  <li><strong>不直接切换,而是"上报":</strong>如果唤醒了更高优先级任务,不在 ISR 里直接切换,而是通过 <code>pxHigherPriorityTaskWoken</code> 参数<strong>告诉调用者"你该切换"</strong>。为什么?下一节讲。</li>
+</ul>
+
+<h2 id="s11">19.11 唤醒后的抢占：portYIELD_FROM_ISR</h2>
+<p>接上节。中断里发送数据唤醒了高优先级任务,什么时候切过去?正确做法:<strong>在 ISR 的最后,根据 <code>pxHigherPriorityTaskWoken</code> 决定是否触发切换。</strong>标准写法:</p>
+<pre><code>void UART_IRQHandler( void )   /* 你的中断服务程序 */
+{
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    char data = UART_ReadData();
+
+    /* 发送数据到队列, 可能唤醒等待的处理任务 */
+    xQueueSendFromISR( xUartQueue, &data, &xHigherPriorityTaskWoken );
+
+    /* ★ ISR 最后: 如果唤醒了更高优先级任务, 触发切换 */
+    portYIELD_FROM_ISR( xHigherPriorityTaskWoken );
+    /* portYIELD_FROM_ISR 本质: 若参数为true, 挂起PendSV */
+}</code></pre>
+<blockquote><p>为什么中断里唤醒任务后,要用这种"标记 + ISR 末尾切换"的两段式,而不在 <code>SendFromISR</code> 里直接切?<strong>因为一个 ISR 里可能发送多个队列、唤醒多个任务,应该在所有处理都做完、ISR 即将退出时,统一切换一次到最高优先级任务</strong>,而不是每唤醒一个就切一次(那样低效且可能出错)。<code>portYIELD_FROM_ISR</code> 本质是"如果需要,挂起 PendSV"(第18章)——又回到了 PendSV!<strong>中断唤醒任务后的抢占,依然是通过挂起 PendSV、等 ISR 退出后由 PendSV 完成切换。</strong>这就是第七章"上半部快速处理 + 唤醒任务做下半部"、第18章"PendSV 延迟切换"在队列上的完整体现。这个 <code>pxHigherPriorityTaskWoken</code> 模式是 FreeRTOS 中断编程的标志性写法,面试必考——忘了在 ISR 末尾 yield,会导致"数据发了但高优先级任务没被及时调度",延迟一个 tick 才处理。</p></blockquote>
+
+<h2 id="s12">19.12 一切 IPC 皆队列</h2>
+<p>本章最重要的结论,也是理解后面几章的钥匙:<strong>FreeRTOS 的信号量、互斥量,底层全是队列。</strong>它们只是"特殊配置的队列 + 不同的语义包装":</p>
+<table>
+<tr><th>IPC 对象</th><th>本质(队列的什么特例)</th><th>下章</th></tr>
+<tr><td>二值信号量</td><td>长度=1、itemSize=0 的队列(不传数据,只看"空/满"表示"无/有信号")</td><td>第20章</td></tr>
+<tr><td>计数信号量</td><td>长度=N、itemSize=0 的队列(用消息数量当计数值)</td><td>第20章</td></tr>
+<tr><td>互斥量</td><td>二值信号量 + 优先级继承 + 所有者记录</td><td>第21章</td></tr>
+<tr><td>递归互斥量</td><td>互斥量 + 递归计数(复用 union 里的 uxRecursiveCallCount)</td><td>第21章</td></tr>
+</table>
+<p>看 <code>queue.c</code> 里,<code>xSemaphoreCreateBinary</code> 实际就是调 <code>xQueueGenericCreate(1, 0, ...)</code> 创建一个长度 1、每项 0 字节的队列!<strong>信号量的"give"就是往队列 send、"take"就是从队列 receive</strong>——只是因为 itemSize=0,不真的拷贝数据,只是改变 <code>uxMessagesWaiting</code>(0 或 1)来表示"信号有无"。</p>
+<blockquote><p>这是极其优雅的代码复用:<strong>把队列的"计数 + 阻塞唤醒 + 优先级等待列表"这套完整机制,通过不同参数复用成信号量、互斥量,几乎不写新代码。</strong>一份 <code>queue.c</code>,支撑了 FreeRTOS 全部的 IPC。你理解了队列的 send/receive/阻塞/唤醒/等待列表,就等于理解了后面所有 IPC 对象的骨架——它们只是在这上面加语义。<strong>这也是读源码的一大收获:看清"一个核心机制如何被复用成多个上层概念",而不是把它们当成互不相关的东西各背一遍。</strong></p></blockquote>
+
+<h2 id="s13">19.13 面试常问问题</h2>
+<p><strong>Q1:任务间为什么用队列而不用全局变量?</strong><br>全局变量有竞态(数据撕裂)、无同步(要轮询)、无缓冲(丢数据)、volatile 不够。队列内置互斥、阻塞同步、缓冲、内存序处理,一次性解决。</p>
+<p><strong>Q2:队列传数据是拷贝还是引用?为什么?大数据怎么办?</strong><br>拷贝。为解耦所有权和生命周期,避免野指针,发送后可立即复用原数据。大数据传指针(数据放堆/静态区,队列传指针),但需自己管理生命周期。</p>
+<p><strong>Q3:队列的阻塞和唤醒机制?</strong><br>队列有两个按优先级排序的等待列表(等发送/等接收)。满/空时任务挂进对应列表并让出 CPU;对方操作使状态改变时,取出最高优先级等待任务唤醒。支持超时(同时挂延时列表)。</p>
+<p><strong>Q4:xQueueSend 和 xQueueSendFromISR 的区别?</strong><br>ISR 版不能阻塞(无 xTicksToWait,满了直接失败);不直接切换,而通过 pxHigherPriorityTaskWoken 上报,由 ISR 末尾 portYIELD_FROM_ISR 统一触发切换。</p>
+<p><strong>Q5:pxHigherPriorityTaskWoken 是干什么的?忘了处理会怎样?</strong><br>标记 ISR 中是否唤醒了更高优先级任务;在 ISR 末尾据此挂起 PendSV 触发切换。忘了会导致高优先级任务延迟到下个 tick 才运行,响应变慢。</p>
+<p><strong>Q6:信号量和队列什么关系?</strong><br>信号量本质是特殊队列:二值=长度1/itemSize0,计数=长度N/itemSize0。give=send,take=receive,只是不拷数据,用消息计数表示信号。FreeRTOS 一份 queue.c 复用成所有 IPC。</p>
+
+<h2 id="s14">19.14 常见误区</h2>
+<ol>
+  <li><strong>"队列传的是指针"</strong>——默认是拷贝整个数据;大数据才手动传指针。</li>
+  <li><strong>"中断里可以用 xQueueSend"</strong>——不行,必须用 xQueueSendFromISR(不阻塞版)。</li>
+  <li><strong>"FromISR 里唤醒了任务就会立即切换"</strong>——不,只标记,需 ISR 末尾 portYIELD_FROM_ISR 才切。</li>
+  <li><strong>"队列满/空时发送/接收会丢数据或返回垃圾"</strong>——会按 xTicksToWait 阻塞等待或返回明确错误码,不会静默出错。</li>
+  <li><strong>"信号量和队列是两套独立机制"</strong>——信号量就是队列的特例,同一份代码。</li>
+  <li><strong>"用全局变量+volatile 传数据就够了"</strong>——有竞态和同步问题,应该用队列。</li>
+</ol>
+
+<h2 id="s15">19.15 本章总结</h2>
+<ul>
+  <li>任务协作需要<strong>通信+同步</strong>;队列一个机制同时解决(带缓冲、带阻塞、FIFO、内部互斥)。</li>
+  <li>共享变量有竞态/无同步/无缓冲的陷阱;队列是安全的传数据方式。</li>
+  <li><strong>Queue_t</strong> 核心:环形存储三指针 + <strong>两个按优先级排序的等待列表</strong>(等发送/等接收)+ 消息计数。</li>
+  <li>存储区是<strong>环形缓冲区</strong>,读写指针绕回。</li>
+  <li><strong>拷贝语义</strong>:传数据副本,解耦所有权和生命周期,避免野指针;大数据才传指针。</li>
+  <li>send/receive 三分支:能操作就操作(并唤醒对面等待者)、不等则返回错误、愿等则挂等待列表阻塞。</li>
+  <li>阻塞=TCB 挂进队列等待列表(xEventListItem);唤醒=取最高优先级者移回就绪;超时靠同时挂延时列表。</li>
+  <li><strong>FromISR 版</strong>不阻塞、不直接切换,用 <code>pxHigherPriorityTaskWoken</code> 上报,ISR 末尾 <code>portYIELD_FROM_ISR</code> 挂 PendSV 切换。</li>
+  <li><strong>一切 IPC 皆队列</strong>:信号量=itemSize0 的队列,互斥量=二值信号量+优先级继承;一份 queue.c 复用成全部 IPC。</li>
+</ul>
+
+<h2 id="s16">19.16 思维导图 / 课后题</h2>
+<pre><code>Queue 队列
+├─ 一、需求:通信+同步(队列一并解决)
+├─ 二、共享变量陷阱:竞态/无同步/无缓冲/volatile不够
+├─ 三、类比:传菜窗口+保温格(缓冲/阻塞/FIFO/互斥)
+├─ 四、Queue_t:环形三指针 + 两等待列表 + 计数
+│  └─ union: pcReadFrom / 递归计数(暗示信号量互斥量复用)
+├─ 五、内存布局:结构体+环形缓冲区
+├─ 六、★拷贝语义(解耦所有权,避野指针);大数据传指针
+├─ 七、xQueueSend三分支:入队并唤醒/失败/阻塞
+├─ 八、两等待列表(按优先级)+超时(挂延时列表)
+│  └─ TCB用xEventListItem挂等待列表
+├─ 九、xQueueReceive对称:取数据并唤醒等发送者
+├─ 十、FromISR版:不阻塞,不直接切
+├─ 十一、★pxHigherPriorityTaskWoken + portYIELD_FROM_ISR(挂PendSV)
+└─ 十二、★一切IPC皆队列:信号量/互斥量都是特例</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>在 <code>queue.c</code> 找到 Queue_t 定义、<code>xQueueGenericSend</code>、<code>xQueueReceive</code>,对照本章逐段读;找到 <code>xQueueGenericCreate</code> 里存储区的分配。</li>
+  <li>写生产者-消费者:一个任务每 100ms 发一个递增数到队列,另一个任务接收并打印。故意让消费者优先级更高,观察发送后是否立即切换到消费者。</li>
+  <li>把队列长度设为 1,让生产者快速连发,观察它在队列满时阻塞;再给不同的 xTicksToWait,观察超时行为。</li>
+  <li>写一个 UART/定时器中断,用 <code>xQueueSendFromISR</code> + <code>portYIELD_FROM_ISR</code> 把数据发给任务;故意漏掉 portYIELD_FROM_ISR,用逻辑分析仪对比响应延迟差异。</li>
+  <li>在 <code>queue.c</code> 找到 <code>xQueueCreateCountingSemaphore</code>/二值信号量的创建,确认它们就是调 <code>xQueueGenericCreate</code>,验证"信号量=特殊队列"。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>为什么用队列而不是全局变量传数据?队列解决了哪些问题?</li>
+  <li>队列是拷贝还是引用传递?各有什么优缺点?大数据怎么传?</li>
+  <li>队列如何实现任务阻塞和唤醒?等待列表为什么按优先级排序?</li>
+  <li>中断里如何安全地发送队列?pxHigherPriorityTaskWoken 的作用?</li>
+  <li>为什么 ISR 里唤醒任务后不立即切换,而在 ISR 末尾切?</li>
+  <li>信号量和队列是什么关系?举例说明。</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第十九章 完 · 下一章《第二十章 Semaphore 信号量》</p>
+<div class="nav">
+  <a href="第18章-FreeRTOS-SysTick与PendSV.html">← 第十八章</a>
+  <a href="index.html">目录</a>
+  <a href="第20章-FreeRTOS-Semaphore信号量.html">第二十章 →</a>
+</div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第十六章 FreeRTOS 总览与 Task 任务</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第15章-TrustZone.html">← 第十五章</a>
+  <a href="index.html">目录</a>
+  <a href="第17章-FreeRTOS-调度器.html">第十七章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第三卷 · FreeRTOS 源码</div>
+  <h1>第十六章 FreeRTOS 总览与 Task 任务</h1>
+  <div class="sub">从 xTaskCreate 一行代码，拆到 TCB、栈初始化、就绪列表</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么从 FreeRTOS 开始读源码</a></li>
+    <li><a href="#s2">FreeRTOS 的代码地图</a></li>
+    <li><a href="#s3">Task 到底是什么：从"函数"到"任务"</a></li>
+    <li><a href="#s4">TCB：任务控制块逐字段拆解</a></li>
+    <li><a href="#s5">xTaskCreate 全流程</a></li>
+    <li><a href="#s6">栈的分配与初始化</a></li>
+    <li><a href="#s7">pxPortInitialiseStack：伪造第一次现场</a></li>
+    <li><a href="#s8">任务的五种状态</a></li>
+    <li><a href="#s9">就绪列表：调度器的核心数据结构</a></li>
+    <li><a href="#s10">prvAddTaskToReadyList 与优先级位图</a></li>
+    <li><a href="#s11">任务如何"第一次"跑起来</a></li>
+    <li><a href="#s12">静态创建 vs 动态创建</a></li>
+    <li><a href="#s13">回扣第一卷</a></li>
+    <li><a href="#s14">面试常问</a></li>
+    <li><a href="#s15">常见误区</a></li>
+    <li><a href="#s16">本章总结</a></li>
+    <li><a href="#s17">思维导图</a></li>
+    <li><a href="#s18">课后练习与面试题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第一卷讲了"上下文=寄存器快照存栈里、TCB 记栈顶",那是原理。现在我们打开 FreeRTOS 真实源码,验证这一切。你会看到 <code>xTaskCreate</code> 如何分配栈、如何伪造一个"假装被中断过"的初始现场、TCB 每个字段干什么、就绪列表怎么组织。<strong>读完你会发现:第一卷讲的每一个概念,都能在源码里指着一行说"就是这里"。</strong>源码基于 FreeRTOS Kernel V10.x/V11.x(以 <code>tasks.c</code> 为主),ARM Cortex-M 移植。</p></blockquote>
+
+<h2 id="s1">16.1 为什么从 FreeRTOS 开始读源码</h2>
+<p>三卷源码(FreeRTOS/RT-Thread/Linux),为什么先读 FreeRTOS?因为它<strong>小而完整</strong>:内核核心就几个 <code>.c</code> 文件、几千行,你能<strong>完整读完、读懂每一行</strong>。而它麻雀虽小五脏俱全——任务、调度、上下文切换、IPC、内存管理一应俱全,概念和 Linux 一模一样,只是简化。</p>
+<blockquote><p>学习策略:<strong>先在 FreeRTOS 上把"操作系统内核的骨架"彻底看透(它简单到能一眼看穿),再去看 Linux(它复杂,但骨架是同一套)。</strong>先易后难,先看清结构再钻细节。这也是为什么很多资深工程师建议"想学内核,先精读一遍 FreeRTOS"。</p></blockquote>
+
+<h2 id="s2">16.2 FreeRTOS 的代码地图</h2>
+<p>先建立全局地图,知道每个文件管什么:</p>
+<table>
+<tr><th>文件</th><th>管什么</th><th>本卷章节</th></tr>
+<tr><td><code>tasks.c</code></td><td>任务创建、调度、状态管理(核心中的核心)</td><td>16、17 章</td></tr>
+<tr><td><code>list.c</code></td><td>链表实现(就绪/阻塞列表的基础)</td><td>本章 16.9</td></tr>
+<tr><td><code>queue.c</code></td><td>队列、信号量、互斥量(都基于队列!)</td><td>19-21 章</td></tr>
+<tr><td><code>timers.c</code></td><td>软件定时器</td><td>23 章</td></tr>
+<tr><td><code>event_groups.c</code></td><td>事件组</td><td>22 章</td></tr>
+<tr><td><code>heap_1~5.c</code></td><td>五种动态内存分配实现</td><td>24 章</td></tr>
+<tr><td><code>port.c</code> / <code>portasm</code></td><td>移植层:上下文切换汇编、SysTick、PendSV(和 CPU 架构绑定)</td><td>18 章</td></tr>
+<tr><td><code>FreeRTOSConfig.h</code></td><td>裁剪配置(优先级数、堆大小、开关功能)</td><td>贯穿</td></tr>
+</table>
+<p>核心洞察:<strong>FreeRTOS 内核 = 架构无关部分(tasks/queue/list...)+ 架构相关移植层(port)。</strong>移植到新芯片,只需重写 port 那一小块汇编(第一卷说的"每个 RTOS 都有汇编移植层",这就是它)。本章聚焦 <code>tasks.c</code> 的任务创建。</p>
+
+<h2 id="s3">16.3 Task 到底是什么：从"函数"到"任务"</h2>
+<p>第一卷反复对比"函数 vs 任务",现在从代码角度精确回答。一个 FreeRTOS 任务,就是一个<strong>永不返回的函数</strong> + <strong>一个独立的栈</strong> + <strong>一个 TCB</strong>。任务函数长这样:</p>
+<pre><code>void vTaskExample(void *pvParameters)
+{
+    /* 初始化(只执行一次) */
+    for (;;)          /* ← 关键: 死循环, 任务永不返回 */
+    {
+        /* 干活 */
+        vTaskDelay(100);   /* 主动让出CPU, 睡100个tick */
+    }
+    /* 绝不能执行到这里! 任务函数不允许 return */
+}</code></pre>
+<p>为什么任务函数必须是死循环、不能 return?因为<strong>任务是"一个独立的执行流",它没有"调用者"可以返回。</strong>普通函数 return 是回到调用它的地方;但任务是被调度器"凭空启动"的,它 return 能回到哪?无处可去。所以如果任务真的 return 了,会跳到一个出错处理函数(<code>prvTaskExitError</code>),通常直接卡死——这是新手常见 bug。</p>
+<blockquote><p>对比第一卷的"函数 vs 任务"表:函数有调用者、执行完返回、共用栈往下长;<strong>任务没有调用者、永不返回、独占自己的栈、由调度器决定何时运行</strong>。<code>pvParameters</code> 是创建时传给任务的参数(一个 void*,可传任何东西),类似线程的入口参数。</p></blockquote>
+
+<h2 id="s4">16.4 TCB：任务控制块逐字段拆解</h2>
+<p>第一卷说"任务在内核眼里就是个数据结构",这个结构就是 TCB。看 <code>tasks.c</code> 里的真实定义(精简保留核心字段,去掉配置开关包裹的):</p>
+<pre><code>typedef struct tskTaskControlBlock
+{
+    volatile StackType_t *pxTopOfStack;  /* ★★★ 栈顶指针: 必须是第一个成员! */
+
+    ListItem_t   xStateListItem;         /* 状态列表项: 挂进"就绪/阻塞"列表用 */
+    ListItem_t   xEventListItem;         /* 事件列表项: 等队列/信号量时挂进去 */
+    UBaseType_t  uxPriority;             /* 任务优先级 */
+    StackType_t *pxStack;                /* 栈的起始地址(最低地址) */
+    char         pcTaskName[configMAX_TASK_NAME_LEN];  /* 任务名(调试用) */
+
+    #if ( portSTACK_GROWTH > 0 )
+        StackType_t *pxEndOfStack;       /* 栈结束地址(向上生长的架构才有) */
+    #endif
+
+    UBaseType_t  uxBasePriority;         /* 原始优先级(优先级继承时用, 见21章互斥量) */
+    UBaseType_t  uxMutexesHeld;          /* 持有的互斥量数量 */
+
+    #if ( configGENERATE_RUN_TIME_STATS == 1 )
+        configRUN_TIME_COUNTER_TYPE ulRunTimeCounter;  /* 运行时间统计 */
+    #endif
+    /* ... 还有一些配置开关控制的字段 ... */
+} tskTCB;
+typedef tskTCB TCB_t;</code></pre>
+<h4>为什么 pxTopOfStack 必须是第一个成员?这是个精妙的细节</h4>
+<p>因为<strong>上下文切换的汇编代码要直接访问它</strong>。汇编里拿到 TCB 指针后,要读/写栈顶指针,而"结构体第一个成员的地址 = 结构体的地址"(偏移 0)。把 <code>pxTopOfStack</code> 放第一个,汇编就能用最简单的方式 <code>LDR R0, [pxCurrentTCB]</code> 直接拿到栈顶,不用算偏移。<strong>C 结构体的内存布局知识(第三章基址+偏移)在这里救了命——这是软硬件配合的经典案例。</strong></p>
+<p>对照第一卷 4.6/5.12 的结论:<code>pxTopOfStack</code> 就是"TCB 里记的栈顶线索",<code>pxStack</code> 是栈的底(起始),<code>xStateListItem</code> 是"挂进就绪/阻塞列表的钩子"。<strong>第一卷讲的每个概念,这里都有对应字段。</strong></p>
+
+<h2 id="s5">16.5 xTaskCreate 全流程</h2>
+<p>现在看你天天调的 <code>xTaskCreate</code> 内部做了什么。它的核心分两步:<strong>①分配内存(TCB + 栈)②初始化任务(prvInitialiseNewTask)③把任务加入就绪列表(prvAddNewTaskToReadyList)</strong>。看简化后的动态创建版:</p>
+<pre><code>BaseType_t xTaskCreate( TaskFunction_t pxTaskCode,     /* 任务函数 */
+                        const char *pcName,            /* 任务名 */
+                        configSTACK_DEPTH_TYPE usStackDepth, /* 栈深度(字) */
+                        void *pvParameters,            /* 传给任务的参数 */
+                        UBaseType_t uxPriority,        /* 优先级 */
+                        TaskHandle_t *pxCreatedTask )  /* 返回任务句柄 */
+{
+    TCB_t *pxNewTCB;
+
+    /* ① 分配栈内存(动态) */
+    StackType_t *pxStack = pvPortMalloc( usStackDepth * sizeof(StackType_t) );
+
+    /* ② 分配 TCB 内存 */
+    pxNewTCB = pvPortMalloc( sizeof(TCB_t) );
+    pxNewTCB->pxStack = pxStack;   /* TCB 记住栈在哪 */
+
+    /* ③ 初始化任务(填TCB、初始化栈) */
+    prvInitialiseNewTask( pxTaskCode, pcName, usStackDepth, pvParameters,
+                          uxPriority, pxCreatedTask, pxNewTCB, NULL );
+
+    /* ④ 把新任务加入就绪列表 */
+    prvAddNewTaskToReadyList( pxNewTCB );
+
+    return pdPASS;
+}</code></pre>
+<p>逻辑清晰:<strong>拿内存 → 填 TCB 和栈 → 挂进就绪列表等调度</strong>。真正的魔法在 ③ 的 <code>prvInitialiseNewTask</code> 里,尤其是它对栈的初始化(下节)。注意 ④ 之后,如果新任务优先级比当前运行的还高,<code>prvAddNewTaskToReadyList</code> 里会触发一次调度(<code>taskYIELD_IF_USING_PREEMPTION</code>),让高优先级任务立刻抢占——这就是第一卷说的抢占。</p>
+
+<h2 id="s6">16.6 栈的分配与初始化</h2>
+<p><code>prvInitialiseNewTask</code> 里有一段关于栈的关键代码。回顾第五章:栈向下增长(Cortex-M),栈顶在高地址。所以初始化时要把栈顶算出来:</p>
+<pre><code>static void prvInitialiseNewTask( ... TCB_t *pxNewTCB ... )
+{
+    StackType_t *pxTopOfStack;
+
+    /* 算出栈顶: 栈起始地址 + 深度 - 1, 得到最高地址处 */
+    pxTopOfStack = &( pxNewTCB->pxStack[ ulStackDepth - 1 ] );
+    /* 8字节对齐(ARM AAPCS 要求栈8字节对齐, 呼应第六章调用约定) */
+    pxTopOfStack = ( StackType_t * )
+        ( ( ( portPOINTER_SIZE_TYPE ) pxTopOfStack ) & ( ~( portBYTE_ALIGNMENT_MASK ) ) );
+
+    /* 填任务名 */
+    for( x = 0; x < configMAX_TASK_NAME_LEN; x++ ) { ... }
+
+    /* 设优先级 */
+    pxNewTCB->uxPriority = uxPriority;
+
+    /* 初始化两个列表项(把它们的 owner 指回 TCB) */
+    vListInitialiseItem( &( pxNewTCB->xStateListItem ) );
+    listSET_LIST_ITEM_OWNER( &( pxNewTCB->xStateListItem ), pxNewTCB );
+
+    /* ★★★ 核心: 初始化栈, 伪造一个"初始现场" */
+    pxNewTCB->pxTopOfStack = pxPortInitialiseStack( pxTopOfStack,
+                                                    pxTaskCode,
+                                                    pvParameters );
+}</code></pre>
+<p>注意两个第一卷来的细节:<strong>8 字节对齐</strong>(第六章 AAPCS 要求)、<strong>栈顶在高地址</strong>(第五章栈向下长)。最后那行 <code>pxPortInitialiseStack</code> 是整个任务创建最精妙的地方,单独一节讲。</p>
+
+<h2 id="s7">16.7 pxPortInitialiseStack：伪造第一次现场</h2>
+<p>这是本章的高潮,也是理解上下文切换的钥匙。<strong>问题:一个新任务从没运行过,它的"上下文快照"从哪来?</strong>第一卷说切换是"恢复上次保存的现场",可新任务没有"上次"啊!</p>
+<p>答案极其巧妙:<strong>创建任务时,在它的栈上手动"伪造"一个现场,伪造得跟"这个任务刚刚被中断过、现在等着被恢复"一模一样。</strong>这样第一次调度到它时,上下文切换代码照常"恢复现场",就自然跳进了任务函数。看 Cortex-M 的 <code>port.c</code>:</p>
+<pre><code>StackType_t *pxPortInitialiseStack( StackType_t *pxTopOfStack,
+                                    TaskFunction_t pxCode,
+                                    void *pvParameters )
+{
+    /* 在栈上从高地址往下, 依次"压入"伪造的寄存器值 */
+    /* 布局要和"硬件自动压栈 + 软件压栈"恢复时的顺序完全对应! */
+
+    pxTopOfStack--;
+    *pxTopOfStack = portINITIAL_XPSR;          /* xPSR: bit24=1 表示Thumb状态 */
+    pxTopOfStack--;
+    *pxTopOfStack = ( ( StackType_t ) pxCode ) & portSTART_ADDRESS_MASK; /* PC = 任务函数地址! */
+    pxTopOfStack--;
+    *pxTopOfStack = ( StackType_t ) prvTaskExitError; /* LR = 任务return时的出错处理 */
+    pxTopOfStack -= 5;                          /* R12, R3, R2, R1 跳过(值无所谓) */
+    *pxTopOfStack = ( StackType_t ) pvParameters;/* R0 = 参数! (任务函数的第一个参数) */
+
+    /* 上面8个是"硬件自动压栈"那批(xPSR,PC,LR,R12,R3-R0) */
+    /* 下面是"软件手动压栈"那批(R11-R4) */
+    pxTopOfStack -= 8;                          /* R11,R10,R9,R8,R7,R6,R5,R4 */
+
+    return pxTopOfStack;   /* 返回伪造好的栈顶, 存进TCB的pxTopOfStack */
+}</code></pre>
+<h4>为什么这样布局?对照第一卷 1.11 和第七章</h4>
+<p>还记得第七章:Cortex-M 进中断时,<strong>硬件自动压栈 xPSR, PC, LR, R12, R3, R2, R1, R0</strong>这 8 个;退出中断时硬件自动<strong>弹出</strong>这 8 个到 CPU。上下文切换(PendSV,第18章)在这之上,<strong>软件再压/弹 R4-R11</strong>。</p>
+<p>所以这段伪造代码,就是<strong>按"退出异常时硬件会怎么弹栈"的顺序,预先在栈上摆好对应的值</strong>:</p>
+<ul>
+  <li>把 <strong>PC 位置</strong>填成<strong>任务函数地址</strong> → 恢复现场"弹出 PC"时,就跳进了任务函数!</li>
+  <li>把 <strong>R0 位置</strong>填成 <strong>pvParameters</strong> → 恢复后 R0 里正是参数,符合调用约定(第六章 R0 传第一个参数)!</li>
+  <li>把 <strong>LR 位置</strong>填成 <code>prvTaskExitError</code> → 万一任务函数 return,就跳到出错处理(16.3 说的)。</li>
+  <li>xPSR 填成 Thumb 状态位(Cortex-M 只能跑 Thumb,第十一章)。</li>
+</ul>
+<blockquote><p>这是整个 RTOS 最优雅的设计之一:<strong>"启动一个新任务"和"恢复一个被中断的任务",用的是完全相同的代码路径。</strong>不需要为"第一次运行"写特殊逻辑——只要把新任务的栈伪造成"仿佛它之前运行过、被中断压栈了",第一次调度时的"恢复现场"就自然把它跑起来。<strong>你把第一卷 1.11、第四章(寄存器)、第五章(栈)、第七章(中断压栈)全部串起来,才能看懂这 20 行代码。这就是为什么要先学完第一卷。</strong></p></blockquote>
+
+<h2 id="s8">16.8 任务的五种状态</h2>
+<p>任务不是只有"运行/不运行"。FreeRTOS 里任务有五种状态,理解状态转移是理解调度的前提:</p>
+<pre><code>            ┌─────────────┐
+            │   Running    │ 正在CPU上跑(单核同时只有1个)
+            │   (运行)     │
+            └──┬───────┬──┘
+   被抢占/时间片到 │       │ vTaskDelay/等队列(主动阻塞)
+            ▼       ▼
+     ┌──────────┐  ┌──────────┐
+     │  Ready    │  │ Blocked   │ 等待某事件/超时
+     │  (就绪)   │◀─│ (阻塞)    │ 事件到了/超时→回Ready
+     └──────────┘  └──────────┘
+          ▲
+          │ vTaskResume
+     ┌──────────┐        创建时也可直接进 Ready
+     │ Suspended │ 被vTaskSuspend挂起, 不参与调度
+     │ (挂起)    │
+     └──────────┘</code></pre>
+<table>
+<tr><th>状态</th><th>含义</th><th>在哪个列表</th></tr>
+<tr><td>Running 运行</td><td>正占用 CPU</td><td>由 pxCurrentTCB 指向</td></tr>
+<tr><td>Ready 就绪</td><td>能运行,就等 CPU</td><td>就绪列表 pxReadyTasksLists</td></tr>
+<tr><td>Blocked 阻塞</td><td>等事件(队列/信号量/延时),带超时</td><td>阻塞列表 + 事件列表</td></tr>
+<tr><td>Suspended 挂起</td><td>被显式挂起,不参与调度、无超时</td><td>挂起列表 xSuspendedTaskList</td></tr>
+</table>
+<p>关键:<strong>状态的本质是"这个任务的 TCB 现在挂在哪个链表上"。</strong>就绪的挂在就绪列表、阻塞的挂在阻塞列表。调度器只从就绪列表里选任务。所以"改变任务状态" = "把 TCB 从一个链表移到另一个链表"——这就是为什么 TCB 里有 <code>xStateListItem</code> 这个"挂钩"。</p>
+
+<h2 id="s9">16.9 就绪列表：调度器的核心数据结构</h2>
+<p>就绪任务放在哪?一个<strong>按优先级组织的链表数组</strong>——这是 FreeRTOS 调度的心脏。定义在 <code>tasks.c</code>:</p>
+<pre><code>/* 每个优先级一个链表, 数组下标 = 优先级 */
+static List_t pxReadyTasksLists[ configMAX_PRIORITIES ];
+
+含义:
+  pxReadyTasksLists[0]  → 优先级0(最低)的所有就绪任务链表
+  pxReadyTasksLists[1]  → 优先级1的所有就绪任务链表
+  ...
+  pxReadyTasksLists[N]  → 优先级N(最高)的所有就绪任务链表
+
+  ┌─────────────────────────────────────┐
+  │ [3] → TaskA → TaskC     (优先级3就绪) │
+  │ [2] → (空)                            │
+  │ [1] → TaskB             (优先级1就绪) │
+  │ [0] → IdleTask          (空闲任务)    │
+  └─────────────────────────────────────┘</code></pre>
+<p>调度规则(第17章详讲):<strong>从最高优先级的非空链表里,取一个任务运行。</strong>同优先级的多个任务,在链表里轮流(时间片轮转)。这个数据结构直接决定了 FreeRTOS 的调度是"严格优先级 + 同级轮转"(第一卷说的 RTOS 调度哲学)。</p>
+<h4>FreeRTOS 的链表:侵入式双向环形链表(list.c)</h4>
+<p>FreeRTOS 的链表和你写算法题的链表不同,是<strong>侵入式(intrusive)</strong>的——链表节点(<code>ListItem_t</code>)不是独立分配的,而是<strong>嵌在 TCB 里面</strong>(就是 <code>xStateListItem</code>)。好处:不用为链表节点额外分配内存,且从链表节点能直接找到所属的 TCB(通过 owner 指针)。Linux 内核的 <code>list_head</code> 是同样的设计——<strong>侵入式链表是内核编程的标志性技法,这里第一次见,第五卷会大量见到。</strong></p>
+
+<h2 id="s10">16.10 prvAddTaskToReadyList 与优先级位图</h2>
+<p>把任务加入就绪列表的宏,藏着一个精妙优化:</p>
+<pre><code>#define prvAddTaskToReadyList( pxTCB )                              \
+    taskRECORD_READY_PRIORITY( ( pxTCB )->uxPriority );             \
+    vListInsertEnd( &( pxReadyTasksLists[ ( pxTCB )->uxPriority ] ),\
+                    &( ( pxTCB )->xStateListItem ) );</code></pre>
+<p>两件事:①把 TCB 的状态列表项插入对应优先级的就绪链表末尾;②<strong>taskRECORD_READY_PRIORITY</strong>——在一个位图里记录"该优先级有就绪任务"。</p>
+<h4>优先级位图:O(1) 找最高优先级的秘诀</h4>
+<p>调度器要"找最高优先级的非空就绪链表"。傻办法是从最高优先级往下一个个查数组,慢。FreeRTOS 用一个 <strong>位图 <code>uxTopReadyPriority</code></strong>:每个 bit 对应一个优先级,有就绪任务就把对应 bit 置 1。</p>
+<pre><code>uxTopReadyPriority 位图(假设32个优先级, 用一个uint32):
+  bit:  ...  3   2   1   0
+        ...  1   0   1   1
+             ↑       ↑   ↑
+         优先级3有  优先级1有 优先级0有就绪任务
+
+找最高优先级 = 找位图里最高的置1位
+→ 用 CLZ 指令(Count Leading Zeros, 数前导0)一条指令搞定! O(1)!</code></pre>
+<p>ARM 有专门的 <strong>CLZ 指令</strong>(数最高位有几个连续的 0),一条指令就能算出"最高的置 1 位是第几位"= 最高就绪优先级。<strong>于是"选下一个任务"是 O(1) 常数时间,和任务数量无关</strong>——这对实时性至关重要(第七卷:实时系统要求调度时间确定、有上界)。这个"位图 + CLZ"技巧,是 RTOS 保证确定性调度的关键,配置 <code>configUSE_PORT_OPTIMISED_TASK_SELECTION</code> 开启。</p>
+<blockquote><p>对比:Linux 老的 O(1) 调度器也用类似的优先级位图 + 找最高位。<strong>"用位图 + 硬件找位指令实现 O(1) 优先级选择"是实时/高性能调度器的共同套路。</strong>你在 FreeRTOS 这几行里看到的,Linux 里会以更复杂的形式重现(不过 CFS 改用了红黑树,第五卷讲取舍)。</p></blockquote>
+
+<h2 id="s11">16.11 任务如何"第一次"跑起来</h2>
+<p>把前面串起来:任务创建后挂在就绪列表,但真正"跑起来"要等调度器启动。<code>vTaskStartScheduler()</code> 做这件事:</p>
+<pre><code>void vTaskStartScheduler( void )
+{
+    /* ① 创建空闲任务(Idle Task, 优先级0, 系统必须有它) */
+    xReturn = xTaskCreate( prvIdleTask, "IDLE", ... , tskIDLE_PRIORITY, ... );
+
+    /* ② 关中断(准备启动第一个任务, 过程不能被打断) */
+    portDISABLE_INTERRUPTS();
+
+    xSchedulerRunning = pdTRUE;
+    xTickCount = 0;
+
+    /* ③ 启动调度器: 配置SysTick、找到最高优先级任务、启动它 */
+    if( xPortStartScheduler() != pdFALSE )
+    {
+        /* 正常不会执行到这, xPortStartScheduler 一去不返 */
+    }
+}</code></pre>
+<p><code>xPortStartScheduler</code>(port.c)会:配置 SysTick 定时器(第18章的节拍)、设置 PendSV 优先级、然后<strong>触发第一次上下文切换</strong>——它找到 <code>pxCurrentTCB</code>(最高优先级就绪任务),把它伪造的栈"恢复现场",于是 PC 被弹成任务函数地址,第一个任务就跑起来了。</p>
+<blockquote><p><strong>空闲任务(Idle Task)</strong>为什么必须有?因为<strong>CPU 永远要在跑点什么</strong>——如果所有任务都阻塞了(都在等事件),CPU 也不能停,得有个"垫底的"任务跑。空闲任务优先级最低(0),只在没别的任务就绪时运行。它还负责回收被删除任务的内存、可以在里面进低功耗睡眠。这呼应第一卷:调度器的就绪列表永远不能为空,Idle 保证了这一点。</p></blockquote>
+
+<h2 id="s12">16.12 静态创建 vs 动态创建</h2>
+<p>FreeRTOS 提供两种创建方式,嵌入式选型常考:</p>
+<table>
+<tr><th></th><th>xTaskCreate(动态)</th><th>xTaskCreateStatic(静态)</th></tr>
+<tr><td>内存从哪来</td><td>pvPortMalloc 从堆分配 TCB 和栈</td><td>调用者提供预先分配好的 TCB 和栈缓冲区</td></tr>
+<tr><td>优点</td><td>方便,不用管内存</td><td>不用堆、内存用量编译期确定、更可靠</td></tr>
+<tr><td>缺点</td><td>依赖堆,有碎片/失败风险</td><td>要手动提供缓冲区,稍繁琐</td></tr>
+<tr><td>适用</td><td>一般应用</td><td>安全关键、认证系统(禁动态分配)</td></tr>
+</table>
+<p>为什么安全关键系统(汽车、医疗、航空,包括无人机飞控)偏爱静态创建?因为<strong>动态内存分配有不确定性</strong>(可能失败、可能碎片化、分配时间不定,第五章/第24章),而安全认证(如 MISRA、DO-178)常要求<strong>所有内存在编译期确定、运行时不分配</strong>。静态创建让整个系统的内存布局在编译时就固定,可预测、可验证。<strong>这是"实时/安全系统排斥动态内存"这一贯主题的又一次体现。</strong></p>
+
+<h2 id="s13">16.13 回扣第一卷</h2>
+<p>本章把第一卷的抽象概念一一落到了源码:</p>
+<table>
+<tr><th>第一卷概念</th><th>FreeRTOS 源码里的对应</th></tr>
+<tr><td>任务=代码+栈+控制块</td><td>任务函数 + pxStack + TCB_t</td></tr>
+<tr><td>上下文=寄存器快照存栈里</td><td>pxPortInitialiseStack 伪造的栈内容</td></tr>
+<tr><td>TCB 只存栈顶线索</td><td>pxTopOfStack(且是第一个成员)</td></tr>
+<tr><td>栈向下增长、8字节对齐</td><td>16.6 的栈顶计算与对齐</td></tr>
+<tr><td>R0 传第一个参数</td><td>栈上 R0 位置填 pvParameters</td></tr>
+<tr><td>硬件自动压栈 8 个寄存器</td><td>伪造栈布局的前 8 个(xPSR/PC/LR/R12/R3-R0)</td></tr>
+<tr><td>调度选最高优先级</td><td>就绪列表数组 + 位图 + CLZ</td></tr>
+<tr><td>O(1) 确定性调度</td><td>uxTopReadyPriority + CLZ 指令</td></tr>
+</table>
+<blockquote><p>这就是读源码的价值:<strong>第一卷你以为是"理论",在这里全变成了能指着行号说"就是这里"的实实在在的代码。</strong>你现在具备了"拿着原理去印证源码"的能力——这是资深工程师和背题者的根本区别。下一章(调度器)会看 <code>vTaskSwitchContext</code> 怎么选出下一个任务,第18章看 PendSV 汇编怎么真正切换现场,把任务这条线彻底走完。</p></blockquote>
+
+<h2 id="s14">16.14 面试常问问题</h2>
+<p><strong>Q1:FreeRTOS 任务和普通函数的区别?任务函数为什么不能 return?</strong><br>任务有独立栈、TCB、由调度器管理、是独立执行流;函数有调用者、共用栈、执行完返回。任务没有调用者,return 无处可去,会跳到 prvTaskExitError 出错。</p>
+<p><strong>Q2:TCB 里最重要的字段是什么?为什么 pxTopOfStack 是第一个成员?</strong><br>pxTopOfStack(栈顶)。放第一个使其偏移为0,上下文切换汇编能用最简单方式直接访问,不用算偏移。</p>
+<p><strong>Q3:新创建的任务从没运行过,第一次怎么跑起来?</strong><br>创建时在栈上伪造一个"仿佛被中断压栈过"的初始现场:PC 位置填任务函数地址、R0 填参数。第一次调度"恢复现场"时,弹出的 PC 就跳进任务函数。启动和恢复共用同一路径。</p>
+<p><strong>Q4:FreeRTOS 如何 O(1) 选出最高优先级任务?</strong><br>就绪任务按优先级放在链表数组,用位图 uxTopReadyPriority 记录哪些优先级有就绪任务,用 CLZ 指令一条搞定找最高位,与任务数无关,保证确定性。</p>
+<p><strong>Q5:任务有哪几种状态?状态的本质是什么?</strong><br>Running/Ready/Blocked/Suspended。本质是 TCB 挂在哪个链表(就绪/阻塞/挂起),改状态=移动 TCB 到另一链表。</p>
+<p><strong>Q6:静态创建和动态创建的区别?安全系统为什么用静态?</strong><br>动态用 pvPortMalloc 分配,静态由用户提供缓冲区。安全系统禁动态分配(不确定性/碎片),要求内存编译期确定,故用静态。</p>
+<p><strong>Q7:空闲任务的作用?</strong><br>保证 CPU 永远有任务可跑(就绪列表不空);回收删除任务的内存;可进低功耗。优先级最低。</p>
+
+<h2 id="s15">16.15 常见误区</h2>
+<ol>
+  <li><strong>"任务函数可以像普通函数一样 return"</strong>——不行,会跳到出错处理,通常卡死。任务必须死循环。</li>
+  <li><strong>"新任务需要特殊的启动代码"</strong>——不需要,靠伪造栈让"启动"复用"恢复现场"路径。</li>
+  <li><strong>"TCB 里存着完整的寄存器现场"</strong>——不,现场存在任务栈里,TCB 只存栈顶指针(第一卷强调过)。</li>
+  <li><strong>"栈大小参数是字节"</strong>——是"字(StackType_t)"个数,Cortex-M 上一个字4字节,128 字=512 字节。</li>
+  <li><strong>"选任务要遍历所有任务"</strong>——用位图+CLZ 是 O(1),不遍历。</li>
+  <li><strong>"FreeRTOS 链表和普通链表一样"</strong>——是侵入式链表,节点嵌在 TCB 里,能从节点反查 TCB。</li>
+  <li><strong>"优先级数值越小越高"</strong>——FreeRTOS 相反!数值越大优先级越高(和 Cortex-M 中断优先级相反,易混)。</li>
+</ol>
+
+<h2 id="s16">16.16 本章总结</h2>
+<ul>
+  <li>FreeRTOS 内核 = 架构无关部分(tasks/queue/list)+ 移植层(port 汇编);小而完整,适合先读。</li>
+  <li>任务 = 死循环函数 + 独立栈 + TCB;不能 return。</li>
+  <li><strong>TCB</strong> 首成员是 <code>pxTopOfStack</code>(偏移0,便于汇编直接访问);还有状态列表项、优先级、栈起始等。</li>
+  <li><code>xTaskCreate</code>:分配栈和 TCB → <code>prvInitialiseNewTask</code> 初始化 → 加入就绪列表(可能触发抢占)。</li>
+  <li>★<code>pxPortInitialiseStack</code> <strong>伪造初始现场</strong>:PC 填任务函数、R0 填参数,让"启动"复用"恢复现场"路径——最优雅的设计。</li>
+  <li>任务五态(Running/Ready/Blocked/Suspended)本质=TCB 挂在哪个链表。</li>
+  <li>就绪列表 = 按优先级的链表数组;<strong>位图 uxTopReadyPriority + CLZ 指令</strong>实现 O(1) 确定性选任务。</li>
+  <li>FreeRTOS 用<strong>侵入式链表</strong>(节点嵌 TCB),同 Linux list_head。</li>
+  <li>空闲任务保证就绪列表非空;静态创建用于禁动态分配的安全系统。</li>
+  <li>注意:<strong>FreeRTOS 任务优先级数值越大越高</strong>(和中断优先级相反)。</li>
+</ul>
+
+<h2 id="s17">16.17 思维导图</h2>
+<pre><code>FreeRTOS 总览与 Task
+├─ 一、为何先读FreeRTOS:小而完整,骨架同Linux
+├─ 二、代码地图:tasks/list/queue/timers/heap/port
+│  └─ 内核=架构无关 + 移植层(port汇编)
+├─ 三、任务=死循环函数+独立栈+TCB(不能return)
+├─ 四、TCB字段
+│  ├─ ★pxTopOfStack(首成员,偏移0便于汇编)
+│  ├─ xStateListItem(挂就绪/阻塞列表的钩子)
+│  └─ uxPriority/pxStack/uxBasePriority(优先级继承)
+├─ 五、xTaskCreate:分配→初始化→加就绪列表(可能抢占)
+├─ 六、栈初始化:栈顶=高地址,8字节对齐
+├─ 七、★pxPortInitialiseStack伪造初始现场
+│  ├─ PC位=任务函数, R0位=参数, LR位=出错处理
+│  └─ 启动复用恢复现场路径(最优雅)
+├─ 八、五种状态=TCB挂在哪个链表
+├─ 九、就绪列表=按优先级链表数组;侵入式链表
+├─ 十、★位图uxTopReadyPriority+CLZ→O(1)选任务(确定性)
+├─ 十一、vTaskStartScheduler:建Idle→启动第一个任务
+│  └─ Idle保证就绪列表非空
+├─ 十二、静态vs动态创建(安全系统用静态)
+└─ 十三、回扣第一卷:每个概念都能指着源码说"就是这里"</code></pre>
+
+<h2 id="s18">16.18 课后练习与面试题</h2>
+<h3>课后练习</h3>
+<ol>
+  <li>下载 FreeRTOS Kernel 源码,打开 <code>tasks.c</code>,找到 TCB_t 定义、<code>xTaskCreate</code>、<code>prvInitialiseNewTask</code>,对照本章逐段读。</li>
+  <li>打开你的 MCU 对应的 <code>port.c</code>,找到 <code>pxPortInitialiseStack</code>,对照 16.7,确认 PC/R0/LR 各填了什么。</li>
+  <li>在 FreeRTOS 里创建两个任务,用调试器看它们的 TCB(pxTopOfStack、pxStack、uxPriority),并 dump 新任务的栈,找出伪造的 PC 值是否等于任务函数地址。</li>
+  <li>故意写一个会 return 的任务函数,运行观察它跳到 prvTaskExitError(可下断点),理解为什么任务不能 return。</li>
+  <li>用 <code>xTaskCreateStatic</code> 静态创建一个任务,对比动态创建,体会内存来源的不同。</li>
+  <li>查 <code>configUSE_PORT_OPTIMISED_TASK_SELECTION</code>,开/关它,看 <code>taskSELECT_HIGHEST_PRIORITY_TASK</code> 的两种实现(CLZ 版 vs 通用循环版)。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>FreeRTOS 任务的三要素?任务函数为什么必须死循环?</li>
+  <li>为什么 pxTopOfStack 要放 TCB 第一个?</li>
+  <li>详述一个新任务第一次被调度运行的完整机制(伪造栈)。</li>
+  <li>FreeRTOS 如何做到 O(1) 选出最高优先级任务?为什么这对实时性重要?</li>
+  <li>任务的状态转移,状态在数据结构上如何体现?</li>
+  <li>静态和动态创建任务的取舍?安全关键系统怎么选?</li>
+  <li>空闲任务存在的意义?</li>
+  <li>把 pxPortInitialiseStack 的栈布局和第一卷的中断压栈、调用约定联系起来解释。</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第十六章 完 · 下一章《第十七章 FreeRTOS 调度器》</p>
+<div class="nav">
+  <a href="第15章-TrustZone.html">← 第十五章</a>
+  <a href="index.html">目录</a>
+  <a href="第17章-FreeRTOS-调度器.html">第十七章 →</a>
+</div>
+
+</div>
+</body>
+</html>

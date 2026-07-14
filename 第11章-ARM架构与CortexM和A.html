@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第十一章 ARM 架构与 Cortex-M / Cortex-A</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13.5px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第10章-虚拟内存.html">← 第十章</a>
+  <a href="index.html">目录</a>
+  <a href="第12章-异常与异常等级.html">第十二章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第二卷 · ARM 架构</div>
+  <h1>第十一章 ARM 架构与 Cortex-M / Cortex-A</h1>
+  <div class="sub">同一个 ARM，为什么分成两条完全不同的产品线</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么第二卷要专门讲 ARM</a></li>
+    <li><a href="#s2">ARM 是什么：一家不造芯片的芯片公司</a></li>
+    <li><a href="#s3">架构 vs 实现：ARMv8 与 Cortex-A76</a></li>
+    <li><a href="#s4">三条产品线：A / R / M</a></li>
+    <li><a href="#s5">Cortex-M：为实时和确定性而生</a></li>
+    <li><a href="#s6">Cortex-A：为性能和 Linux 而生</a></li>
+    <li><a href="#s7">M 和 A 的关键差异对照</a></li>
+    <li><a href="#s8">运行模式与特权：M 的两态 vs A 的四级</a></li>
+    <li><a href="#s9">指令集：ARM/Thumb/A64</a></li>
+    <li><a href="#s10">流水线与乱序：M 与 A 的性能鸿沟</a></li>
+    <li><a href="#s11">RK3588 的 big.LITTLE</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图</a></li>
+    <li><a href="#s16">课后练习与面试题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第一卷讲的都是"通用 CPU"的原理。第二卷要落到你真正在用的芯片——ARM。你做过 STM32(Cortex-M)也做过 RK3588(Cortex-A),但可能没想过:它们都叫 ARM,为什么一个跑 FreeRTOS、一个跑 Linux,差别这么大?这一章把 ARM 的产品线、架构分层、M 与 A 的本质区别讲清,为后面异常等级、GIC、Cache 一致性打地基。</p></blockquote>
+
+<h2 id="s1">11.1 为什么第二卷要专门讲 ARM</h2>
+<p>第一卷的寄存器、中断、MMU 都是"泛泛地讲原理"。但你写 RTOS 移植、写 Linux 驱动、调飞控,面对的是<strong>具体的 ARM 芯片</strong>,它有具体的异常等级、具体的中断控制器、具体的 Cache 结构。原理不落到具体架构,就永远是纸上谈兵。</p>
+<p>而且 、地平线这些公司的产品全是 ARM(从飞控的 Cortex-M 到 AI 芯片的 Cortex-A),<strong>ARM 架构细节是这类岗位的硬通货</strong>。第二卷就是把第一卷的通用原理,在 ARM 上精确化、具体化。</p>
+
+<h2 id="s2">11.2 ARM 是什么：一家不造芯片的芯片公司</h2>
+<p>先破除一个常见误解:<strong>ARM 公司自己不生产任何芯片。</strong>它是一家"卖设计图纸"的公司。</p>
+<p>类比:ARM 像一个顶级的<strong>建筑设计事务所</strong>。它不盖楼,而是设计出优秀的"图纸"(处理器核的设计 IP),然后把图纸授权给各家厂商(高通、瑞芯微、意法半导体 STM、苹果……),这些厂商拿图纸去造自己的芯片。</p>
+<pre><code>ARM 公司 ──(授权设计IP/架构)──▶ 各芯片厂商
+                                    │
+        ┌───────────────┬──────────┼──────────┬─────────┐
+      意法半导体        瑞芯微      高通        苹果      ...
+      STM32(Cortex-M)  RK3588      骁龙        M系列
+                       (Cortex-A)  (Cortex-A) (自研核)</code></pre>
+<p>这就是为什么同样是 ARM,STM32、RK3588、苹果 M 芯片差别巨大——它们是不同厂商基于 ARM 授权造的不同产品。有的厂商直接用 ARM 设计好的核(如 STM32 用 Cortex-M),有的只买"架构授权"自己设计核(如苹果的 M 系列自研核,但兼容 ARM 指令集)。</p>
+
+<h2 id="s3">11.3 架构 vs 实现：ARMv8 与 Cortex-A76</h2>
+<p>一个必须分清的概念,面试爱考:<strong>架构(Architecture)和实现(微架构 Microarchitecture)是两回事。</strong></p>
+<table>
+<tr><th></th><th>架构(合同/规范)</th><th>实现(具体的核)</th></tr>
+<tr><td>是什么</td><td>指令集+寄存器+异常模型等"规范"</td><td>按规范造出的具体处理器核</td></tr>
+<tr><td>例子</td><td>ARMv7-M、ARMv8-A、ARMv9-A</td><td>Cortex-M4、Cortex-A76、Cortex-A55</td></tr>
+<tr><td>类比</td><td>"C 语言标准"</td><td>"GCC 编译器"这个具体实现</td></tr>
+</table>
+<p>关系:<strong>架构是"该支持哪些指令、有哪些特权级"的规范(第二章说的 ISA 合同的扩展);实现是"用多深的流水线、多大的 Cache、多快的主频去满足这个规范"的具体设计。</strong>同一个架构(如 ARMv8-A)可以有很多不同实现(Cortex-A76 高性能、Cortex-A55 省电),它们跑同样的指令,但性能功耗天差地别。</p>
+<blockquote><p>RK3588 用的是 ARMv8.2-A <strong>架构</strong>,具体实现是 4 个 Cortex-A76(大核)+ 4 个 Cortex-A55(小核)。它们架构相同(指令兼容,能跑同一个 Linux),但微架构不同(A76 流水线深、乱序执行、性能强;A55 简单省电)。这正是下面 big.LITTLE 的基础。</p></blockquote>
+
+<h2 id="s4">11.4 三条产品线：A / R / M</h2>
+<p>Cortex 分三条线,名字最后一个字母就是定位,记忆口诀:<strong>A 应用、R 实时、M 微控。</strong></p>
+<table>
+<tr><th>系列</th><th>字母含义</th><th>定位</th><th>典型场景</th><th>有 MMU 吗</th></tr>
+<tr><td>Cortex-<strong>A</strong></td><td>Application</td><td>高性能应用处理器</td><td>手机、RK3588、跑 Linux/安卓</td><td>有</td></tr>
+<tr><td>Cortex-<strong>R</strong></td><td>Real-time</td><td>高性能实时处理器</td><td>硬盘控制器、基带、汽车安全</td><td>无(有 MPU)</td></tr>
+<tr><td>Cortex-<strong>M</strong></td><td>Microcontroller</td><td>低功耗微控制器</td><td>STM32、飞控、IoT,跑 RTOS/裸机</td><td>无(有 MPU)</td></tr>
+</table>
+<p>本书重点是 A 和 M(你最常接触的两条)。<strong>它们的分野,恰好对应第一卷的核心分界线——有没有 MMU、跑不跑得动 Linux。</strong>R 系列是介于两者之间的"高性能但要确定性"的特殊定位,汽车和存储用得多,本书少涉及。</p>
+<p>注意:Cortex-M/R 没有 MMU,但有个简化版的 <strong>MPU(内存保护单元)</strong>——它不做地址翻译(不虚拟化地址),只做"内存保护"(划几个区域,设权限,越界报错)。这是"要一点保护、但不要虚拟内存那套开销"的折中,第九章讲 MMU 时的"轻量版"。</p>
+
+<h2 id="s5">11.5 Cortex-M：为实时和确定性而生</h2>
+<p>你做 STM32 用的就是 Cortex-M(M0/M3/M4/M7/M33...)。它的每一个设计决策都服务于<strong>"小、省电、实时、确定"</strong>:</p>
+<ul>
+  <li><strong>中断响应快且确定</strong>:第七章讲的硬件自动压栈、NVIC、确定的中断延迟(固定周期数)——这对飞控这种要求"必须在 N 微秒内响应"的场景是命根子。</li>
+  <li><strong>无 MMU</strong>:没有虚拟内存的不确定延迟(第十章),地址访问是确定的。</li>
+  <li><strong>低功耗</strong>:简单的流水线(2~3 级)、可深度睡眠,适合电池设备。</li>
+  <li><strong>Thumb-2 指令集</strong>:16/32 位混合,代码密度高,省 Flash。</li>
+  <li><strong>位带、MPU、FPU</strong>等面向控制的特性。</li>
+</ul>
+<p>Cortex-M 的世界里,通常跑<strong>裸机或 RTOS(FreeRTOS/RT-Thread)</strong>,没有"进程"概念,所有任务共享一个地址空间——这正是第一卷说的 RTOS 分界。</p>
+
+<h2 id="s6">11.6 Cortex-A：为性能和 Linux 而生</h2>
+<p>RK3588、手机 SoC 用的是 Cortex-A。它的设计目标是<strong>"高性能、能跑操作系统、能处理复杂任务"</strong>:</p>
+<ul>
+  <li><strong>有 MMU</strong>:支持虚拟内存,能跑 Linux/安卓,进程隔离(第九、十章)。</li>
+  <li><strong>多级 Cache + Cache 一致性</strong>:L1/L2/L3,多核共享一致性(本卷后面讲)。</li>
+  <li><strong>深流水线 + 乱序执行 + 分支预测</strong>:榨性能(第二章流水线的高级版)。</li>
+  <li><strong>多核 SMP</strong>:多个核对称多处理,真并行(第一章的并行)。</li>
+  <li><strong>异常等级 EL0~EL3</strong>:完整的特权分级 + 虚拟化 + 安全世界(下一章)。</li>
+</ul>
+<p>Cortex-A 的世界里跑的是<strong>Linux/安卓</strong>,有完整的进程、虚拟内存、用户/内核态。你在 RK3588 上跑 ROS2 节点,就是在这套体系上。</p>
+
+<h2 id="s7">11.7 M 和 A 的关键差异对照</h2>
+<p>把两条线的差异集中对照,这张表几乎就是第一卷所有分界线的汇总:</p>
+<table>
+<tr><th>维度</th><th>Cortex-M(STM32)</th><th>Cortex-A(RK3588)</th></tr>
+<tr><td>MMU / 虚拟内存</td><td>无(仅 MPU 保护)</td><td>有,支持虚拟内存</td></tr>
+<tr><td>跑什么</td><td>裸机 / FreeRTOS / RT-Thread</td><td>Linux / 安卓</td></tr>
+<tr><td>进程概念</td><td>无,任务共享地址空间</td><td>有,进程独立地址空间</td></tr>
+<tr><td>特权分级</td><td>2 态(特权/非特权,Thread/Handler)</td><td>4 级(EL0/EL1/EL2/EL3)</td></tr>
+<tr><td>位宽</td><td>32 位为主</td><td>64 位(AArch64)</td></tr>
+<tr><td>中断控制器</td><td>NVIC(核内,简单快)</td><td>GIC(片上,复杂,支持多核)</td></tr>
+<tr><td>Cache</td><td>可有可无,通常小</td><td>多级 + 一致性协议</td></tr>
+<tr><td>流水线</td><td>浅(2~3 级),顺序执行</td><td>深,乱序,分支预测</td></tr>
+<tr><td>核心追求</td><td>实时、确定、省电</td><td>性能、吞吐、功能</td></tr>
+</table>
+<blockquote><p>这张表你要能默背——它是"为什么 STM32 和 RK3588 差这么多"的完整答案,也是第一卷十章的浓缩。<strong>本质就一句:M 用简单换确定性和低功耗,A 用复杂换性能和功能。</strong>而复杂性的核心,就是 MMU/虚拟内存/多核一致性/多级特权这几样——它们是本卷后续章节的主题。</p></blockquote>
+
+<h2 id="s8">11.8 运行模式与特权：M 的两态 vs A 的四级</h2>
+<p>第一章讲的"用户态/内核态",在 M 和 A 上是不同的具体形态。</p>
+<h4>Cortex-M:两种模式 + 两种特权</h4>
+<pre><code>Cortex-M 的运行状态:
+  ┌─ 模式(Mode) ─────────────────┐
+  │  Thread 模式:  跑普通代码(任务)  │
+  │  Handler 模式: 跑异常/中断处理    │
+  └──────────────────────────────┘
+  ┌─ 特权(Privilege) ────────────┐
+  │  特权级(Privileged)          │  ← 内核/RTOS 通常在这
+  │  非特权级(Unprivileged)      │  ← 可选, 给不信任的任务
+  └──────────────────────────────┘</code></pre>
+<p>RTOS 里最常见:所有代码都跑在特权级(简单)。进中断自动切到 Handler 模式。这套比 A 简单得多,够用且确定。</p>
+<h4>Cortex-A:四个异常等级 EL0~EL3</h4>
+<p>A 系列有完整的四级特权(下一章专门讲):EL0 用户态、EL1 内核态、EL2 虚拟化、EL3 安全监控。第一章说的 EL0/EL1 就是这里的前两级。<strong>M 的"两态"和 A 的"四级",都是第一章"特权分级"思想的不同规模实现——任务越复杂、越不可信、越需要虚拟化和安全隔离,分级就越多。</strong></p>
+
+<h2 id="s9">11.9 指令集：ARM / Thumb / A64</h2>
+<p>ARM 芯片支持的指令集也随产品线不同,面试常问"ARM 和 Thumb 区别":</p>
+<table>
+<tr><th>指令集</th><th>位宽</th><th>特点</th><th>用在</th></tr>
+<tr><td>ARM(A32)</td><td>32 位定长</td><td>功能全,代码大</td><td>老的 32 位 A 系列</td></tr>
+<tr><td>Thumb / Thumb-2(T32)</td><td>16/32 位混合</td><td>代码密度高,省 Flash</td><td>Cortex-M 主力</td></tr>
+<tr><td>A64(AArch64)</td><td>32 位定长(但 64 位处理)</td><td>64 位,寄存器多(X0-X30)</td><td>Cortex-A 的 64 位模式</td></tr>
+</table>
+<p>关键理解:<strong>Thumb 的存在是为了"代码密度"</strong>——嵌入式 Flash 很贵很小,16 位指令能装下更多代码。Cortex-M 主要用 Thumb-2(16/32 混合,兼顾密度和功能)。而 Cortex-A 的 64 位模式用 A64,指令定长 4 字节、寄存器多,面向性能。这呼应第二章 RISC 定长指令的讨论。</p>
+
+<h2 id="s10">11.10 流水线与乱序：M 与 A 的性能鸿沟</h2>
+<p>第二章讲了流水线。M 和 A 在这上面差距巨大,决定了它们的性能档次:</p>
+<ul>
+  <li><strong>Cortex-M:浅流水线(2~3 级)、顺序执行(in-order)。</strong>简单、可预测(利于实时),但性能有限。指令严格按顺序一条条来。</li>
+  <li><strong>Cortex-A:深流水线(十几级)、乱序执行(out-of-order)、超标量(一周期发射多条)、激进分支预测。</strong>为榨取性能,CPU 会在保证结果正确的前提下,<strong>打乱指令执行顺序</strong>——比如一条指令在等内存(miss),就先执行后面不依赖它的指令,不让 CPU 空等。</li>
+</ul>
+<blockquote><p><strong>乱序执行</strong>是 A 系列高性能的核心,但它给多核编程埋了一个大坑:<strong>内存序(Memory Ordering)</strong>——一个核乱序执行,别的核看到的内存写入顺序可能和代码顺序不一样!这就是为什么多核同步需要"内存屏障(Memory Barrier)"指令。这个话题在第五卷(Linux 内存屏障、无锁编程)会展开,是高级并发的硬核内容。M 系列顺序执行,基本没这个烦恼——又一次体现"M 简单确定、A 复杂高性能"。</p></blockquote>
+
+<h2 id="s11">11.11 RK3588 的 big.LITTLE</h2>
+<p>你手上的 RK3588 是理解现代 A 系列的好样本。它用了 ARM 的 <strong>big.LITTLE</strong> 架构:<strong>把高性能大核和低功耗小核放在一颗芯片里,按需调度。</strong></p>
+<pre><code>RK3588 CPU 布局:
+  ┌─────────────────────────────────────┐
+  │  4× Cortex-A76 (大核, 高性能, 费电)    │  ← 干重活: 视觉/AI
+  │  4× Cortex-A55 (小核, 省电, 性能低)    │  ← 干轻活/待机: 后台任务
+  └─────────────────────────────────────┘
+  全部共享 L3 Cache 和内存, 架构相同(都跑ARMv8), 指令兼容
+
+调度: Linux 内核(EAS能耗感知调度)按任务轻重, 把它放到大核或小核
+  → 重任务上大核(快), 轻任务上小核(省电) → 兼顾性能与续航</code></pre>
+<p>为什么能这么混?因为大小核<strong>架构相同</strong>(11.3 说的),同一个程序在大核小核都能跑,只是快慢功耗不同。Linux 调度器(带能耗感知 EAS)负责决定每个任务放哪个核。<strong>这是"性能 vs 功耗"权衡在多核时代的解法**,第八卷讲 CPU 亲和性、SMP 调度时会深入。</p>
+
+<h2 id="s12">11.12 面试常问问题</h2>
+<p><strong>Q1:ARM 公司是做什么的?为什么各家 ARM 芯片差别很大?</strong><br>ARM 只设计并授权处理器 IP/架构,不造芯片。各厂商基于授权造不同产品(用 ARM 现成核或自研核),故差异大。</p>
+<p><strong>Q2:架构和微架构(实现)的区别?</strong><br>架构是指令集/寄存器/异常模型等规范(如 ARMv8-A);实现是满足规范的具体核(如 Cortex-A76),决定流水线/Cache/主频。同架构可有多种实现。</p>
+<p><strong>Q3:Cortex-M 和 Cortex-A 的本质区别?</strong><br>见 11.7 表。核心:M 无 MMU、跑 RTOS/裸机、实时确定省电;A 有 MMU、跑 Linux、高性能多核。</p>
+<p><strong>Q4:ARM 和 Thumb 指令集的区别?为什么要 Thumb?</strong><br>ARM 32 位定长功能全但代码大;Thumb 16/32 混合代码密度高省 Flash,Cortex-M 主用。为嵌入式小 Flash 而生。</p>
+<p><strong>Q5:什么是 big.LITTLE?RK3588 怎么用?</strong><br>大核(高性能费电)+小核(省电)同芯片,架构相同指令兼容;调度器按任务轻重分配,兼顾性能与功耗。RK3588 是 4×A76+4×A55。</p>
+<p><strong>Q6:MPU 和 MMU 的区别?</strong><br>MMU 做地址翻译+保护(虚拟内存);MPU 只做区域权限保护,不翻译地址。M/R 系列用 MPU,A 用 MMU。</p>
+
+<h2 id="s13">11.13 常见误区</h2>
+<ol>
+  <li><strong>"ARM 公司造芯片"</strong>——不造,只授权设计。</li>
+  <li><strong>"架构和具体的核是一回事"</strong>——架构是规范,核是实现,一对多。</li>
+  <li><strong>"Cortex-M 也能跑 Linux"</strong>——标准 Linux 需要 MMU,M 无 MMU 跑不了(有 uClinux 等无 MMU 变体,但受限)。</li>
+  <li><strong>"M 和 A 指令完全一样"</strong>——不一样,M 用 Thumb-2、A 用 A64/A32,指令集不同。</li>
+  <li><strong>"大小核是不同架构"</strong>——大小核架构相同、指令兼容,只是微架构(性能/功耗)不同。</li>
+  <li><strong>"乱序执行会算错"</strong>——单核结果保证正确,但多核可见的内存序会变,需内存屏障。</li>
+</ol>
+
+<h2 id="s14">11.14 本章总结</h2>
+<ul>
+  <li>ARM 是授权设计公司,不造芯片;各厂商基于授权造不同芯片,故差异巨大。</li>
+  <li><strong>架构(规范,如 ARMv8-A)≠ 实现(核,如 Cortex-A76)</strong>,同架构可多实现。</li>
+  <li>三条线:<strong>A 应用(有 MMU,跑 Linux)、R 实时、M 微控(无 MMU,跑 RTOS)</strong>;M/R 用 MPU 做轻量保护。</li>
+  <li>Cortex-M:浅流水线顺序执行、无 MMU、NVIC、两态特权,<strong>实时确定省电</strong>。</li>
+  <li>Cortex-A:深流水线乱序执行、有 MMU、GIC、EL0-3、多核 SMP,<strong>高性能功能全</strong>。</li>
+  <li>M/A 差异表 = 第一卷所有分界线的汇总:<strong>M 用简单换确定,A 用复杂换性能</strong>。</li>
+  <li>指令集:ARM(A32)/Thumb(代码密度,M 主用)/A64(64 位,A 主用)。</li>
+  <li>乱序执行是 A 高性能核心,但引入<strong>内存序</strong>问题,多核需内存屏障。</li>
+  <li>RK3588 用 <strong>big.LITTLE</strong>(4×A76+4×A55),大小核同架构,调度器按任务分配。</li>
+</ul>
+
+<h2 id="s15">11.15 思维导图</h2>
+<pre><code>ARM架构与Cortex-M/A
+├─ 一、ARM公司:只授权设计,不造芯片
+├─ 二、架构(规范)vs 实现(核)
+│  └─ ARMv8-A vs Cortex-A76;一对多
+├─ 三、三条线:A应用/R实时/M微控
+│  └─ M/R用MPU(仅保护), A用MMU(翻译+保护)
+├─ 四、Cortex-M:浅流水顺序/无MMU/NVIC/两态
+│  └─ 实时确定省电, 跑裸机/RTOS
+├─ 五、Cortex-A:深流水乱序/有MMU/GIC/EL0-3/多核
+│  └─ 高性能功能全, 跑Linux
+├─ 六、M/A差异表(第一卷分界线汇总)
+│  └─ M简单换确定, A复杂换性能
+├─ 七、特权:M两态(Thread/Handler+特权/非特权)vs A四级(EL0-3)
+├─ 八、指令集:ARM(A32)/Thumb(密度,M)/A64(64位,A)
+├─ 九、乱序执行→内存序问题→需内存屏障(多核)
+└─ 十、RK3588 big.LITTLE:4×A76+4×A55,同架构,调度器分配</code></pre>
+
+<h2 id="s16">11.16 课后练习与面试题</h2>
+<h3>课后练习</h3>
+<ol>
+  <li>查你的 STM32 型号,确认它是 Cortex-M 几(M3/M4/M7),对应哪个 ARMv 架构;再查 RK3588 的大小核型号和架构版本。</li>
+  <li>Linux 上 <code>lscpu</code> 或 <code>cat /proc/cpuinfo</code> 看 RK3588 的核数、大小核、架构特性(features),识别出 A76 和 A55。</li>
+  <li>用 <code>taskset</code> 把一个计算程序绑到大核 vs 小核,对比运行时间,亲历性能差异(为第八卷 CPU 亲和性铺垫)。</li>
+  <li>把同一段 C 分别用 <code>arm-none-eabi-gcc</code>(M,Thumb)和 <code>aarch64-linux-gnu-gcc</code>(A,A64)编译,对比汇编指令的不同。</li>
+  <li>查 Cortex-M 的 MPU 和 Cortex-A 的 MMU 文档,列出两者功能差异。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>ARM 的商业模式是什么?为什么各家 ARM 芯片差异大?</li>
+  <li>架构和微架构的区别?举例。</li>
+  <li>Cortex-M 和 Cortex-A 有哪些本质区别?为什么一个跑 RTOS 一个跑 Linux?</li>
+  <li>MPU 和 MMU 的区别?</li>
+  <li>为什么 Cortex-M 用 Thumb 指令集?</li>
+  <li>什么是 big.LITTLE?大小核为什么能混用?</li>
+  <li>乱序执行带来什么好处和什么问题?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第十一章 完 · 下一章《第十二章 异常与异常等级 EL0-EL3》</p>
+<div class="nav">
+  <a href="第10章-虚拟内存.html">← 第十章</a>
+  <a href="index.html">目录</a>
+  <a href="第12章-异常与异常等级.html">第十二章 →</a>
+</div>
+
+</div>
+</body>
+</html>

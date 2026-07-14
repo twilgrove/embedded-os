@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第九章 MMU</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13.5px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第08章-Cache.html">← 第八章</a>
+  <a href="index.html">目录</a>
+  <a href="第10章-虚拟内存.html">第十章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第一卷 · 计算机组成原理</div>
+  <h1>第九章 MMU 内存管理单元</h1>
+  <div class="sub">给每个进程一套"假地址"，让它们以为各自独占整个内存</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">从一个崩溃说起：没有 MMU 的世界</a></li>
+    <li><a href="#s2">三个必须解决的问题</a></li>
+    <li><a href="#s3">核心思想：加一层地址翻译</a></li>
+    <li><a href="#s4">生活类比：前台转接电话</a></li>
+    <li><a href="#s5">分页：把内存切成小块</a></li>
+    <li><a href="#s6">页表：虚拟页到物理页的地图</a></li>
+    <li><a href="#s7">多级页表：为什么不用一张大表</a></li>
+    <li><a href="#s8">一次地址翻译全过程</a></li>
+    <li><a href="#s9">TLB：翻译也要缓存</a></li>
+    <li><a href="#s10">页表项里的权限位：保护的实现</a></li>
+    <li><a href="#s11">缺页异常</a></li>
+    <li><a href="#s12">MMU 与上下文切换/TLB 刷新</a></li>
+    <li><a href="#s13">面试常问</a></li>
+    <li><a href="#s14">常见误区</a></li>
+    <li><a href="#s15">本章总结</a></li>
+    <li><a href="#s16">思维导图</a></li>
+    <li><a href="#s17">课后练习与面试题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第一章说 Linux 靠 MMU 做内存隔离,那只是结论。这一章把 MMU 这个硬件单元彻底讲透:它凭什么能让每个进程"独占整个内存"、凭什么能阻止 A 进程访问 B 的内存。这是 RTOS 工程师转 Linux 最大的认知台阶,也是理解虚拟内存(第十章)、进程(第五卷)的钥匙。学完你要能画出地址翻译流程、解释 TLB 和缺页。</p></blockquote>
+
+<h2 id="s1">9.1 从一个崩溃说起：没有 MMU 的世界</h2>
+<p>回到你熟悉的 STM32(无 MMU)。你写:</p>
+<pre><code>int *p = (int*)0x20001000;   // 直接写一个内存地址
+*p = 123;                    // 直接就写进去了</code></pre>
+<p>在裸机/无 MMU 系统里,<strong>你写的地址就是真实物理内存的地址</strong>,直接命中 RAM 的那个位置。方便,但灾难性地危险:</p>
+<ul>
+  <li>你算错一个指针,写到了别的任务的数据区——直接踩坏,系统诡异崩溃(第五章栈溢出那种)。</li>
+  <li>两个程序都想用地址 0x20001000?冲突,没法共存。</li>
+  <li>任何程序都能读写任何地址,毫无隔离和安全可言。</li>
+</ul>
+<p>当系统只跑几个你自己写的、测试过的任务(RTOS 场景),这还能忍。但当系统要跑<strong>几百个来源不明、随时可能有 bug 或恶意</strong>的程序(Linux/手机/服务器场景),这绝对不能忍。<strong>MMU 就是为了解决"多个不可信程序如何安全共享一块物理内存"而生。</strong></p>
+
+<h2 id="s2">9.2 三个必须解决的问题</h2>
+<p>要让众多程序安全共享物理内存,必须同时解决三件事:</p>
+<ol>
+  <li><strong>隔离</strong>:A 进程绝对不能访问 B 进程的内存(第一章"独立操作台")。</li>
+  <li><strong>地址冲突</strong>:每个程序都想用简单固定的地址(比如都从 0 开始),不能因为物理内存就一份而打架。</li>
+  <li><strong>灵活分配</strong>:程序需要的内存有大有小、随时变化,物理内存还可能不连续、甚至不够用(要能用硬盘顶上,第十章)。</li>
+</ol>
+<p>一个精妙的机制能同时解决这三个——就是"地址翻译"。</p>
+
+<h2 id="s3">9.3 核心思想：加一层地址翻译</h2>
+<p>计算机领域有句名言:<strong>"任何问题都可以通过增加一个中间层来解决。"</strong>MMU 就是这句话的完美体现。</p>
+<p>核心思想:<strong>让程序用的地址,不再是真实的物理地址,而是一套"假地址"(虚拟地址)。CPU 和内存之间插一个硬件(MMU),负责把程序用的"假地址"实时翻译成真实的"物理地址"。</strong></p>
+<pre><code>没有MMU:
+  CPU ──(程序用的地址 = 物理地址)──▶ 内存   ← 直接、危险
+
+有MMU:
+  CPU ──(虚拟地址 VA)──▶ ┌─────┐ ──(物理地址 PA)──▶ 内存
+                         │ MMU │  实时翻译
+                         └─────┘  查"地图"(页表)</code></pre>
+<ul>
+  <li>程序里所有地址都是<strong>虚拟地址(Virtual Address, VA)</strong>——它是"假"的,是程序自己的一套坐标系。</li>
+  <li>真实内存条上的地址是<strong>物理地址(Physical Address, PA)</strong>。</li>
+  <li>MMU 按一张"地图"(页表)把 VA 翻译成 PA。<strong>不同进程用不同的地图</strong>,于是同一个 VA(比如都用 0x1000),在 A 进程被翻译到物理位置 X,在 B 进程被翻译到物理位置 Y——<strong>互不干扰,还都能用简单地址,三个问题一次解决!</strong></li>
+</ul>
+<blockquote><p>这就是 MMU 的全部精髓:<strong>用"每个进程一套虚拟地址 + 各自的翻译地图"制造出"我独占整个内存"的假象,同时用地图实现隔离。</strong>A 的地图里根本没有指向 B 内存的条目,所以 A 连"表达"访问 B 的能力都没有——隔离是从根上做到的。</p></blockquote>
+
+<h2 id="s4">9.4 生活类比：前台转接电话</h2>
+<p>把 MMU 想成公司前台。每个员工(进程)对外只知道一个"分机号"(虚拟地址),比如都用"1 号线"。外面打进来找不同部门的"1 号线",前台(MMU)根据"是哪个部门打来的"(哪个进程),查转接表(页表),把同样的"1 号线"转到不同的真实电话(物理地址)。</p>
+<ul>
+  <li>员工不需要知道真实的外线号码,只管用简单的分机号——<strong>程序不用管物理地址</strong>。</li>
+  <li>不同部门可以用相同的分机号而不冲突——<strong>不同进程可用相同虚拟地址</strong>。</li>
+  <li>转接表里没有的号码,前台拒绝转接——<strong>没权限的地址访问不了</strong>。</li>
+</ul>
+
+<h2 id="s5">9.5 分页：把内存切成小块</h2>
+<p>翻译不能按每个字节一条一条记(那地图比内存还大)。办法:<strong>把内存切成固定大小的小块,以"块"为单位翻译。</strong>这个块叫<strong>页(Page)</strong>,通常 <strong>4KB</strong>。</p>
+<ul>
+  <li>虚拟地址空间被切成一个个 <strong>虚拟页(Virtual Page)</strong>;</li>
+  <li>物理内存被切成一个个同样大小的 <strong>物理页框(Page Frame)</strong>;</li>
+  <li>翻译就是"这个虚拟页 → 对应哪个物理页框"。页内的偏移(4KB 内是第几个字节)不用翻译,直接照搬。</li>
+</ul>
+<pre><code>虚拟地址(以32位、4KB页为例) 拆成两部分:
+
+  31            12 11         0
+ ┌───────────────┬────────────┐
+ │  虚拟页号 VPN  │  页内偏移    │
+ │  (20位)       │  (12位=4KB) │
+ └───────────────┴────────────┘
+         │              │
+     查页表翻译       直接照搬(页内位置不变)
+         ▼              ▼
+ ┌───────────────┬────────────┐
+ │  物理页框号 PFN │  页内偏移    │  = 物理地址
+ └───────────────┴────────────┘</code></pre>
+<p>为什么选 4KB?太小则页表项太多(地图太大),太大则浪费(一个程序只用几字节也得给它一整页)。4KB 是几十年权衡下的经典折中(也有 2MB、1GB 的"大页"用于特殊场景,减少页表开销)。</p>
+
+<h2 id="s6">9.6 页表：虚拟页到物理页的地图</h2>
+<p>那张"翻译地图"就是<strong>页表(Page Table)</strong>。它本质是个数组:下标是虚拟页号,内容是对应的物理页框号(以及权限位)。每个条目叫<strong>页表项(PTE, Page Table Entry)</strong>。</p>
+<pre><code>页表(每个进程一张):
+  虚拟页号   →   页表项(物理页框号 + 权限位)
+  ┌──────┬──────────────────────────┐
+  │ VPN0 │ PFN=5,  可读可写, 有效     │
+  │ VPN1 │ PFN=99, 只读,   有效       │
+  │ VPN2 │ ------  无效(没映射)       │ ← 访问它→缺页异常
+  │ ...  │ ...                       │
+  └──────┴──────────────────────────┘</code></pre>
+<p>关键点:</p>
+<ul>
+  <li><strong>每个进程有自己的一张页表</strong>——这就是"各自的地图"、隔离的根源。</li>
+  <li>页表存在<strong>物理内存</strong>里。有个专门的寄存器指向当前进程的页表基地址(ARM64 叫 <strong>TTBR</strong>,Translation Table Base Register)。</li>
+  <li><strong>切换进程 = 换 TTBR 指向另一张页表</strong> = 换一整套地图 = 瞬间切换整个地址空间的视图。第五卷 <code>task_struct</code> 里的 <code>mm</code>(第一章见过!)就管着这张页表。</li>
+</ul>
+
+<h2 id="s7">9.7 多级页表：为什么不用一张大表</h2>
+<p>问题:32 位地址、4KB 页,有 2²⁰≈100 万个虚拟页,一张表就要 100 万项。64 位更是天文数字。<strong>而且大部分虚拟地址空间是空的(没映射)</strong>——为一堆空条目预留巨大的表,极其浪费。</p>
+<p>解决:<strong>多级页表</strong>(像书的多级目录)。不用一本厚厚的、每页都列出来的索引,而是"卷→章→节→页"逐级查找,只为真正用到的部分建立下级表。</p>
+<pre><code>多级页表(以两级示意):
+
+虚拟地址: [一级索引][二级索引][页内偏移]
+             │         │
+             ▼         │
+        一级页表 ───▶ 二级页表 ───▶ 物理页框
+        (目录)        (只为用到的区域建立)
+
+好处: 没用到的地址范围, 对应的二级页表根本不创建 → 省内存
+ARM64 常用 3~4 级页表(L0/L1/L2/L3)</code></pre>
+<p>代价:一次翻译要查好几级表,每级都是一次内存访问。翻译一个地址要访存 3~4 次!这慢得无法接受——于是需要下面的 TLB 来救场。</p>
+
+<h2 id="s8">9.8 一次地址翻译全过程</h2>
+<p>把上面串起来,CPU 访问一个虚拟地址时发生什么(先不考虑 TLB):</p>
+<pre><code>CPU 要访问虚拟地址 VA
+     │
+     ▼
+① 从 TTBR 找到当前进程页表基址
+     │
+     ▼
+② 用 VA 的各级索引, 逐级查页表(每级一次访存)
+     │
+     ▼
+③ 得到最终页表项 PTE
+     │
+   ┌─┴─────────────┐
+ 有效且有权限      无效/越权
+   │               │
+ ④取出物理页框号   触发缺页/权限异常(9.11)
+   拼上页内偏移
+   = 物理地址PA
+   │
+   ▼
+⑤ 用 PA 去(经过Cache)访问真实内存</code></pre>
+<p>注意:<strong>每次访存都要先翻译,翻译本身又要多次访存</strong>——如果每次都这么走,性能崩溃。这就是 TLB 存在的理由。</p>
+
+<h2 id="s9">9.9 TLB：翻译也要缓存</h2>
+<p>翻译太慢(多级查表),而地址翻译<strong>也有局部性</strong>(程序反复访问同一批页)。既然有局部性,就能缓存——把"最近用过的 VA→PA 翻译结果"存进一个小而快的缓存,叫 <strong>TLB(Translation Lookaside Buffer,translation 旁路缓存)</strong>。它就是"页表的 Cache"。</p>
+<pre><code>CPU 要翻译 VA:
+     │
+     ▼
+  TLB 里有 VA 的翻译吗?
+   ┌──┴──┐
+ 有(TLB hit)      没有(TLB miss)
+   │               │
+ 直接拿到PA        去查多级页表(慢) → 把结果存入TLB → 再用
+ ~1周期            几次访存</code></pre>
+<ul>
+  <li>TLB 命中率也很高(局部性),所以绝大多数翻译是 1 周期搞定的,多级页表的慢只在 miss 时才付出。</li>
+  <li>TLB 和 Cache 是<strong>两个不同的缓存</strong>:TLB 缓存"地址翻译",Cache 缓存"数据/指令"。别混。一次访存:先 TLB 翻译地址,再拿物理地址去 Cache 找数据。</li>
+</ul>
+<blockquote><p>第一章那个面试加分点"上下文切换导致 TLB 失效",现在能讲透了:<strong>切换进程时换了页表,旧进程缓存在 TLB 里的翻译全部作废(它们是按旧地图翻的),必须清空 TLB。新进程开跑时要重新一条条翻译、重填 TLB,这批 TLB miss 就是进程切换的隐性大成本之一</strong>(和第八章 Cache 冷启动并列)。为缓解,现代 ARM 给 TLB 项打上 <strong>ASID(地址空间标识)</strong>,标明"这条翻译属于哪个进程",切换时就不必全清,不同进程的翻译能共存于 TLB——这是重要优化,第二卷会提。</p></blockquote>
+
+<h2 id="s10">9.10 页表项里的权限位：保护的实现</h2>
+<p>MMU 不只翻译地址,还<strong>顺便做权限检查</strong>——这是"内存保护"的硬件实现。每个页表项(PTE)除了物理页框号,还有一堆权限位:</p>
+<table>
+<tr><th>权限位</th><th>作用</th></tr>
+<tr><td>有效位(Valid)</td><td>这个虚拟页有没有映射;无效→缺页异常</td></tr>
+<tr><td>读/写权限(R/W)</td><td>能不能写;往只读页写→异常(如写代码段被拦)</td></tr>
+<tr><td>用户/内核(U/K)</td><td>用户态能不能访问;用户态碰内核页→异常(第一章的 EL0/EL1 保护落地在这!)</td></tr>
+<tr><td>可执行(X / NX)</td><td>这页的内容能不能当指令执行;数据页标 NX 防止执行注入的代码(防栈溢出攻击)</td></tr>
+</table>
+<p><strong>翻译地址的同时,MMU 硬件检查这些位,违规立刻触发异常。</strong>于是:</p>
+<ul>
+  <li>用户程序访问内核内存 → 被拦(内核/用户位);</li>
+  <li>程序试图修改自己的代码段 → 被拦(只读);</li>
+  <li>往栈上注入代码并跳去执行 → 被拦(NX,第五章的栈溢出攻击防御);</li>
+  <li>访问一个没映射的地址(野指针、NULL)→ 缺页异常 → 段错误。</li>
+</ul>
+<blockquote><p>这才是"内存保护"的真相:<strong>不是软件在检查,而是 MMU 在每次访存翻译时用硬件顺手检查权限位,零额外开销。</strong>第一章讲的用户态/内核态隔离、进程间隔离,物理上就落实在这些页表权限位上。你的野指针之所以能被 Linux 抓成 Segmentation Fault 而不是默默踩坏内存(对比无 MMU 的裸机),全靠这里。</p></blockquote>
+
+<h2 id="s11">9.11 缺页异常(Page Fault)</h2>
+<p>当 MMU 翻译时发现"这个虚拟页无效/没映射/越权",它触发一个异常(第七章的异常机制!)叫<strong>缺页异常(Page Fault)</strong>,把控制权交给内核处理。缺页不一定是错误,分两种:</p>
+<ul>
+  <li><strong>正常的缺页(内核借机干活)</strong>:比如你 malloc 了内存但还没用,内核暂时没给真实物理页(懒分配);你第一次访问时缺页,内核这时才分配一个物理页、填好页表,然后让你的指令<strong>重新执行</strong>,你毫无感觉。这是虚拟内存的核心技巧,第十章详讲(按需分页、写时复制、换页)。</li>
+  <li><strong>真正的错误</strong>:访问野指针、NULL、越权——内核发现这是非法访问,给进程发 <strong>SIGSEGV 信号</strong>,就是你熟悉的 <strong>段错误(Segmentation Fault)</strong>。</li>
+</ul>
+<p>所以"段错误"的本质你现在完全清楚了:<strong>你的程序访问了一个页表里没有合法映射的虚拟地址,MMU 翻译失败触发缺页异常,内核判定为非法,杀掉你的程序。</strong></p>
+
+<h2 id="s12">9.12 MMU 与上下文切换 / TLB 刷新</h2>
+<p>收束到操作系统主线。进程切换时,和 MMU 相关的动作:</p>
+<pre><code>切换进程 A → B:
+  ① 保存 A 的寄存器现场(前几章)
+  ② 把 TTBR 指向 B 的页表        ← 换地图!整个地址空间视图切换
+  ③ 处理 TLB(有ASID则无需全清, 否则清空)
+  ④ 恢复 B 的寄存器现场 → B 运行, 它的虚拟地址现在按B的地图翻译</code></pre>
+<p>关键对比,把第一章的"进程 vs 线程"讲到硬件层:</p>
+<ul>
+  <li><strong>切换进程</strong>:要换 TTBR(换页表/地址空间),伴随 TLB 和 Cache 冲刷 → <strong>贵</strong>。</li>
+  <li><strong>切换同进程的线程</strong>:同一个地址空间、同一张页表,<strong>不用换 TTBR、不用刷 TLB</strong> → 便宜得多。</li>
+</ul>
+<blockquote><p>这就从硬件层解释了第一章的结论:<strong>"进程间切换比线程间切换贵",贵就贵在换地址空间(换页表)导致的 TLB/Cache 失效。</strong>线程共享地址空间,切换时省了这一大笔。而 RTOS 通常压根没有 MMU、所有任务共享一个地址空间,切换时既不换页表也没 TLB 问题,所以又快又确定——第一章说的"RTOS 切换快"的根本原因,到这里给全了。第十章会在 MMU 这个地基上,盖起"虚拟内存"的完整大厦(按需分页、swap、mmap、写时复制)。</p></blockquote>
+
+<h2 id="s13">9.13 面试常问问题</h2>
+<p><strong>Q1:MMU 是干什么的?解决什么问题?</strong><br>把虚拟地址翻译成物理地址,并做权限检查。解决多程序安全共享物理内存:隔离、地址不冲突、灵活分配。</p>
+<p><strong>Q2:虚拟地址怎么翻译成物理地址?</strong><br>分页:VA=虚拟页号+页内偏移,用虚拟页号查(多级)页表得物理页框号,拼上偏移得 PA。TTBR 指向当前进程页表。</p>
+<p><strong>Q3:为什么用多级页表?</strong><br>单级表太大且大量空条目浪费。多级只为用到的地址范围创建下级表,省内存;代价是多次访存,靠 TLB 弥补。</p>
+<p><strong>Q4:TLB 是什么?和 Cache 区别?</strong><br>页表的缓存,缓存 VA→PA 翻译结果,靠翻译的局部性提速。Cache 缓存数据/指令,TLB 缓存地址翻译,两个不同缓存。</p>
+<p><strong>Q5:内存保护/进程隔离怎么实现的?</strong><br>每进程独立页表(A 的地图里没 B 的映射);翻译时 MMU 硬件检查 PTE 权限位(读写/用户内核/NX/有效),违规触发异常。</p>
+<p><strong>Q6:段错误(Segmentation Fault)的本质?</strong><br>访问页表里无合法映射或越权的虚拟地址,MMU 触发缺页异常,内核判定非法,发 SIGSEGV。</p>
+<p><strong>Q7:为什么进程切换比线程切换贵?和 MMU 什么关系?</strong><br>进程切换要换页表(TTBR),导致 TLB 失效、Cache 冷启动;线程共享地址空间无需换,省了这些。</p>
+
+<h2 id="s14">9.14 常见误区</h2>
+<ol>
+  <li><strong>"程序里的地址就是物理地址"</strong>——有 MMU 时全是虚拟地址,经翻译才到物理。</li>
+  <li><strong>"页表在 CPU 里"</strong>——页表在物理内存里,TTBR 寄存器指向它;TLB 才在 CPU 里缓存翻译。</li>
+  <li><strong>"TLB 就是 Cache"</strong>——不同东西:TLB 缓存地址翻译,Cache 缓存数据。</li>
+  <li><strong>"缺页一定是错误"</strong>——很多是正常的按需分页,内核借机分配后重执行指令;只有非法访问才是段错误。</li>
+  <li><strong>"内存保护是操作系统软件逐次检查"</strong>——是 MMU 硬件在翻译时用权限位检查,几乎零开销。</li>
+  <li><strong>"进程和线程切换成本一样"</strong>——进程切换多了换页表+TLB失效,更贵。</li>
+</ol>
+
+<h2 id="s15">9.15 本章总结</h2>
+<ul>
+  <li>无 MMU 时地址即物理地址,方便但无隔离无保护,不适合跑众多不可信程序。</li>
+  <li>MMU 核心思想:<strong>加一层地址翻译</strong>,程序用虚拟地址,MMU 按页表翻译成物理地址。</li>
+  <li><strong>分页</strong>:内存切成 4KB 页,以页为单位翻译;VA=虚拟页号+页内偏移。</li>
+  <li><strong>页表</strong>是翻译地图,每进程一张,存内存里,TTBR 指向它;换进程=换 TTBR=换地图=隔离的根源。</li>
+  <li><strong>多级页表</strong>省内存(只建用到的部分),代价是多次访存,靠 <strong>TLB</strong>(翻译的缓存)弥补。</li>
+  <li>PTE 里的<strong>权限位</strong>(读写/用户内核/NX/有效)由 MMU 翻译时硬件检查,实现内存保护;违规触发异常。</li>
+  <li><strong>缺页异常</strong>:正常(按需分页,内核分配后重执行)或错误(非法访问→SIGSEGV 段错误)。</li>
+  <li>回扣:<strong>进程切换换页表致 TLB/Cache 失效,故比线程切换贵;RTOS 无 MMU 故切换又快又确定。</strong>ASID 可减少 TLB 全清。</li>
+</ul>
+
+<h2 id="s16">9.16 思维导图</h2>
+<pre><code>MMU
+├─ 一、无MMU:地址即物理,无隔离无保护
+├─ 二、要解决:隔离/地址不冲突/灵活分配
+├─ 三、核心思想:加一层地址翻译(VA→PA)
+│  └─ 每进程一套虚拟地址+各自地图=独占假象+隔离
+├─ 四、类比:前台按部门转接同一分机号
+├─ 五、分页:内存切4KB页,VA=页号+页内偏移
+├─ 六、页表:翻译地图,每进程一张,TTBR指向
+│  └─ 换进程=换TTBR=换地图(task_struct.mm)
+├─ 七、多级页表:省内存(只建用到的),代价多次访存
+├─ 八、翻译全过程:TTBR→逐级查表→PTE→拼PA
+├─ 九、TLB:翻译的缓存(≠数据Cache)
+│  └─ 切换换页表→TLB失效(隐性成本);ASID减少全清
+├─ 十、PTE权限位:读写/用户内核/NX/有效
+│  └─ MMU硬件翻译时检查=内存保护;落实EL0/EL1隔离
+├─ 十一、缺页异常:正常(按需分页)/错误(SIGSEGV段错误)
+└─ 十二、回扣:进程切换贵在换页表+TLB失效;RTOS无MMU故快</code></pre>
+
+<h2 id="s17">9.17 课后练习与面试题</h2>
+<h3>课后练习</h3>
+<ol>
+  <li>Linux 上写程序打印某变量的地址,多次运行(或多进程同时跑)观察虚拟地址可能相同,理解"不同进程可用相同虚拟地址"。</li>
+  <li>写一个访问 NULL 或野指针的程序,触发段错误,用 <code>dmesg</code> 或 core dump 看信息,对照 9.11 理解其本质。</li>
+  <li>用 <code>cat /proc/self/maps</code> 看当前进程的虚拟地址空间布局(代码/数据/堆/栈/库),对照第五章内存布局图。</li>
+  <li>写一个 malloc 大块内存但不写入 vs 写入的程序,用 <code>top</code> 看 VIRT 和 RES 的差异,初步感受按需分页(第十章深入)。</li>
+  <li>查 RK3588(ARMv8)的页大小和页表级数,了解 TTBR0/TTBR1 分别管用户/内核空间。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>MMU 解决什么问题?核心思想是什么?</li>
+  <li>描述虚拟地址翻译成物理地址的过程。</li>
+  <li>为什么需要多级页表?带来什么代价,如何弥补?</li>
+  <li>TLB 是什么?和 Cache 有何不同?为什么进程切换会影响它?</li>
+  <li>内存保护和进程隔离在硬件上如何实现?</li>
+  <li>段错误的本质是什么?缺页异常一定是错误吗?</li>
+  <li>为什么进程切换比线程切换开销大?</li>
+  <li>为什么 RTOS(无 MMU)上下文切换又快又确定?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第九章 完 · 下一章《第十章 虚拟内存》</p>
+<div class="nav">
+  <a href="第08章-Cache.html">← 第八章</a>
+  <a href="index.html">目录</a>
+  <a href="第10章-虚拟内存.html">第十章 →</a>
+</div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第七章 中断</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13.5px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第06章-函数调用.html">← 第六章</a>
+  <a href="index.html">目录</a>
+  <a href="第08章-Cache.html">第八章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第一卷 · 计算机组成原理</div>
+  <h1>第七章 中断</h1>
+  <div class="sub">CPU 唯一能被"强行打断"的机制，抢占、外设、系统调用的共同根基</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么需要中断</a></li>
+    <li><a href="#s2">轮询的困境</a></li>
+    <li><a href="#s3">生活类比：门铃</a></li>
+    <li><a href="#s4">中断的完整流程</a></li>
+    <li><a href="#s5">中断向量表</a></li>
+    <li><a href="#s6">中断现场的保存与恢复</a></li>
+    <li><a href="#s7">中断优先级与嵌套</a></li>
+    <li><a href="#s8">中断上下文 vs 线程上下文</a></li>
+    <li><a href="#s9">上半部/下半部：ISR 为什么要短</a></li>
+    <li><a href="#s10">中断与并发：为什么要关中断</a></li>
+    <li><a href="#s11">异常、中断、系统调用的统一</a></li>
+    <li><a href="#s12">回扣：中断是抢占的引擎</a></li>
+    <li><a href="#s13">面试常问</a></li>
+    <li><a href="#s14">常见误区</a></li>
+    <li><a href="#s15">本章总结</a></li>
+    <li><a href="#s16">思维导图</a></li>
+    <li><a href="#s17">课后练习与面试题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第一章说"抢占靠时钟中断",但中断本身还没讲透。这一章把它讲成体系——中断是 CPU <strong>唯一</strong>能被外部/内部事件强行打断的机制,它同时是"外设响应""抢占式调度""系统调用"三件大事的共同底层。学完你要能讲清一次中断从触发到返回的每一步,理解"中断上下文里为什么不能睡眠""ISR 为什么要短""为什么临界区要关中断"。</p></blockquote>
+
+<h2 id="s1">7.1 为什么需要中断</h2>
+<p>CPU 埋头执行指令流,可现实世界的事件是<strong>随机、异步</strong>发生的:用户按了键、网卡收到包、传感器数据就绪、定时到点。CPU 怎么知道这些事发生了?</p>
+<p>两条路:<strong>要么 CPU 主动一遍遍去问("轮询"),要么让事件发生时主动来通知 CPU("中断")。</strong>下一节告诉你为什么前者行不通。中断的存在,是为了让 CPU 能<strong>及时、高效</strong>地响应异步事件,而不必时刻盯着。</p>
+
+<h2 id="s2">7.2 轮询的困境</h2>
+<p>轮询(Polling)就是第一章的前后台系统里那个 <code>if(uart_flag)</code>——CPU 在循环里不停检查"事件来了没"。它有两个致命问题:</p>
+<ol>
+  <li><strong>浪费</strong>:99% 的检查都是"还没来",纯属空转烧 CPU。就像你在等快递,每 10 秒跑下楼看一次,一天啥也别干了。</li>
+  <li><strong>不及时</strong>:检查有间隔。如果你循环一圈要 100ms,事件在你刚检查完之后 1ms 发生,它得等 99ms 才被发现。对要求微秒级响应的场景(飞控、电机)是灾难。</li>
+</ol>
+<p>更糟的是,轮询让"响应延迟"依赖主循环里其他代码的长短——完全不可控。<strong>我们需要一种机制:平时 CPU 该干嘛干嘛,事件一发生立刻(硬件级)打断它去处理。</strong>这就是中断。</p>
+
+<h2 id="s3">7.3 生活类比：门铃</h2>
+<p>你在家工作(CPU 执行主任务)。有客人要来(外部事件)。</p>
+<ul>
+  <li><strong>轮询</strong>:你每隔一会儿就跑到门口看有没有人。累死,还可能刚离开门口客人就到了。</li>
+  <li><strong>中断</strong>:装个门铃。你安心工作,客人按铃(触发中断),你听到铃声<strong>立刻放下手头的活</strong>(保存现场)、去开门处理(执行中断服务程序),处理完<strong>回到刚才停下的地方</strong>继续工作(恢复现场)。</li>
+</ul>
+<p>门铃的精髓:<strong>你不用一直盯着门,事件会主动来打断你;而且打断是"可恢复的"——处理完能精确回到被打断的地方。</strong>这正是中断的两个核心特性:异步通知 + 可恢复。</p>
+
+<h2 id="s4">7.4 中断的完整流程</h2>
+<p>一次中断从发生到结束,走这几步(以 Cortex-M 为例):</p>
+<pre><code>主任务正在执行第 N 条指令...
+        │
+        │ ① 外设(如UART)产生中断信号 → 送到中断控制器(NVIC)
+        ▼
+   ② NVIC 判断: 该中断是否使能? 优先级够不够高(能否打断当前)?
+        │  够 → 通知 CPU
+        ▼
+   ③ CPU 执行完当前这条指令后, 硬件自动:
+        - 保存现场: 把 R0-R3,R12,LR,PC,xPSR 压栈(第四章的自动压栈!)
+        - 从"中断向量表"查到该中断的处理函数地址
+        - PC ← 处理函数地址   (跳过去)
+        - 切换到中断状态
+        ▼
+   ④ 执行中断服务程序 ISR (你写的 XXX_IRQHandler)
+        - 处理事件(读数据、清标志...)
+        ▼
+   ⑤ ISR 执行返回指令
+        - 硬件自动: 从栈弹回 R0-R3,R12,LR,PC,xPSR (恢复现场)
+        - PC 回到被打断的第 N+1 条指令
+        ▼
+主任务从被打断处无缝继续, 仿佛什么都没发生过</code></pre>
+<p>注意③里"执行完当前指令才响应"——中断不会把一条指令切到一半,保证了指令的完整性。也注意硬件自动压栈那批寄存器(R0-R3,R12,LR,PC,xPSR),正好是第四章 caller-saved 那批——所以 ISR 你可以用 C 写,编译器会自己保存它要用的 callee-saved(R4-R11),两批合起来现场就全了。<strong>这就是为什么 Cortex-M 的中断处理函数可以是普通 C 函数。</strong></p>
+
+<h2 id="s5">7.5 中断向量表</h2>
+<p>③里 CPU 怎么知道"某个中断该跳到哪个处理函数"?靠一张查找表——<strong>中断向量表(Vector Table)</strong>。</p>
+<p>它就是内存里一张表,每一项存着一个中断处理函数的地址,按中断编号排列。CPU 拿中断号当下标去查,取出地址装进 PC。</p>
+<pre><code>中断向量表(在内存固定/可配置位置):
+
+  编号  地址项              含义
+  ┌────┬──────────────┐
+  │ 0  │ 初始SP值       │  ← 上电时的栈指针
+  │ 1  │ Reset_Handler │  ← 复位入口(开机第一个执行的)
+  │ 2  │ NMI_Handler   │
+  │... │ ...           │
+  │ 15 │ SysTick_Handler│ ← 时钟中断(第一章的抢占引擎!)
+  │ 16+│ UART_Handler  │  ← 各外设中断
+  │    │ TIM_Handler   │
+  └────┴──────────────┘</code></pre>
+<p>你在 STM32 工程里写的 <code>void USART1_IRQHandler(void){...}</code>,链接时它的地址就被填进了向量表对应项。<strong>中断号 → 查表 → 得到你的函数地址 → 跳过去。</strong>整个"派发"过程是硬件+这张表完成的,极快。RTOS 移植时"接管 SysTick 和 PendSV",本质就是把向量表里这两项换成 RTOS 自己的处理函数。</p>
+
+<h2 id="s6">7.6 中断现场的保存与恢复</h2>
+<p>中断处理和函数调用一样面临"保现场"问题,但更棘手——因为<strong>中断是强行打断的,被打断的代码毫不知情</strong>(这点和上下文切换一样,回顾 6.12)。</p>
+<p>所以进中断必须保存<strong>足够的现场</strong>,保证 ISR 执行后能让主任务完全无感地继续。Cortex-M 的巧妙分工:</p>
+<ul>
+  <li><strong>硬件自动</strong>压栈 R0-R3, R12, LR, PC, xPSR(caller-saved 那批);</li>
+  <li><strong>ISR 里若用到 R4-R11</strong>(callee-saved),由编译器在 ISR 序言里压栈(和普通函数一样)。</li>
+</ul>
+<p>两批合起来,主任务的完整现场就都保住了。这和第四章 4.10 的"影子/自动压栈"、第六章的"序言尾声"完全是一套东西的复用。<strong>你看,中断响应本质就是一次"硬件帮你起头的、被迫的函数调用"。</strong></p>
+
+<h2 id="s7">7.7 中断优先级与嵌套</h2>
+<p>多个中断同时来怎么办?更紧急的中断能否打断正在处理的不太紧急的中断?这就是<strong>中断优先级</strong>和<strong>中断嵌套</strong>。</p>
+<ul>
+  <li>每个中断有个优先级数值。<strong>高优先级中断可以打断低优先级中断的 ISR</strong>——就像你在开门(处理客人),结果厨房着火了(更紧急),你会放下客人先救火。</li>
+  <li>处理完高优先级的,再回来接着处理被打断的低优先级 ISR。这就是<strong>中断嵌套</strong>,像函数调用一样一层层压栈、返回。</li>
+  <li>同优先级的中断不能互相打断,排队处理。</li>
+</ul>
+<blockquote><p>ARM 的 <strong>NVIC</strong>(嵌套向量中断控制器)专门管这套优先级仲裁和嵌套。注意 Cortex-M 的优先级<strong>数值越小优先级越高</strong>(0 最高),这是个经典的坑,配置反了会导致该抢的没抢到。中断嵌套太深会消耗中断栈(MSP),估算栈大小时要考虑最坏嵌套层数(呼应第五章)。</p></blockquote>
+
+<h2 id="s8">7.8 中断上下文 vs 线程上下文</h2>
+<p>一个极其重要、面试必考的区分。代码运行在两种"上下文"里:</p>
+<table>
+<tr><th></th><th>线程上下文(Thread Context)</th><th>中断上下文(Interrupt Context)</th></tr>
+<tr><td>什么时候</td><td>正常执行任务/进程代码</td><td>正在处理中断(ISR 里)</td></tr>
+<tr><td>能否睡眠/阻塞</td><td>能(可以等锁、等信号量、sleep)</td><td><strong>绝对不能!</strong></td></tr>
+<tr><td>能否被调度</td><td>能被切换</td><td>不能(它不是个任务)</td></tr>
+<tr><td>有没有 task_struct</td><td>有,它属于某个任务</td><td>没有,不属于任何任务</td></tr>
+</table>
+<h4>为什么中断上下文不能睡眠?</h4>
+<p>这是理解的关键。"睡眠/阻塞"意味着"让出 CPU,让调度器切到别的任务,等条件满足再回来"。但中断上下文<strong>不属于任何任务</strong>——它只是"借用"了当前被打断任务的栈在跑。如果 ISR 里睡眠:</p>
+<ul>
+  <li>调度器该切到谁?ISR 不是任务,没法被"挂起等待再恢复"。</li>
+  <li>它借用的那个被打断的任务,现在卡在中断里回不去了,整个系统状态错乱。</li>
+</ul>
+<p>所以铁律:<strong>ISR 里不能调用任何可能阻塞/睡眠的函数</strong>(如普通的锁、malloc 大内存、vTaskDelay、printf 有时也危险)。在 Linux 内核里同理,中断处理不能调用可能睡眠的函数。这是新手写驱动最常犯的错。</p>
+
+<h2 id="s9">7.9 上半部 / 下半部：ISR 为什么要短</h2>
+<p>中断响应时,通常会<strong>关闭同级或全部中断</strong>(防止重入)。这意味着<strong>ISR 执行期间,别的中断被推迟响应</strong>。如果 ISR 干很久(比如里面做大量计算),别的紧急中断就被拖累,系统实时性崩塌。</p>
+<p>所以铁律:<strong>ISR 必须尽可能短、尽可能快。</strong>但有时确实有很多活要干(比如收到网络包要做复杂协议处理),怎么办?拆成两半:</p>
+<table>
+<tr><th></th><th>上半部(Top Half)</th><th>下半部(Bottom Half)</th></tr>
+<tr><td>做什么</td><td>紧急的、最少的:清中断标志、把数据搬到缓冲区、记个"待办"</td><td>耗时的:实际的复杂处理</td></tr>
+<tr><td>在哪跑</td><td>ISR 里(关中断,要快)</td><td>稍后在线程上下文里(开中断,可从容)</td></tr>
+</table>
+<p>思路:ISR(上半部)只做"救急"的最少动作,然后<strong>登记一个"待办任务"</strong>就赶紧返回,把耗时的活留给稍后在正常上下文里执行的"下半部"。</p>
+<ul>
+  <li>Linux 里下半部机制:<strong>softirq、tasklet、workqueue</strong>(第五卷详讲)。</li>
+  <li>RTOS 里常见做法:ISR 里只 <code>给信号量/发消息到队列</code>,唤醒一个专门的处理任务去干重活。</li>
+</ul>
+<blockquote><p>这是嵌入式/驱动开发的核心设计模式。你写 STM32 中断时"在 ISR 里只置个标志,主循环里处理"就是这个思想的雏形。面试爱问"中断里能不能做耗时操作,不能的话怎么办"——答上半部/下半部。</p></blockquote>
+
+<h2 id="s10">7.10 中断与并发：为什么临界区要关中断</h2>
+<p>中断带来一个隐蔽的并发问题。设想:主任务正在修改一个链表,改到一半(链表处于不一致的中间状态),<strong>中断突然来了</strong>,ISR 里也去访问这个链表——它看到的是个坏掉的半成品,程序崩溃或数据损坏。</p>
+<p>这就是中断引入的"并发":<strong>ISR 和主任务共享数据时,ISR 可能在任何指令边界插进来。</strong>解决办法:在主任务操作共享数据的那段"临界区"里<strong>暂时关闭中断</strong>,让这几步不被打断,做完再开中断。</p>
+<pre><code>关中断保护临界区:
+   disable_irq();      // 关中断:接下来不许打断我
+   list_insert(...);   // 安全地修改共享链表(几步原子完成)
+   enable_irq();       // 开中断:恢复
+
+要点: 临界区必须极短! 关中断期间所有中断被推迟, 关久了伤实时性。</code></pre>
+<blockquote><p>这是<strong>并发与锁</strong>这个大主题(第五卷 SpinLock/Mutex/原子操作)的第一次登场。关中断是最原始、最粗暴的"锁"——它保护的是"任务 vs 中断"之间的竞争。但它代价大(推迟所有中断)、且在多核上不够(关一个核的中断,别的核照样能插进来),所以后面会发展出自旋锁、原子操作等更精细的手段。你现在只需理解:<strong>中断带来了并发,并发就需要保护,关中断是最初的保护手段。</strong></p></blockquote>
+
+<h2 id="s11">7.11 异常、中断、系统调用的统一</h2>
+<p>一个拔高的认识:中断只是一大类机制里的一种。ARM 把所有"打断正常执行流、跳到特定处理程序"的事件统称<strong>异常(Exception)</strong>,分几类:</p>
+<table>
+<tr><th>类型</th><th>触发源</th><th>例子</th></tr>
+<tr><td><strong>中断 IRQ</strong></td><td>外部硬件,异步</td><td>UART、定时器、GPIO</td></tr>
+<tr><td><strong>故障 Fault</strong></td><td>CPU 执行出错,同步</td><td>访问非法地址、除零、非法指令</td></tr>
+<tr><td><strong>系统调用</strong></td><td>软件主动触发</td><td>SVC/syscall 指令(第三章)</td></tr>
+</table>
+<p>它们的<strong>处理机制惊人地一致</strong>:都是"保存现场 → 查向量表 → 跳到处理程序 → 处理 → 恢复现场返回"。区别只在触发源和是否切换特权级。</p>
+<blockquote><p>这个统一非常深刻:<strong>操作系统进入内核的所有入口——外设中断、缺页故障、系统调用——底层都是同一套"异常"机制。</strong>你调 <code>read()</code>(SVC 异常)、程序访问野指针(Fault 异常)、时钟到点(IRQ 异常),CPU 用的是同一个"保存现场跳处理程序"的动作。第二卷(ARM 异常/EL)、第五卷(缺页处理、系统调用)会把这套机制反复展开。理解了中断,你就理解了操作系统所有"陷入内核"的时刻。</p></blockquote>
+
+<h2 id="s12">7.12 回扣：中断是抢占的引擎</h2>
+<p>终于回到第一章的伏笔。第一章说"抢占靠时钟中断",现在你能完全理解这个链条了:</p>
+<pre><code>SysTick 定时器每 1ms 产生一次中断(IRQ)
+        │
+        ▼
+CPU 被强行打断 → 保存当前任务A的现场 → 跳进 SysTick_Handler
+        │
+        ▼
+内核在这里做一件事: 调用调度器, 问"该换人吗?"
+        │
+   ┌────┴────┐
+   │         │
+ 不换       该换(有更高优先级任务就绪 / A时间片用完)
+   │         │
+ 直接返回   触发 PendSV → 在PendSV里做上下文切换(存A全部现场,换到B)
+   │         │
+   ▼         ▼
+ 回到A     切到B运行</code></pre>
+<p><strong>没有中断,CPU 就永远不会"主动"想起调度器,一个死循环任务就能霸占 CPU 永不撒手。正是时钟中断这个"周期性的强制打断",给了内核夺回控制权、重新调度的机会。</strong>所以说:</p>
+<blockquote><p><strong>中断是抢占式调度的引擎。</strong>第一章的三支柱——上下文切换(第四五六章)、调度器、时钟中断(本章)——到这里全部拿到了硬件解释。第一卷的操作系统核心机制,就此拼图完整。为什么切换要放在 PendSV(最低优先级异常)而不是直接在 SysTick 里做?因为要等所有中断处理完、真正要回线程时再切,避免切换过程被别的中断搅乱——这个精妙设计留到第三卷 FreeRTOS 移植时逐行剖析。</p></blockquote>
+
+<h2 id="s13">7.13 面试常问问题</h2>
+<p><strong>Q1:中断和轮询的区别?各自优缺点?</strong><br>轮询主动反复查,浪费 CPU 且响应不及时;中断由事件主动通知,及时高效但有响应/切换开销。低频/简单场景可轮询,实时/异步场景用中断。</p>
+<p><strong>Q2:一次中断从触发到返回的完整流程?</strong><br>外设→中断控制器仲裁优先级→CPU 执行完当前指令→硬件自动保存现场+查向量表跳 ISR→ISR 处理→返回时恢复现场→回被打断处。</p>
+<p><strong>Q3:中断上下文能睡眠/阻塞吗?为什么?</strong><br>不能。中断不属于任何任务、无法被调度挂起恢复;睡眠会让借用的任务卡死、系统错乱。ISR 不能调用可能阻塞的函数。</p>
+<p><strong>Q4:ISR 为什么要短?活多怎么办?</strong><br>ISR 期间常关中断,拖长会推迟其他中断、损害实时性。拆上半部(救急、登记)/下半部(耗时处理,放线程上下文):softirq/tasklet/workqueue 或"ISR 发信号量唤醒任务"。</p>
+<p><strong>Q5:为什么临界区要关中断?有什么代价?多核够吗?</strong><br>防止 ISR 在共享数据修改到一半时插入导致不一致。代价是推迟所有中断,须极短。多核上关本核中断不够,别的核仍可访问,需自旋锁。</p>
+<p><strong>Q6:中断、异常、系统调用有什么联系?</strong><br>都是"异常"机制:保存现场→查向量表→跳处理→恢复返回。区别在触发源(外部硬件/CPU出错/软件主动)。是操作系统进入内核的统一入口。</p>
+<p><strong>Q7:中断和抢占式调度什么关系?</strong><br>时钟中断周期性打断 CPU,给内核调用调度器的机会,是抢占的引擎;没有中断,死循环任务无法被抢占。</p>
+
+<h2 id="s14">7.14 常见误区</h2>
+<ol>
+  <li><strong>"中断会把指令切到一半"</strong>——不会,CPU 执行完当前指令才响应中断。</li>
+  <li><strong>"ISR 里可以随便调用函数"</strong>——不能调用可能阻塞/睡眠的(锁、delay、大 malloc 等)。</li>
+  <li><strong>"中断优先级数值越大越优先"</strong>——Cortex-M 相反,数值越小越优先(0 最高)。</li>
+  <li><strong>"ISR 越全能越好,把活都在里面干完"</strong>——反了,ISR 要最短,耗时活丢下半部。</li>
+  <li><strong>"关中断就能解决所有并发"</strong>——只解决"任务 vs 中断"且单核有效;多核需自旋锁/原子操作。</li>
+  <li><strong>"中断和系统调用没关系"</strong>——底层都是异常机制,一套流程。</li>
+  <li><strong>"共享变量不用保护"</strong>——中断可在任意指令边界插入,共享数据需临界区/原子操作,变量还常需 volatile(第四章)。</li>
+</ol>
+
+<h2 id="s15">7.15 本章总结</h2>
+<ul>
+  <li>中断解决"CPU 如何及时响应异步事件";轮询浪费且不及时,中断由事件主动通知、可恢复。</li>
+  <li>流程:外设→控制器仲裁→执行完当前指令→硬件自动保存现场+查<strong>向量表</strong>→跳 ISR→处理→恢复现场返回。</li>
+  <li>Cortex-M 硬件自动压 caller-saved 那批,ISR 用到的 callee-saved 由编译器压;故 ISR 可用 C 写。</li>
+  <li><strong>优先级/嵌套</strong>由 NVIC 仲裁,高优先级可打断低优先级 ISR(注意数值越小越高)。</li>
+  <li><strong>中断上下文不能睡眠</strong>——它不属于任何任务,无法被调度挂起恢复。</li>
+  <li><strong>ISR 要短</strong>:拆上半部(救急+登记)/下半部(耗时处理放线程上下文)。</li>
+  <li>中断引入并发:共享数据需<strong>临界区(关中断)</strong>保护;这是锁的雏形,多核不够用。</li>
+  <li>中断/故障/系统调用统一为<strong>异常</strong>机制,是操作系统进内核的共同入口。</li>
+  <li>回扣:<strong>时钟中断是抢占式调度的引擎</strong>;第一章三支柱的硬件解释全部集齐。</li>
+</ul>
+
+<h2 id="s16">7.16 思维导图</h2>
+<pre><code>中断
+├─ 一、为何需要:及时响应异步事件
+├─ 二、轮询困境:浪费CPU + 响应不及时
+├─ 三、类比:门铃(异步通知+可恢复)
+├─ 四、完整流程
+│  └─ 执行完当前指令→硬件保存现场+查向量表→跳ISR→恢复返回
+├─ 五、中断向量表(中断号→处理函数地址)
+├─ 六、现场保存:硬件压caller-saved+编译器压callee-saved
+├─ 七、优先级与嵌套(NVIC;数值越小越高)
+├─ 八、★中断上下文不能睡眠
+│  └─ 因:不属于任何任务,无法调度挂起恢复
+├─ 九、ISR要短:上半部(救急登记)/下半部(耗时,线程上下文)
+│  └─ softirq/tasklet/workqueue;信号量唤醒任务
+├─ 十、并发:临界区关中断保护(锁雏形,多核不够)
+├─ 十一、异常统一:中断/故障/系统调用同一套机制
+│  └─ 操作系统进内核的共同入口
+└─ 十二、★回扣:时钟中断=抢占引擎(第一章三支柱集齐)</code></pre>
+
+<h2 id="s17">7.17 课后练习与面试题</h2>
+<h3>课后练习</h3>
+<ol>
+  <li>STM32 上配一个 GPIO 外部中断,在 ISR 里翻转 LED;用逻辑分析仪测量"按键到 LED 翻转"的延迟,和轮询方式对比。</li>
+  <li>写一个 ISR 里只置标志、主循环处理的程序;再故意在 ISR 里加长延时,观察其他中断(如串口)被拖累丢数据——亲历"ISR 要短"。</li>
+  <li>FreeRTOS 里用"ISR 发信号量唤醒任务"实现上半部/下半部,对比"全在 ISR 里做"的差异。</li>
+  <li>写一个主循环和 ISR 都修改的共享计数器,不加保护跑一段时间看是否出错;再用关中断保护,验证正确。</li>
+  <li>看 STM32 启动文件(startup_xxx.s),找到中断向量表,找到你写的 IRQHandler 对应项。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>中断相比轮询的优势?什么场景仍用轮询?</li>
+  <li>描述一次中断从触发到返回的完整过程。</li>
+  <li>中断向量表是什么?CPU 如何找到对应的处理函数?</li>
+  <li>为什么中断上下文不能睡眠/阻塞?举例说明后果。</li>
+  <li>ISR 为什么要短?上半部/下半部如何划分?列举 Linux 的下半部机制。</li>
+  <li>临界区为什么关中断?这种保护在多核上够吗?为什么?</li>
+  <li>中断、异常、系统调用的关系?</li>
+  <li>时钟中断如何支撑抢占式调度?没有它会怎样?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第七章 完 · 下一章《第八章 Cache》</p>
+<div class="nav">
+  <a href="第06章-函数调用.html">← 第六章</a>
+  <a href="index.html">目录</a>
+  <a href="第08章-Cache.html">第八章 →</a>
+</div>
+
+</div>
+</body>
+</html>

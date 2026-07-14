@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第四十七章 CAN 总线驱动</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第46章-SPI驱动.html">← 第四十六章</a>
+  <a href="index.html">目录</a>
+  <a href="第48章-mmap与ioctl.html">第四十八章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第六卷 · Linux 驱动</div>
+  <h1>第四十七章 CAN 总线驱动</h1>
+  <div class="sub">车载/机器人的神经网络,和 SocketCAN</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么车里用 CAN</a></li>
+    <li><a href="#s2">生活例子:会议室抢话筒</a></li>
+    <li><a href="#s3">CAN 的核心特性</a></li>
+    <li><a href="#s4">CAN 帧:ID 即优先级</a></li>
+    <li><a href="#s5">仲裁:非破坏性竞争</a></li>
+    <li><a href="#s6">面向消息而非地址</a></li>
+    <li><a href="#s7">差分信号与可靠性</a></li>
+    <li><a href="#s8">CAN FD 与更高带宽</a></li>
+    <li><a href="#s9">SocketCAN:把 CAN 当网络设备</a></li>
+    <li><a href="#s10">用 SocketCAN 收发</a></li>
+    <li><a href="#s11">回扣网络栈与车载实战</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:CAN 总线是<strong>汽车和机器人的"神经网络"</strong>——发动机、刹车、车身、雷达、电机之间的通信全靠它。对目标去<strong>理想/小鹏/Momenta车载</strong>的你,CAN 是<strong>必考核心</strong>。它的设计哲学和前面三种总线截然不同:<strong>面向消息、ID 即优先级、非破坏性仲裁、为可靠性而生</strong>。Linux 用 <strong>SocketCAN</strong> 把 CAN 做成"网络设备",让你用 socket(第34章)收发 CAN 报文。</p></blockquote>
+
+<h2 id="s1">47.1 为什么车里用 CAN</h2>
+<p>一辆车里有几十上百个电子单元(ECU):发动机控制、ABS 刹车、车身、仪表、雷达、空调……它们要频繁交换数据(车速、转速、刹车状态)。用点对点连线?几十个单元两两相连是线缆灾难(重量、成本、故障率爆炸)。<strong>需要一种总线,让所有单元挂在一条(两根线)总线上互相通信,而且极其可靠(汽车关乎人命,不能因一个节点故障或电磁干扰就通信崩溃)。</strong></p>
+<p><strong>CAN(Controller Area Network,控制器局域网)</strong>就是博世为汽车设计的这种总线。它的核心诉求是<strong>可靠、实时、多节点、抗干扰</strong>——这些诉求塑造了它独特的设计(和追求速度的 SPI、省线的 I2C 完全不同)。<strong>在汽车、工业、机器人领域,CAN 是事实标准</strong>:的机器人、行业无人机的电机/云台/电池管理,车企的整车网络,大量用 CAN。理解 CAN 的设计,就理解了"为可靠性和实时性而生的通信"长什么样。</p>
+
+<h2 id="s2">47.2 生活例子：会议室抢话筒</h2>
+<p>想象一个大会议室,几十人(节点)共用一套广播系统(一条总线),谁说话所有人都听得到(广播)。问题:同时几个人想说话怎么办(总线冲突)?</p>
+<p><strong>CAN 的规则很妙</strong>:每个人发言前先报一个"话题优先级编号"(CAN ID),编号越小优先级越高。大家同时开口报编号时,<strong>编号小(优先级高)的人继续说,编号大的人一听"有比我更紧急的",立刻主动闭嘴让行,等下一轮再说。</strong>关键是——<strong>让行的人不会破坏正在进行的发言</strong>(不像两个人同时喊话变成噪音),而是"无损地"退出。<strong>所以最紧急的消息(如刹车)总能第一时间发出去,不被打断。</strong>这就是 CAN 的"非破坏性仲裁"——用优先级解决冲突,且保证高优先级消息零延迟胜出。这对实时性至关重要(刹车信号不能等)。</p>
+
+<h2 id="s3">47.3 CAN 的核心特性</h2>
+<p>先总览 CAN 区别于 UART/I2C/SPI 的关键特性:</p>
+<table>
+<tr><th>特性</th><th>说明</th></tr>
+<tr><td><strong>多主广播</strong></td><td>任何节点都能主动发,消息广播给所有节点(无主从之分)</td></tr>
+<tr><td><strong>面向消息</strong></td><td>报文按"消息 ID"标识内容,不是发给某个地址的节点(见 47.6)</td></tr>
+<tr><td><strong>ID 即优先级</strong></td><td>消息 ID 小=优先级高,仲裁时胜出</td></tr>
+<tr><td><strong>非破坏性仲裁</strong></td><td>多节点同发,高优先级无损胜出,低优先级自动退让重试</td></tr>
+<tr><td><strong>差分信号</strong></td><td>两根线 CAN_H/CAN_L 差分传输,强抗电磁干扰</td></tr>
+<tr><td><strong>强错误检测</strong></td><td>CRC、位监测、错误帧、故障节点自动隔离</td></tr>
+<tr><td>速度</td><td>经典 CAN 最高 1Mbps(CAN FD 更高),不追求高速,追求可靠实时</td></tr>
+</table>
+<p><strong>一句话概括 CAN 的设计哲学:牺牲速度,换取可靠性、实时性和多节点广播。</strong>它不快(1Mbps),但极其可靠、能让紧急消息优先、能容忍节点故障和强干扰——这正是汽车/工业需要的。下面逐个展开最核心的几点。</p>
+
+<h2 id="s4">47.4 CAN 帧：ID 即优先级</h2>
+<p>CAN 传输的单位是"帧",核心字段是 ID 和数据:</p>
+<pre><code>CAN 数据帧(标准帧, 简化):
+  ┌─────┬──────────┬─────┬──────────┬─────┬─────┐
+  │ SOF │ 仲裁段(ID) │ 控制 │ 数据(0-8字节)│ CRC │ ACK │
+  └─────┴──────────┴─────┴──────────┴─────┴─────┘
+          ↑
+     ★11位ID(标准)或29位ID(扩展)
+     ID有双重作用:
+      ① 标识这条消息是"什么内容"(如0x100=车速, 0x200=转速)
+      ② 决定优先级(ID数值越小 → 优先级越高)
+
+  数据段最多【8字节】(经典CAN) —— 很小! 只传关键信号, 不传大数据</code></pre>
+<p><strong>CAN ID 的双重身份是理解 CAN 的钥匙</strong>:它既<strong>标识消息内容</strong>(0x100 代表"车速"这类消息),又<strong>决定优先级</strong>(ID 小的优先)。<strong>数据段最多 8 字节</strong>(经典 CAN)——非常小,因为 CAN 是传"控制信号"的(车速、开关状态、指令),不是传大数据流(那是以太网的活)。<strong>这个"小数据、ID 标识内容、ID 定优先级"的设计,完全服务于实时控制场景</strong>:每条消息小而快,紧急的先发。电机控制、车企的整车信号,都是这种小报文。</p>
+
+<h2 id="s5">47.5 仲裁：非破坏性竞争</h2>
+<p>CAN 最精妙的机制——<strong>非破坏性逐位仲裁</strong>,面试必考,一定要懂原理:</p>
+<pre><code>物理基础: CAN线有"显性(0)"和"隐性(1)", 显性会"盖住"隐性
+          (类似I2C开漏: 任何节点发0都能把线拉成0)
+
+多节点同时发, 逐位比较ID:
+  节点A的ID: 0 1 1 0 1 0 0...
+  节点B的ID: 0 1 0 1 ...
+             ↑ ↑ ↑
+  第1,2位相同(都发, 线上一致, 都继续)
+  第3位: A发1(隐性), B发0(显性) → 线上是0(显性盖过隐性)
+    → A发1却看到线上是0 → "有人优先级比我高" → A立刻退出仲裁!
+    → B继续发送(它赢了), 消息不受影响
+  → B(ID更小)无损获得总线, A退出等下轮重发</code></pre>
+<blockquote><p><strong>非破坏性仲裁的精髓:节点边发送 ID 边监听总线,一旦发现自己发的位(隐性 1)和总线实际(被别人拉成显性 0)不符,就知道有更高优先级节点在发,立即主动退出——而这个退出对赢家毫无影响(赢家的报文完整发出)。</strong>ID 数值小的(高位是 0/显性多的)总是胜出。<strong>对比以太网(第34章)的 CSMA/CD:以太网冲突了要"都停下、随机退避重发"(破坏性,浪费带宽);CAN 是"高优先级无损胜出、低优先级悄悄退让"(非破坏性,零浪费,且确定性)。</strong>这个机制保证了<strong>最高优先级消息永远能在固定时间内发出</strong>(实时性!刹车信号不会被堵),同时总线利用率高(冲突不浪费)。<strong>这是 CAN 为实时控制而生的核心设计,车企面试极爱问"CAN 仲裁原理"。</strong></p></blockquote>
+
+<h2 id="s6">47.6 面向消息而非地址</h2>
+<p>一个思维转变:CAN <strong>不像 I2C/以太网那样"发给某个地址的节点"</strong>,而是<strong>面向消息</strong>:</p>
+<pre><code>I2C/以太网(面向地址):
+  "我要把数据发给 地址0x68 那个设备"  ← 点对点, 指定接收方
+
+CAN(面向消息):
+  "我广播一条 ID=0x100(车速) 的消息"   ← 不指定发给谁!
+  → 所有节点都收到, 每个节点自己决定"这条消息我关不关心"
+  → 关心车速的节点(仪表、雷达)用【过滤器】只接收ID=0x100
+  → 不关心的节点硬件自动忽略
+
+  好处: ① 一条消息多个节点同时用(广播天然适合传感器数据分发)
+        ② 加新节点不影响别人(它自己订阅关心的ID即可)
+        ③ 发送方不用知道谁在接收(解耦)</code></pre>
+<p><strong>CAN 是"发布-订阅"式:发送方广播带 ID 的消息(不管谁收),接收方按 ID 过滤只收自己关心的。</strong>这和 I2C"点名某地址"、以太网"发给某 MAC"的"面向地址"完全不同。<strong>好处是天然解耦和广播</strong>:车速消息发一次,仪表、雷达、巡航都能收;加个新 ECU 只需让它订阅关心的 ID,不影响现有节点。<strong>这个"面向消息/发布订阅"思想,你在 ROS2(话题 topic 发布订阅)里已经熟悉了</strong>——CAN 在硬件总线层面就是这个模型。理解这点,CAN 的很多设计(过滤器、无地址)就通了。</p>
+
+<h2 id="s7">47.7 差分信号与可靠性</h2>
+<p>CAN 为什么在充满电磁干扰的汽车里还能可靠通信?靠<strong>差分信号</strong>和多重错误机制:</p>
+<pre><code>差分信号: 用两根线 CAN_H 和 CAN_L 的【电压差】表示数据
+  显性(0): CAN_H高、CAN_L低 (压差大)
+  隐性(1): CAN_H=CAN_L      (压差~0)
+  读数据看的是【两根线的差】, 不是绝对电压
+
+  ★抗干扰原理: 电磁干扰会【同时】影响两根线(它们挨在一起,
+     常绞在一起=双绞线) → 两根线一起被抬高/拉低
+     → 但它们的【差】几乎不变 → 数据不受干扰! (共模抑制)
+
+多重错误检测(可靠性):
+  CRC校验 + 位监测 + 帧格式检查 + ACK确认
+  + 错误帧(出错立即通知全网重发)
+  + 故障节点自动"离线"(错误计数超限自我隔离, 不拖垮总线)</code></pre>
+<p><strong>差分信号 + 双绞线是 CAN 抗干扰的关键</strong>:干扰同时打在两根线上(共模),但数据看的是两线之差,共模干扰被抵消——这就是"共模抑制",让 CAN 在汽车强电磁环境里依然可靠(以太网、USB 也用差分,同理)。<strong>再加上 CRC、位监测、错误帧、故障节点自隔离等多重机制</strong>,CAN 的可靠性达到了汽车级要求。<strong>对比前面几种总线,CAN 是唯一把"可靠性"放在第一位设计的</strong>——因为它的应用(刹车、转向)真的关乎安全。终端还要接 120Ω 终端电阻消除反射(常见硬件要点)。</p>
+
+<h2 id="s8">47.8 CAN FD 与更高带宽</h2>
+<p>经典 CAN 有两个瓶颈:速度低(1Mbps)、数据段小(8 字节)。随着汽车电子数据量暴增(自动驾驶传感器),推出了 <strong>CAN FD</strong>:</p>
+<table>
+<tr><th></th><th>经典 CAN</th><th>CAN FD(Flexible Data-rate)</th></tr>
+<tr><td>数据段</td><td>最多 8 字节</td><td>最多 <strong>64 字节</strong></td></tr>
+<tr><td>速率</td><td>最高 1Mbps</td><td>数据段可提速到 5Mbps+</td></tr>
+<tr><td>兼容</td><td>-</td><td>兼容经典 CAN(可混用)</td></tr>
+</table>
+<p><strong>CAN FD 在保持 CAN 仲裁/可靠性优点的基础上,提升了数据段大小(8→64 字节)和数据阶段速率。</strong>仲裁段仍用低速(保证仲裁的确定性),数据段切到高速(提升吞吐)。<strong>现代汽车和高端机器人越来越多用 CAN FD</strong>(域控制器间通信、传感器数据)。更高端的还有车载以太网(100M/1000M,传摄像头/雷达大数据)。<strong>但 CAN/CAN FD 因其确定性和可靠性,在控制类通信里仍不可替代。</strong>了解 CAN FD 的存在和定位即可,底层机制和经典 CAN 一致。</p>
+
+<h2 id="s9">47.9 SocketCAN：把 CAN 当网络设备</h2>
+<p>转到 Linux 驱动。Linux 处理 CAN 的方式很巧妙,叫 <strong>SocketCAN</strong>——<strong>把 CAN 接口做成"网络设备",用 socket(第34章)收发 CAN 报文。</strong></p>
+<pre><code>SocketCAN 的思路:
+  不把CAN当字符设备(read/write原始数据), 而是当【网络设备】!
+
+  CAN接口 → 像网卡一样是个 net_device: can0, can1...
+  收发CAN报文 → 用 socket API(第34章)!
+
+  配置(像配网卡):
+    ip link set can0 type can bitrate 500000  # 设波特率
+    ip link set can0 up                        # 启用
+    ifconfig can0 / ip -d link show can0       # 查看状态
+
+  好处:
+   ① 复用成熟的网络子系统(第34章): 多个程序可同时收发、过滤
+   ② 标准socket编程, 和写网络程序一样
+   ③ 工具丰富: candump/cansend(can-utils)</code></pre>
+<blockquote><p><strong>SocketCAN 是一个漂亮的设计决策:CAN 本质是"广播消息、多节点、带过滤"的通信,这和网络(第34章)高度相似——所以 Linux 干脆把 CAN 纳入网络子系统,做成 net_device,用 socket 收发。</strong>这样就<strong>复用了整套成熟的网络基础设施</strong>(第34章):多个进程能同时打开同一个 CAN 接口收发、内核帮你做 ID 过滤、排队、和网络工具链集成。<strong>回想第46章 regmap 让 I2C/SPI 复用,这里 SocketCAN 让 CAN 复用网络栈——都是"把新东西套进已有的成熟抽象"的智慧。</strong>对比:早期非 SocketCAN 方案把 CAN 当字符设备,每个程序独占、要自己管过滤,远不如 SocketCAN 灵活。<strong>现在 Linux 上用 CAN 几乎都走 SocketCAN,这也是"面向消息的 CAN"和"面向消息的网络"在设计上的天然契合。</strong></p></blockquote>
+
+<h2 id="s10">47.10 用 SocketCAN 收发</h2>
+<p>用 SocketCAN 收发 CAN 报文,就是写 socket 程序(第34章),对目标车企岗要会:</p>
+<pre><code>#include &lt;linux/can.h&gt;
+#include &lt;linux/can/raw.h&gt;
+
+int s = socket(PF_CAN, SOCK_RAW, CAN_RAW);   // ★创建CAN socket
+struct sockaddr_can addr = { .can_family=AF_CAN };
+addr.can_ifindex = if_nametoindex("can0");   // 绑定到can0接口
+bind(s, (struct sockaddr*)&addr, sizeof(addr));
+
+// 发送一帧:
+struct can_frame frame = {
+    .can_id = 0x123,           // 消息ID
+    .can_dlc = 2,              // 数据长度(0-8)
+    .data = {0xAB, 0xCD},
+};
+write(s, &frame, sizeof(frame));   // 发出去(广播)
+
+// 接收(可设过滤器只收关心的ID):
+struct can_frame rx;
+read(s, &rx, sizeof(rx));          // 收到一帧
+printf("ID=%x len=%d\n", rx.can_id, rx.can_dlc);
+
+// 命令行工具(can-utils):
+//   candump can0            # 监听所有报文
+//   cansend can0 123#ABCD   # 发一帧</code></pre>
+<p><strong>就是标准 socket 编程</strong>:<code>socket(PF_CAN, SOCK_RAW, CAN_RAW)</code> 创建 CAN socket,bind 到 can0 接口,然后 <code>write</code> 发 <code>can_frame</code>(带 ID、长度、数据)、<code>read</code> 收。<strong>能设置过滤器</strong>(只收关心的 ID,对应 47.6 的订阅)。<strong>命令行 <code>candump</code>(抓所有报文)和 <code>cansend</code>(发报文)是调试 CAN 的利器</strong>(属于 can-utils 工具集)——插上 CAN 分析仪 candump 一看,总线上跑什么报文一目了然。<strong>这就是车企里用 CAN 的日常方式</strong>:配好 can0、用 socket 或 candump 收发调试,和写网络程序体验一致。</p>
+
+<h2 id="s11">47.11 回扣网络栈与车载实战</h2>
+<p>CAN 这章的连接:</p>
+<table>
+<tr><th>本章概念</th><th>连接到</th></tr>
+<tr><td>SocketCAN 用 socket</td><td>第34章 socket/网络栈</td></tr>
+<tr><td>面向消息/发布订阅</td><td>ROS2 话题、第34章广播</td></tr>
+<tr><td>非破坏性仲裁 vs CSMA/CD</td><td>第34章以太网冲突处理</td></tr>
+<tr><td>ID 即优先级/实时性</td><td>第七卷实时系统(优先级)</td></tr>
+<tr><td>差分信号抗干扰</td><td>硬件/信号完整性</td></tr>
+<tr><td>can0 是 net_device</td><td>第34章网络设备</td></tr>
+</table>
+<blockquote><p><strong>CAN 是本卷面向"车载/机器人"最重要的一章,直接对口理想/小鹏/Momenta车载岗。</strong>它展示了一种和 UART/I2C/SPI 完全不同的设计哲学:<strong>不为速度、不为省线,而为可靠性、实时性、多节点广播——因为它的应用关乎安全和实时控制。</strong>其中"ID 即优先级 + 非破坏性仲裁"保证紧急消息(刹车)确定性优先,是<strong>实时系统(第七卷)</strong>思想在总线层的体现;"面向消息/发布订阅"和 ROS2、和网络广播一脉相承;而 <strong>SocketCAN 把 CAN 纳入网络栈(第34章)</strong>,让你用熟悉的 socket 收发。<strong>实战上:配 can0、candump 抓包、cansend 发包、socket 编程解析报文,是车载/机器人开发的日常。</strong>更进一步,车里还有 CAN 之上的应用层协议(如汽车诊断的 UDS、机器人的 CANopen),以及 DBC 文件描述报文含义——这些是在 CAN 基础上的上层,理解了 CAN 本身,再学它们就水到渠成。<strong>掌握 CAN,你就拿到了进入智能汽车/机器人通信领域的门票。</strong></p></blockquote>
+
+<h2 id="s12">47.12 面试常问问题</h2>
+<p><strong>Q1:CAN 总线的特点?为什么汽车用它?</strong><br>多主广播、面向消息、ID 即优先级、非破坏性仲裁、差分信号抗干扰、强错误检测。汽车需要多节点、极可靠、实时(刹车不能延迟)、抗强电磁干扰的通信,CAN 正为此设计。</p>
+<p><strong>Q2:CAN 的仲裁机制?为什么是"非破坏性"?★</strong><br>逐位仲裁:节点边发 ID 边监听,显性(0)盖过隐性(1);发现自己发 1 但线上是 0,说明有更高优先级(ID 更小)在发,立即退出。赢家报文不受影响(非破坏性)。保证最高优先级消息确定性胜出,兼顾实时和总线利用率。</p>
+<p><strong>Q3:CAN ID 有什么作用?</strong><br>双重:标识消息内容(如 0x100=车速)+ 决定优先级(ID 越小优先级越高,仲裁胜出)。</p>
+<p><strong>Q4:CAN 和以太网冲突处理的区别?</strong><br>以太网 CSMA/CD 冲突后都停下随机退避重发(破坏性、不确定);CAN 非破坏性仲裁,高优先级无损胜出、低优先级退让,确定性强、不浪费带宽。</p>
+<p><strong>Q5:CAN 为什么面向消息而非地址?好处?</strong><br>广播带 ID 的消息,接收方按 ID 过滤订阅(发布-订阅,类似 ROS2 话题)。好处:一条消息多节点共享、加节点不影响别人、收发解耦。</p>
+<p><strong>Q6:CAN 怎么抗干扰?</strong><br>差分信号(CAN_H/CAN_L 双绞线,看电压差),干扰共模作用于两线被差分抵消(共模抑制);加 CRC、位监测、错误帧、故障节点自隔离、120Ω 终端电阻。</p>
+<p><strong>Q7:Linux 怎么用 CAN?SocketCAN 是什么?</strong><br>SocketCAN 把 CAN 做成网络设备(can0),用 socket(PF_CAN)收发 can_frame,复用网络子系统。ip link 配波特率启用,candump/cansend 调试。像写网络程序一样用 CAN。</p>
+
+<h2 id="s13">47.13 常见误区</h2>
+<ol>
+  <li><strong>"CAN 追求高速"</strong>——不,追求可靠/实时/多节点,速度不高(1Mbps,CAN FD 高些)。</li>
+  <li><strong>"CAN 是发给某个地址的节点"</strong>——面向消息广播,接收方按 ID 过滤订阅。</li>
+  <li><strong>"CAN 冲突像以太网要退避重发"</strong>——非破坏性仲裁,高优先级无损胜出,不是破坏性冲突。</li>
+  <li><strong>"CAN ID 只是标识"</strong>——还兼任优先级(越小越高)。</li>
+  <li><strong>"Linux 用 CAN 要写字符设备驱动"</strong>——用 SocketCAN,当网络设备,socket 收发。</li>
+  <li><strong>"CAN 不用终端电阻"</strong>——总线两端要接 120Ω 消除反射,否则通信不稳。</li>
+</ol>
+
+<h2 id="s14">47.14 本章总结</h2>
+<ul>
+  <li><strong>CAN</strong>:汽车/机器人的"神经网络",为<strong>可靠、实时、多节点广播、抗干扰</strong>而生(牺牲速度)。</li>
+  <li>核心特性:<strong>多主广播、面向消息、ID 即优先级、非破坏性仲裁、差分信号、强错误检测</strong>;数据段小(经典 8 字节)。</li>
+  <li><strong>CAN 帧</strong>:ID 双重身份=标识消息内容 + 定优先级(越小越高)。</li>
+  <li><strong>非破坏性仲裁★</strong>:逐位比较,显性(0)盖隐性(1),发 1 见 0 即退出;高优先级无损胜出、低优先级退让重试 → 确定性实时(vs 以太网 CSMA/CD 破坏性)。</li>
+  <li><strong>面向消息/发布订阅</strong>:广播带 ID 消息,接收按 ID 过滤(类 ROS2 话题);解耦、易扩展。</li>
+  <li><strong>差分信号</strong>(CAN_H/CAN_L 双绞线,看压差)共模抑制抗干扰;CRC/错误帧/故障自隔离/120Ω 终端电阻。</li>
+  <li><strong>CAN FD</strong>:数据段 8→64 字节、数据段提速,兼容经典 CAN。</li>
+  <li><strong>SocketCAN</strong>:把 CAN 做成<strong>网络设备</strong>(can0),用 <strong>socket(PF_CAN)</strong> 收发 can_frame,复用网络栈;ip link 配置,candump/cansend 调试。</li>
+</ul>
+
+<h2 id="s15">47.15 思维导图 / 课后题</h2>
+<pre><code>CAN 总线驱动
+├─ 一、为什么:车/机器人 需 可靠·实时·多节点·抗干扰(牺牲速度)
+├─ 二、特性:多主广播/面向消息/ID即优先级/非破坏仲裁/差分/强检错
+├─ 三、CAN帧:★ID双重=标识内容+定优先级(越小越高); 数据≤8字节
+├─ 四、★★非破坏性仲裁:逐位比, 显性0盖隐性1, 发1见0即退出
+│      └─ 高优先级无损胜出(确定性实时) vs 以太网CSMA/CD破坏性
+├─ 五、★面向消息/发布订阅:广播带ID, 接收按ID过滤(类ROS2话题)
+├─ 六、差分信号CAN_H/L双绞线→共模抑制抗干扰; CRC/错误帧/120Ω终端
+├─ 七、CAN FD:数据8→64字节+提速, 兼容经典
+├─ 八、★SocketCAN:CAN做成网络设备can0, socket(PF_CAN)收发
+└─ 九、用法:ip link配bitrate; candump/cansend; socket编程
+        回扣:网络栈(34)+发布订阅(ROS2)+实时优先级(七卷)</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>用虚拟 CAN 练手:<code>sudo modprobe vcan; sudo ip link add vcan0 type vcan; sudo ip link set vcan0 up</code>,建一个虚拟 CAN 接口。</li>
+  <li>装 can-utils,一个终端 <code>candump vcan0</code> 监听,另一个 <code>cansend vcan0 123#DEADBEEF</code> 发送,观察收到,体会广播。</li>
+  <li>写 47.10 的 SocketCAN 程序,在 vcan0 上收发 can_frame,打印 ID 和数据,理解 socket 方式用 CAN。</li>
+  <li>用两个 cansend 快速发不同 ID 的帧,理解 ID 小的优先级高(真实总线上用分析仪看仲裁)。</li>
+  <li>了解 DBC 文件:找一个开源 DBC,看它如何描述"某 ID 的报文里哪几位是什么信号",理解 CAN 之上的应用层。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>CAN 总线的核心特性?为什么汽车/机器人用它?</li>
+  <li>CAN 的非破坏性仲裁怎么工作?为什么保证实时性?</li>
+  <li>CAN ID 的作用?和 I2C 地址有何本质不同?</li>
+  <li>CAN 和以太网的冲突处理有何区别?</li>
+  <li>CAN 为什么"面向消息"?带来什么好处?(联系 ROS2)</li>
+  <li>CAN 如何抗电磁干扰?</li>
+  <li>SocketCAN 是什么?怎么用 Linux 收发 CAN?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第四十七章 完 · 下一章《第四十八章 mmap 与 ioctl》</p>
+<div class="nav">
+  <a href="第46章-SPI驱动.html">← 第四十六章</a>
+  <a href="index.html">目录</a>
+  <a href="第48章-mmap与ioctl.html">第四十八章 →</a>
+</div>
+
+</div>
+</body>
+</html>

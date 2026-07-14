@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第三十章 进程调度与 CFS</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第29章-Linux进程线程与fork.html">← 第廿九章</a>
+  <a href="index.html">目录</a>
+  <a href="第31章-Linux内存管理Buddy与Slab.html">第卅一章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第五卷 · Linux 内核</div>
+  <h1>第三十章 进程调度与 CFS</h1>
+  <div class="sub">从"优先级抢占"到"完全公平"——两种调度哲学的碰撞</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">Linux 调度要解决的新问题</a></li>
+    <li><a href="#s2">调度类:一个可插拔的框架</a></li>
+    <li><a href="#s3">CFS 的核心思想:完全公平</a></li>
+    <li><a href="#s4">虚拟运行时间 vruntime</a></li>
+    <li><a href="#s5">nice 值与权重</a></li>
+    <li><a href="#s6">红黑树:为什么不用位图</a></li>
+    <li><a href="#s7">调度周期与最小粒度</a></li>
+    <li><a href="#s8">schedule() 与 __switch_to</a></li>
+    <li><a href="#s9">实时调度类:RT 与 Deadline</a></li>
+    <li><a href="#s10">多核负载均衡</a></li>
+    <li><a href="#s11">抢占与内核抢占</a></li>
+    <li><a href="#s12">对比 FreeRTOS 调度器</a></li>
+    <li><a href="#s13">面试常问</a></li>
+    <li><a href="#s14">常见误区</a></li>
+    <li><a href="#s15">本章总结</a></li>
+    <li><a href="#s16">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：FreeRTOS 调度器你已吃透——位图选最高优先级(第17章)。Linux 的 CFS(完全公平调度器)是<strong>完全不同的哲学</strong>:不追求"谁优先级高谁跑",而追求"每个进程分到公平的 CPU 时间"。这一章讲清 CFS 的 vruntime、红黑树、调度类框架,以及 Linux 怎么同时兼顾实时和公平。<strong>把它和 FreeRTOS 对照,你能深刻理解"实时 vs 分时"两种调度哲学的根本差异</strong>——这是第一卷埋的最大伏笔之一。这是面试的核心考点。</p></blockquote>
+
+<h2 id="s1">30.1 Linux 调度要解决的新问题</h2>
+<p>FreeRTOS 调度简单粗暴:严格按优先级,高的先跑。这在 RTOS(少量、可控的实时任务)很完美。但 Linux 面对的是完全不同的场景:</p>
+<ul>
+  <li><strong>成百上千个进程</strong>,来源不明、行为各异。</li>
+  <li><strong>混合负载</strong>:有需要快速响应的交互程序(你的鼠标、键盘、编辑器),有闷头算的批处理(编译、渲染),还有需要实时的(音视频)。</li>
+  <li><strong>不能饿死任何人</strong>:如果严格按优先级,低优先级进程可能永远得不到 CPU(饿死)——通用系统不能接受。</li>
+  <li><strong>多核</strong>:要在多个 CPU 间均衡负载。</li>
+</ul>
+<blockquote><p>核心矛盾:<strong>RTOS 的"严格优先级"会饿死低优先级进程,不适合通用系统;但纯粹平均分配又照顾不了"交互程序要快速响应"的需求。</strong>Linux 需要一个既<strong>公平</strong>(不饿死谁)、又能<strong>照顾交互性</strong>(响应快)、还能<strong>支持实时</strong>(音视频/控制)的调度器。这比 RTOS 难得多。CFS(Completely Fair Scheduler,完全公平调度器,2.6.23 引入)是 Linux 对"公平+交互"这部分的答案,而实时需求交给专门的实时调度类。</p></blockquote>
+
+<h2 id="s2">30.2 调度类：一个可插拔的框架</h2>
+<p>Linux 不是只有一个调度算法,而是一个<strong>可插拔的调度类(sched_class)框架</strong>——不同类型的进程用不同的调度器,按优先级排列。这是第28章 task_struct 里 <code>sched_class</code> 字段的用途:</p>
+<pre><code>Linux 调度类(按优先级从高到低, 高的类先被选):
+
+  ┌─────────────────────────────────────┐
+  │ stop_sched_class     最高, 停机/迁移用 │
+  ├─────────────────────────────────────┤
+  │ dl_sched_class       Deadline(EDF), 硬实时 │ ← 第七卷EDF!
+  ├─────────────────────────────────────┤
+  │ rt_sched_class       实时(FIFO/RR), 固定优先级 │ ← 像FreeRTOS
+  ├─────────────────────────────────────┤
+  │ fair_sched_class     ★CFS, 普通进程(绝大多数) │ ← 完全公平
+  ├─────────────────────────────────────┤
+  │ idle_sched_class     空闲(没别的可跑时)        │
+  └─────────────────────────────────────┘
+
+调度时: 从最高的类往下问"你有就绪进程要跑吗?"
+        有实时进程 → 实时类先跑(实时优先于普通)
+        没实时进程 → CFS 选一个普通进程</code></pre>
+<p>这个框架很妙:<strong>实时进程(rt/dl 类)永远优先于普通进程(CFS 类)</strong>——保证了实时性;而普通进程之间用 CFS 公平调度——保证了公平。<strong>Linux 用"分层调度类"同时满足了实时和公平两个看似矛盾的需求。</strong>你的音视频、控制程序可以设成 rt 类(像 FreeRTOS 那样按优先级),普通程序走 CFS。这个可插拔设计,又是"函数指针/多态"(每个 sched_class 有一组函数指针:enqueue/dequeue/pick_next 等),和第26章 RT-Thread 设备框架同一个手法。</p>
+
+<h2 id="s3">30.3 CFS 的核心思想：完全公平</h2>
+<p>CFS 管普通进程,它的理想:<strong>如果有 N 个进程,每个进程应该得到 1/N 的 CPU 时间。</strong>就像分蛋糕,N 个人平分。</p>
+<p>但 CPU 一次只能跑一个进程,没法真的"同时各给 1/N"。CFS 的办法:<strong>记录每个进程"已经用了多少 CPU 时间",每次都挑那个"用得最少"的来跑。</strong>这样长期看,大家用的时间会趋于相等——就公平了。</p>
+<pre><code>CFS 理念: 让每个进程的"已运行时间"尽量相等
+
+  进程A用了 10ms, 进程B用了 10ms, 进程C用了 5ms
+  → C 用得最少 → 下次调度选 C 跑
+  → C 跑一会到 10ms, 大家又相等了...
+
+  就像排队打水: 谁打的水最少, 谁先来打, 保证长期公平</code></pre>
+<p>这比"优先级"高明在:<strong>没有进程会被饿死</strong>——哪怕一个进程"优先级低",它用的时间少,迟早会被选中。CFS 用"追踪已用时间、补偿用得少的",实现了动态的公平。<strong>但直接用"真实运行时间"还不够(要支持 nice 优先级),于是有了 vruntime。</strong></p>
+
+<h2 id="s4">30.4 虚拟运行时间 vruntime</h2>
+<p>CFS 的核心变量是 <strong>vruntime(虚拟运行时间)</strong>,在 task_struct 的 <code>se</code>(sched_entity)里。它不是真实运行时间,而是"加权后的"运行时间:</p>
+<pre><code>vruntime 大致 = 真实运行时间 × (基准权重 / 进程自己的权重)
+
+  → 权重高的进程(高优先级), vruntime 增长【慢】
+    (真实跑了10ms, vruntime只加了5ms的样子)
+  → 权重低的进程, vruntime 增长【快】
+
+CFS 调度规则: 总是选 vruntime 【最小】的进程跑
+  (谁的虚拟时间最少, 谁最"亏", 让它跑)</code></pre>
+<p>妙在:<strong>CFS 追求的"公平"是 vruntime 相等,不是真实时间相等。</strong>因为高优先级进程 vruntime 涨得慢,要让它的 vruntime 追上别人,它就得跑更多真实时间——<strong>于是高优先级进程自然分到更多 CPU 时间,但又不会完全饿死低优先级的。</strong>这就是 CFS 的精髓:<strong>用 vruntime 这一个变量,把"公平"和"优先级"统一了</strong>——优先级不再是"谁绝对先跑",而是"谁分到的时间份额更大"。</p>
+<blockquote><p>对比 FreeRTOS:FreeRTOS 优先级是"绝对的"(高优先级不阻塞就永远压着低优先级)。CFS 优先级是"相对的份额"(高优先级分更多时间,但低优先级也有份)。<strong>这就是"实时优先级"和"分时优先级(nice)"的本质区别</strong>——前者为确定性(必须让关键任务先跑),后者为公平和体验(大家都要照顾)。<strong>vruntime 是理解 CFS 的钥匙:一切都是"选 vruntime 最小的、让新唤醒的进程 vruntime 设得合适以获得响应性"。</strong>睡眠后被唤醒的进程 vruntime 较小(睡觉时没涨),所以会被优先调度——这就是交互程序响应快的原因(你按键,处理进程刚被唤醒,vruntime 小,立刻被调度)。</p></blockquote>
+
+<h2 id="s5">30.5 nice 值与权重</h2>
+<p>用户怎么调进程优先级?用 <strong>nice 值</strong>(-20 到 +19,越 nice 越谦让=优先级越低):</p>
+<pre><code>nice -20 (最高优先级) ←──────────→ nice +19 (最低, 最"谦让")
+
+nice 值映射到"权重"(内核 sched_prio_to_weight 表):
+  nice 0  → 权重 1024 (基准)
+  nice -1 → 权重 1277 (每降1级nice, 权重约×1.25)
+  nice +1 → 权重 820
+
+CFS 时间分配 = 该进程权重 / 所有就绪进程权重之和
+  nice每差1级, CPU时间份额差约10%(1.25倍关系)</code></pre>
+<p>关键:<strong>nice 值影响的是"CPU 时间的份额"(通过权重影响 vruntime 增长速度),不是"绝对优先"。</strong>nice -20 的进程分到的 CPU 时间多得多,但 nice +19 的进程也不会完全饿死。这和 RTOS 优先级(高优先级完全压制低的)是两码事。<code>renice</code>/<code>nice</code> 命令就是调这个。<strong>为什么每级差 1.25 倍?</strong>为了让"nice 差 1 级=CPU 份额差约 10%"这个体验相对一致(几何级数),这是精心调过的经验值。</p>
+
+<h2 id="s6">30.6 红黑树：为什么不用位图</h2>
+<p>FreeRTOS 用位图 O(1) 选最高优先级(第17章)。CFS 为什么改用<strong>红黑树</strong>?因为需求不同:</p>
+<ul>
+  <li>FreeRTOS 要"选最高优先级"——优先级是<strong>离散的少数几十个值</strong>,位图完美。</li>
+  <li>CFS 要"选 vruntime 最小的"——vruntime 是<strong>连续变化的、几乎无限多的值</strong>,位图用不了。需要一个能"按 vruntime 排序、快速取最小、且插入删除都快"的结构——<strong>红黑树</strong>(平衡二叉搜索树)。</li>
+</ul>
+<pre><code>CFS 运行队列(每个CPU一个)用红黑树按vruntime排序:
+
+              [15]
+             /    \
+          [9]      [20]
+         /  \      /
+      [6]   [12] [17]
+      ↑
+   最左节点 = vruntime最小 = 下一个要跑的进程!
+
+  取下一个: 取最左节点 → O(log n)(实际缓存了最左节点, 近O(1))
+  进程跑完/新入队: 插入/删除并保持平衡 → O(log n)</code></pre>
+<p>红黑树的好处:<strong>最左边的节点永远是 vruntime 最小的(下一个该跑的),取它很快;插入删除保持平衡,都是 O(log n)。</strong>CFS 还缓存了最左节点指针,取下一个进程接近 O(1)。<strong>数据结构的选择取决于操作需求:选离散最高优先级用位图,选连续最小值用红黑树。</strong>这是"没有最好的数据结构,只有最适合场景的"的经典案例。</p>
+<blockquote><p>历史插曲:Linux 2.6 早期用的是 <strong>O(1) 调度器</strong>(和 FreeRTOS 类似的优先级位图+队列),但它对"交互性"处理得很复杂、很多启发式 hack。2.6.23 换成 CFS(红黑树+vruntime),用一个优雅的模型统一处理了公平和交互,代码更简洁、行为更可预测。<strong>从 O(1) 调度器到 CFS 的演进,是"用简单统一的模型代替一堆特殊情况 hack"的经典重构</strong>——O(1) 调度器虽然选进程快(O(1)),但为了交互性堆砌了大量特判;CFS 虽然选进程是 O(log n)(略慢),但模型干净、无需特判。这个取舍告诉你:<strong>算法复杂度不是唯一标准,可维护性和行为可预测性同样重要。</strong></p></blockquote>
+
+<h2 id="s7">30.7 调度周期与最小粒度</h2>
+<p>CFS 怎么决定每个进程一次跑多久(时间片)?它是<strong>动态计算</strong>的(不像 FreeRTOS 固定 1 tick):</p>
+<ul>
+  <li><strong>调度周期(sched_latency)</strong>:CFS 保证在这段时间内,所有就绪进程都能跑一次(默认约 6ms×log(cpu 数) 之类)。目标:让每个进程都及时得到运行,保证交互响应。</li>
+  <li>每个进程的时间片 = 调度周期 × (自己权重 / 总权重)。权重高的分到的时间片长。</li>
+  <li><strong>最小粒度(min_granularity)</strong>:如果进程太多,均分下来每个时间片会非常小,频繁切换开销大。所以设一个下限(默认约 0.75ms),时间片不小于它——<strong>牺牲一点"周期内都跑到"的理想,换取不过度切换</strong>。</li>
+</ul>
+<blockquote><p>这里体现了 CFS 的另一个权衡:<strong>进程少时,追求"低延迟"(每个进程都快速轮到,交互好);进程多时,追求"低切换开销"(用最小粒度限制切换频率,否则光切换就把 CPU 耗光了,呼应第八章切换的 Cache 成本)。</strong>这个"延迟 vs 吞吐"的平衡,是通用调度器必须做的、而 RTOS 不用操心的(RTOS 任务少、固定时间片就行)。<strong>你能看到,Linux 调度器的复杂性,几乎全部来自"要照顾各种场景"这个通用性要求。</strong></p></blockquote>
+
+<h2 id="s8">30.8 schedule() 与 __switch_to</h2>
+<p>调度的核心函数 <code>schedule()</code>(<code>kernel/sched/core.c</code>),对应 FreeRTOS 的 <code>vTaskSwitchContext</code>:</p>
+<pre><code>asmlinkage void schedule(void)
+{
+    struct task_struct *prev, *next;
+
+    prev = current;                    /* 当前进程 */
+
+    /* ① 从最高的调度类往下, 找下一个要跑的进程 */
+    next = pick_next_task(rq, prev);   /* CFS则取红黑树最左节点 */
+
+    if (prev != next) {
+        /* ② 上下文切换! */
+        context_switch(rq, prev, next);
+        /* 内部调用 switch_mm(换地址空间/页表!) + switch_to(换寄存器/栈) */
+    }
+}</code></pre>
+<p>关键:Linux 的上下文切换比 RTOS 多一步——<strong><code>switch_mm</code>(切换地址空间)</strong>:</p>
+<pre><code>context_switch 做两件事:
+  ① switch_mm(prev->mm, next->mm)   ★切换地址空间(换页表TTBR!)
+     - 若切换到不同进程 → 换页表 → 导致TLB失效(第九章!)
+     - 若切换到同进程的线程 → 共享mm, 不用换(便宜!)
+  ② switch_to(prev, next)           切换寄存器和内核栈
+     - 架构相关(arch/arm64/.../switch_to)
+     - 本质和FreeRTOS PendSV一样: 存旧寄存器, 恢复新寄存器</code></pre>
+<blockquote><p>第九章埋的"进程切换比线程切换贵"在这里落地了:<strong><code>switch_mm</code> 换页表(TTBR)会导致 TLB 失效、Cache 冷启动(第八、九章),这是进程切换的隐性大成本;而同进程的线程共享 mm,<code>switch_mm</code> 发现 mm 相同就跳过,所以线程切换便宜。</strong><code>switch_to</code> 则和 FreeRTOS 的 PendSV 汇编做同一件事(存恢复寄存器换栈,第18章),只是 ARM64 上寄存器更多、还要处理 FPU/SIMD 等。<strong>你在第18章逐行读懂的 PendSV,就是 Linux <code>__switch_to</code> 的简化版——原理完全一样。</strong>Linux 用 ASID(第九章)让切换进程时不必全清 TLB,缓解成本。</p></blockquote>
+
+<h2 id="s9">30.9 实时调度类：RT 与 Deadline</h2>
+<p>Linux 也支持"像 FreeRTOS 那样"的实时调度,给 rt/dl 调度类(优先于 CFS):</p>
+<table>
+<tr><th>策略</th><th>调度类</th><th>行为</th><th>像什么</th></tr>
+<tr><td>SCHED_FIFO</td><td>rt</td><td>固定优先级,高的先跑,同级不轮转(跑到阻塞/让出)</td><td>FreeRTOS 关时间片</td></tr>
+<tr><td>SCHED_RR</td><td>rt</td><td>固定优先级 + 同级时间片轮转</td><td>FreeRTOS 开时间片</td></tr>
+<tr><td>SCHED_DEADLINE</td><td>dl</td><td>按"截止时间"调度(EDF),最紧急的先跑</td><td>第七卷 EDF</td></tr>
+</table>
+<p><strong>SCHED_FIFO/RR 就是 FreeRTOS 那套"严格优先级抢占"!</strong>你用 <code>chrt</code> 命令或 <code>sched_setscheduler</code> 把一个进程设成 SCHED_FIFO + 高优先级,它就会像 FreeRTOS 高优先级任务一样,抢占所有普通(CFS)进程、不被饿死顾虑约束。<strong>这就是在 Linux 上跑"软实时"任务的方法</strong>——在 RK3588 上跑对时延敏感的控制/感知任务,常把它们设成 SCHED_FIFO 高优先级,把 CFS 的普通进程压下去。<strong>SCHED_DEADLINE 是更先进的 EDF 算法(第七卷详讲),按截止期限调度,理论上能达到更高的 CPU 利用率。</strong></p>
+<blockquote><p>重要认知:<strong>Linux 不是"只有 CFS",它通过调度类同时提供了"实时(rt/dl,像 RTOS)"和"公平(CFS)"两种模式。</strong>普通程序走 CFS(公平、防饿死),需要实时的程序设成 SCHED_FIFO/DEADLINE(优先级抢占/截止期,像 RTOS)。<strong>所以"Linux 能不能做实时"的答案是:能做软实时(SCHED_FIFO),配合 PREEMPT_RT 补丁能做到接近硬实时。</strong>但因为有虚拟内存的缺页不确定性(第十章)、更长的中断关闭区间等,原生 Linux 的实时性仍不如专门的 RTOS——这就是为什么飞控内环用 RTOS、而 RK3588 主系统用 Linux+SCHED_FIFO(第八卷 AMP 架构)。</p></blockquote>
+
+<h2 id="s10">30.10 多核负载均衡</h2>
+<p>RTOS 多是单核(FreeRTOS 单核为主)。Linux 是多核 SMP,调度器要处理<strong>负载均衡</strong>——让各个 CPU 核的负载大致均衡,别一个核忙死、别的核闲着。</p>
+<ul>
+  <li><strong>每个 CPU 核有自己的运行队列(runqueue)</strong>——per-CPU(第28章讲的多核手法),各自的红黑树。这样各核选进程不用抢一个全局锁。</li>
+  <li><strong>周期性负载均衡</strong>:内核定期检查各核负载,把进程从忙的核"迁移"到闲的核。</li>
+  <li><strong>考虑 CPU 拓扑和亲和性</strong>:迁移优先在"近"的核之间(同 L2/L3 Cache,迁移代价小);还要尊重进程的 CPU 亲和性设置(<code>taskset</code>/<code>sched_setaffinity</code>)。</li>
+  <li><strong>NUMA/big.LITTLE 感知</strong>:在 RK3588 这种大小核上,EAS(能耗感知调度)会把重任务放大核、轻任务放小核(第十一章 big.LITTLE)。</li>
+</ul>
+<blockquote><p>负载均衡是"多核"带来的、RTOS 基本不用操心的复杂性。核心权衡:<strong>迁移进程能均衡负载,但迁移有代价(目标核的 Cache 里没有这进程的数据,冷启动,第八章)。</strong>所以内核不会频繁乱迁,而是权衡"负载不均的损失 vs 迁移的 Cache 代价"。<strong>CPU 亲和性(把进程绑在固定核)就是让你手动干预这个——把关键进程绑在专用核,避免被迁移、独占该核的 Cache,提升确定性。</strong>第八卷讲 RK3588 实践时,CPU 隔离(isolcpus)+ 亲和性绑定 + SCHED_FIFO 是做 Linux 端实时优化的组合拳。</p></blockquote>
+
+<h2 id="s11">30.11 抢占与内核抢占</h2>
+<p>抢占(第一卷)在 Linux 里分两个层次,面试常问:</p>
+<ul>
+  <li><strong>用户态抢占</strong>:进程在用户态运行时,时钟中断或更高优先级进程唤醒会触发重新调度、抢占它。这个所有 Linux 都有。</li>
+  <li><strong>内核态抢占(CONFIG_PREEMPT)</strong>:进程<strong>陷入内核态执行系统调用时</strong>,能不能被抢占?
+    <ul>
+      <li>不可抢占内核(老/服务器配置):内核代码执行时不被抢占,直到它主动让出或返回用户态。简单,但一个长系统调用会拖延调度,延迟高。</li>
+      <li>可抢占内核(PREEMPT):内核代码执行时也能被抢占(在安全的抢占点),延迟低,适合桌面/实时。</li>
+      <li><strong>PREEMPT_RT(实时补丁)</strong>:把内核几乎所有地方都变成可抢占、把中断线程化、把自旋锁换成可睡眠的——最大限度降低延迟,让 Linux 接近硬实时。</li>
+    </ul>
+  </li>
+</ul>
+<blockquote><p>为什么内核抢占是个问题?因为进程在内核态时,可能正持有锁、正操作内核数据结构——随便抢占会导致并发问题(第37章)。所以内核抢占只能在"安全点"(没持锁等)发生,这需要精细的设计。<strong>抢占越彻底,延迟越低(实时性越好),但实现越复杂、开销略增。</strong>PREEMPT_RT 补丁(现在大部分已合入主线)就是把 Linux 往"硬实时"方向推的努力——、机器人、工业控制领域用 Linux 做实时,PREEMPT_RT 是关键。这又是"实时性 vs 复杂度/吞吐"的权衡,贯穿全书。</p></blockquote>
+
+<h2 id="s12">30.12 对比 FreeRTOS 调度器</h2>
+<p>把两种调度哲学做终极对照(这是第一卷最大伏笔的收束):</p>
+<table>
+<tr><th>维度</th><th>FreeRTOS(RTOS)</th><th>Linux CFS(普通进程)</th></tr>
+<tr><td>目标</td><td>确定性、实时</td><td>公平、吞吐、交互体验</td></tr>
+<tr><td>优先级含义</td><td>绝对(高的压制低的)</td><td>相对份额(nice→CPU时间比例)</td></tr>
+<tr><td>会饿死低优先级吗</td><td>会(这是"特性")</td><td>不会(公平)</td></tr>
+<tr><td>选进程</td><td>位图 O(1) 选最高优先级</td><td>红黑树 O(log n) 选最小 vruntime</td></tr>
+<tr><td>时间片</td><td>固定 1 tick</td><td>动态(按权重和进程数)</td></tr>
+<tr><td>多核</td><td>基本单核</td><td>per-CPU 队列 + 负载均衡</td></tr>
+<tr><td>实时支持</td><td>本身就是实时</td><td>另有 rt/dl 调度类(SCHED_FIFO/DEADLINE)</td></tr>
+</table>
+<blockquote><p>第一卷 1.6 那张表——"FreeRTOS 严格优先级为实时,Linux CFS 公平为吞吐"——现在你看到了两边完整的源码级实现。<strong>核心洞察:调度没有"最好",只有"最适合场景"。</strong>RTOS 场景(少量关键实时任务)适合严格优先级(简单、确定);通用 OS 场景(海量各异进程)适合公平调度(不饿死、照顾交互),同时用调度类给实时需求留后门。<strong>你现在能同时深入理解这两种哲学,并知道它们各自为什么这样设计——这就是从"会用"到"真懂"的跨越,也是这类既用 RTOS 又用 Linux 的公司最看重的素养。</strong></p></blockquote>
+
+<h2 id="s13">30.13 面试常问问题</h2>
+<p><strong>Q1:CFS 的核心思想?怎么实现公平?</strong><br>让每个进程分到公平的 CPU 时间。用 vruntime(虚拟运行时间)追踪,每次选 vruntime 最小的进程跑,长期使各进程 vruntime 趋于相等,不饿死任何进程。</p>
+<p><strong>Q2:vruntime 是什么?nice 值如何影响它?</strong><br>加权后的运行时间(真实时间×基准权重/进程权重)。高优先级(权重大)vruntime 涨得慢,要涨到和别人一样得跑更多真实时间,故分到更多 CPU 时间。nice 值映射权重,每级差约 1.25 倍(份额差约 10%)。</p>
+<p><strong>Q3:CFS 为什么用红黑树而不是位图?</strong><br>vruntime 是连续值(几乎无限多),位图只能处理离散的少数优先级。红黑树能按 vruntime 排序、取最小(最左节点)、插删都 O(log n)。</p>
+<p><strong>Q4:CFS 和 FreeRTOS 调度器的本质区别?</strong><br>FreeRTOS 严格优先级(高压低、会饿死、位图 O(1)、为确定性);CFS 完全公平(nice 是相对份额、不饿死、红黑树、为吞吐和交互)。</p>
+<p><strong>Q5:Linux 能做实时吗?怎么做?</strong><br>能做软实时:用调度类框架,rt 类(SCHED_FIFO/RR,严格优先级像 RTOS)和 dl 类(SCHED_DEADLINE,EDF)优先于 CFS。配 PREEMPT_RT 补丁接近硬实时。但原生 Linux 因虚拟内存等不确定性,实时性仍不如专用 RTOS。</p>
+<p><strong>Q6:Linux 上下文切换和 RTOS 有什么不同?</strong><br>多了 switch_mm(切地址空间/页表):切进程换页表致 TLB 失效、Cache 冷启动(贵);切同进程线程共享 mm 不换(便宜)。switch_to 和 FreeRTOS PendSV 做同样的存恢复寄存器。</p>
+<p><strong>Q7:多核负载均衡怎么做?为什么有 CPU 亲和性?</strong><br>每 CPU 一个运行队列,周期性把进程从忙核迁到闲核(考虑 Cache 拓扑)。迁移有 Cache 冷启动代价,故用 CPU 亲和性把关键进程绑定固定核,避免迁移、独占 Cache、提升确定性。</p>
+
+<h2 id="s14">30.14 常见误区</h2>
+<ol>
+  <li><strong>"CFS 完全平均分配 CPU"</strong>——是按权重(nice)加权公平,不是绝对平均;高优先级分更多。</li>
+  <li><strong>"nice 值高优先级就绝对高"</strong>——nice 是相对份额,低 nice 也不会饿死。</li>
+  <li><strong>"Linux 不能做实时"</strong>——能做软实时(SCHED_FIFO/DEADLINE),PREEMPT_RT 接近硬实时。</li>
+  <li><strong>"CFS 用优先级队列"</strong>——用红黑树按 vruntime 排序,不是优先级位图。</li>
+  <li><strong>"进程和线程切换开销一样"</strong>——进程切换多了 switch_mm(换页表/TLB 失效),更贵。</li>
+  <li><strong>"vruntime 就是真实运行时间"</strong>——是加权后的,权重高涨得慢。</li>
+  <li><strong>"绑核一定更快"</strong>——绑核提升确定性和 Cache 命中,但可能牺牲负载均衡;要看场景。</li>
+</ol>
+
+<h2 id="s15">30.15 本章总结</h2>
+<ul>
+  <li>Linux 调度要兼顾<strong>公平(不饿死)、交互(响应快)、实时、多核</strong>,比 RTOS 难。</li>
+  <li><strong>调度类框架</strong>(可插拔):dl > rt > <strong>CFS</strong> > idle;实时类优先于普通类,兼顾实时和公平。</li>
+  <li><strong>CFS</strong> 核心:让每个进程分到公平 CPU 时间,选 <strong>vruntime 最小</strong>的跑,不饿死。</li>
+  <li><strong>vruntime</strong>=加权运行时间;高优先级(权重大)涨得慢→分更多时间。nice 值→权重(每级≈1.25×)。</li>
+  <li>用<strong>红黑树</strong>按 vruntime 排序(取最左=最小),O(log n);因 vruntime 连续,不能用位图。</li>
+  <li>时间片<strong>动态</strong>算(调度周期×权重占比,受最小粒度下限约束):平衡延迟与切换开销。</li>
+  <li><code>schedule()</code>→<code>context_switch</code>=<strong>switch_mm(换地址空间,进程切换致 TLB 失效)+ switch_to(换寄存器,同 PendSV)</strong>。</li>
+  <li>实时:<strong>SCHED_FIFO/RR</strong>(像 FreeRTOS 严格优先级)、<strong>SCHED_DEADLINE</strong>(EDF);PREEMPT_RT 接近硬实时。</li>
+  <li>多核:per-CPU 运行队列 + 负载均衡(权衡迁移的 Cache 代价);CPU 亲和性提升确定性。</li>
+  <li>第一卷"实时 vs 分时"两种调度哲学,在此完整对照收束。</li>
+</ul>
+
+<h2 id="s16">30.16 思维导图 / 课后题</h2>
+<pre><code>进程调度与 CFS
+├─ 一、Linux调度难题:公平+交互+实时+多核
+├─ 二、调度类框架:dl>rt>CFS>idle(实时优先于普通)
+├─ 三、CFS思想:公平分CPU时间, 选vruntime最小
+├─ 四、★vruntime=加权运行时间(权重大涨得慢→分更多)
+├─ 五、nice→权重(每级≈1.25×, 份额差10%)
+├─ 六、★红黑树按vruntime排序(取最左);连续值不能用位图
+├─ 七、时间片动态(调度周期×权重, 最小粒度下限)
+├─ 八、schedule→context_switch
+│  ├─ switch_mm(换页表,进程切换致TLB失效)
+│  └─ switch_to(换寄存器, 同PendSV)
+├─ 九、实时类:SCHED_FIFO/RR(像FreeRTOS)/DEADLINE(EDF)
+│  └─ PREEMPT_RT接近硬实时
+├─ 十、多核:per-CPU队列+负载均衡; CPU亲和性
+├─ 十一、抢占:用户态/内核态(PREEMPT/PREEMPT_RT)
+└─ 十二、★对比FreeRTOS:绝对优先级 vs 相对份额公平</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>用 <code>nice</code>/<code>renice</code> 跑两个 CPU 密集进程,设不同 nice,用 <code>top</code> 观察 CPU 占比,验证约 1.25 倍/级的份额关系。</li>
+  <li>用 <code>chrt -f 50 ./prog</code> 把一个进程设成 SCHED_FIFO 高优先级,观察它如何压制普通进程(像 FreeRTOS)。</li>
+  <li>用 <code>taskset -c 2 ./prog</code> 把进程绑到 CPU 2,用 <code>top</code>(按 1 看各核)确认它只在核 2 跑。</li>
+  <li>读内核 <code>kernel/sched/fair.c</code> 的 <code>pick_next_task_fair</code> 和 <code>__pick_first_entity</code>(取红黑树最左),对照本章。</li>
+  <li>读 <code>kernel/sched/core.c</code> 的 <code>context_switch</code>,找到 switch_mm 和 switch_to 调用,对照第九章(TLB)和第18章(PendSV)。</li>
+  <li>用 <code>perf sched</code> 或 <code>/proc/PID/sched</code> 查看进程的 vruntime、调度统计。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>CFS 如何实现公平?vruntime 的作用?</li>
+  <li>nice 值如何影响调度?和 RTOS 优先级有何本质不同?</li>
+  <li>CFS 为什么用红黑树?和 FreeRTOS 位图的取舍?</li>
+  <li>Linux 如何支持实时任务?SCHED_FIFO 和 CFS 什么关系?</li>
+  <li>Linux 上下文切换比 RTOS 多做了什么?为什么进程切换更贵?</li>
+  <li>多核负载均衡的原理和代价?CPU 亲和性有什么用?</li>
+  <li>对比 FreeRTOS 和 CFS 两种调度哲学。</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第三十章 完 · 下一章《第卅一章 内存管理:Buddy 与 Slab》</p>
+<div class="nav">
+  <a href="第29章-Linux进程线程与fork.html">← 第廿九章</a>
+  <a href="index.html">目录</a>
+  <a href="第31章-Linux内存管理Buddy与Slab.html">第卅一章 →</a>
+</div>
+
+</div>
+</body>
+</html>

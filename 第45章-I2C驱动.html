@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第四十五章 I2C 驱动</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第44章-UART串口驱动.html">← 第四十四章</a>
+  <a href="index.html">目录</a>
+  <a href="第46章-SPI驱动.html">第四十六章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第六卷 · Linux 驱动</div>
+  <h1>第四十五章 I2C 驱动</h1>
+  <div class="sub">两根线挂一串设备,还有真正的"总线-设备-驱动"</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">I2C 是什么</a></li>
+    <li><a href="#s2">生活例子:广播点名</a></li>
+    <li><a href="#s3">两根线与地址</a></li>
+    <li><a href="#s4">I2C 时序:起始/地址/ACK/数据/停止</a></li>
+    <li><a href="#s5">读寄存器的典型时序</a></li>
+    <li><a href="#s6">Linux I2C 框架:三个角色</a></li>
+    <li><a href="#s7">adapter 与 client</a></li>
+    <li><a href="#s8">写一个 I2C 设备驱动</a></li>
+    <li><a href="#s9">i2c_transfer 与 SMBus</a></li>
+    <li><a href="#s10">regmap:寄存器访问的抽象</a></li>
+    <li><a href="#s11">回扣总线模型与实战</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:I2C 是嵌入式最常见的<strong>板内低速总线</strong>——接 IMU、气压计、EEPROM、传感器、电源管理芯片。它只用两根线就能挂一串设备,靠"地址"区分。更重要的是,I2C 是第40章"总线-设备-驱动模型"的<strong>真实物理总线</strong>案例(不像 platform 是虚拟的)。学 I2C 驱动,你会真正理解那套总线模型怎么落地。IMU/传感器接口是硬件岗高频考点。</p></blockquote>
+
+<h2 id="s1">45.1 I2C 是什么</h2>
+<p><strong>I2C = Inter-Integrated Circuit(集成电路间总线),读作"I方C"或"I二C"。</strong>它是飞利浦发明的<strong>低速、两线、多设备</strong>板内总线:</p>
+<ul>
+  <li><strong>两根线</strong>:SCL(时钟线)、SDA(数据线)——就这两根,加地和电源。</li>
+  <li><strong>同步</strong>:有时钟线 SCL(区别于 UART 的异步),主设备发时钟,双方按时钟节拍收发。</li>
+  <li><strong>多设备</strong>:同一对线上能挂<strong>多个</strong>设备(几个到上百个),靠<strong>地址</strong>区分——这是 I2C 最大特点。</li>
+  <li><strong>主从</strong>:通常 SoC 是主设备(master,发起通信),传感器等是从设备(slave)。</li>
+</ul>
+<p><strong>I2C 的精髓:用最少的线(2 根)挂最多的设备(靠地址寻址)。</strong>速度不高(标准 100kHz、快速 400kHz、高速 3.4MHz),但对传感器这类小数据量、低速率的设备完全够用。<strong>省引脚是它的核心优势</strong>——SoC 引脚宝贵(第42章复用),I2C 用 2 根线挂十几个传感器,极大节省引脚。的 IMU、磁力计、气压计常挂在 I2C 上。</p>
+
+<h2 id="s2">45.2 生活例子：广播点名</h2>
+<p>想象一间教室,老师(主设备)对全班(总线上所有从设备)喊话。桌子间只有一条广播线(SDA)和一个统一节拍(SCL)。老师要和某个学生说话,先<strong>喊他的学号</strong>(I2C 地址):"3 号,听着!"——只有 3 号学生响应("到!"=ACK),其他学生知道"没叫我"就不理会。</p>
+<p><strong>关键:虽然所有人共享一条线,但靠"先喊地址点名"来指定通信对象。</strong>被点到的设备应答(ACK),然后主从之间收发数据,其余设备保持沉默。<strong>这就是 I2C 用一条共享总线服务多个设备的办法——地址寻址 + 点名应答。</strong>这和以太网(第34章 MAC 地址)、和总线仲裁思想相通:共享介质,靠地址区分目标。</p>
+
+<h2 id="s3">45.3 两根线与地址</h2>
+<p>细看 I2C 的两根线和地址机制:</p>
+<pre><code>物理连接: 所有设备并联在两根线上
+        SCL ●───┬────┬────┬───  (时钟, 主设备发)
+        SDA ●───┼────┼────┼───  (数据, 双向)
+             主设备  IMU  气压计 EEPROM
+                    0x68  0x77  0x50   ← 各有唯一地址
+
+  ★两根线都是"开漏 + 上拉电阻":
+     设备只能把线拉低, 靠外部上拉电阻拉高
+     → 多设备共线不会冲突(线与逻辑), 但必须接上拉电阻!
+
+  地址: 7位地址(常见), 最多128个地址(实际留了些保留)
+        每个从设备出厂有固定地址(部分可通过引脚微调)</code></pre>
+<p><strong>两个硬件要点</strong>:①<strong>开漏 + 上拉</strong>——设备只能拉低线,靠外部上拉电阻拉高。这是多设备共线不冲突的关键(任何设备都不"主动输出高",避免两个设备一个推高一个拉低烧芯片)。<strong>忘接上拉电阻是 I2C 不通的最常见硬件错误。</strong>②<strong>地址</strong>——每个从设备有唯一的 7 位地址(如 MPU6050 是 0x68),主设备靠它点名。<strong>两个设备地址冲突(同地址挂一条总线)会导致通信混乱</strong>——所以选型时要注意地址,有的芯片可通过引脚改几位地址来避冲突。</p>
+
+<h2 id="s4">45.4 I2C 时序：起始/地址/ACK/数据/停止</h2>
+<p>I2C 通信有严格的时序(理解它才能调通),一次通信的骨架:</p>
+<pre><code>I2C 一次写的时序:
+  ① START:  SCL高时, SDA由高变低 → "开始"信号(总线被占用)
+  ② 地址+方向: 主发7位地址 + 1位读写(0=写,1=读)
+  ③ ACK:    被点名的从设备把SDA拉低一个时钟 → "我在, 收到"
+            (没ACK = 没这个设备/没接好 → 通信失败)
+  ④ 数据:   一次8位, 每字节后跟一个ACK
+  ⑤ STOP:   SCL高时, SDA由低变高 → "结束"信号(释放总线)
+
+  START ─ [地址|W] ─ ACK ─ [数据] ─ ACK ─ ... ─ STOP</code></pre>
+<p><strong>五个关键元素</strong>:START(开始占线)、地址+读写位(点名并说明读还是写)、ACK(从设备应答"收到")、数据(8 位一组每组带 ACK)、STOP(结束释放)。<strong>ACK 是最重要的调试线索</strong>:主设备发完地址,如果<strong>没收到 ACK</strong>(NAK),说明这个地址没有设备响应——要么设备没接好、要么地址错、要么没上拉电阻。<strong>"I2C 读不到设备"第一步就是用逻辑分析仪或 <code>i2cdetect</code> 看有没有 ACK。</strong>好在这些底层时序由 I2C 控制器硬件自动产生,你写驱动不用手动拉线(除非用 GPIO 模拟 I2C)。</p>
+
+<h2 id="s5">45.5 读寄存器的典型时序</h2>
+<p>最常见的操作是"读传感器的某个寄存器"(如读 IMU 的加速度值),它是"先写寄存器地址,再读数据"的组合:</p>
+<pre><code>读传感器寄存器REG的标准时序(如读MPU6050的0x3B):
+  ① START
+  ② 发[设备地址|写] → ACK       ("我要和0x68说话, 写模式")
+  ③ 发[寄存器号REG] → ACK       ("我要访问你的0x3B寄存器")
+  ④ RESTART (再来个START, 不放总线)
+  ⑤ 发[设备地址|读] → ACK       ("现在改读模式")
+  ⑥ 读[数据] → 主发ACK/最后NAK   (读出寄存器值)
+  ⑦ STOP
+
+  即: 写(告诉它读哪个寄存器) → 转向 → 读(拿数据)</code></pre>
+<p><strong>这个"先写寄存器号、再读值"的两段式,是读 I2C 传感器的通用模式。</strong>先用写操作告诉设备"我要读你的哪个寄存器",然后 RESTART 转成读操作把值取回。<strong>几乎所有 I2C 传感器(IMU、气压计、温度)都这么读。</strong>好消息:Linux 的 I2C 框架和 SMBus/regmap(45.9/45.10)把这个常见模式封装成了一个函数调用(如 <code>i2c_smbus_read_byte_data(client, REG)</code>),你不用手动拼这些时序。但理解底层时序,调试硬件时(看逻辑分析仪波形)必不可少。</p>
+
+<h2 id="s6">45.6 Linux I2C 框架：三个角色</h2>
+<p>现在讲驱动。I2C 是第40章"总线-设备-驱动"模型的<strong>真实物理总线</strong>案例,三个角色对应得非常清楚:</p>
+<table>
+<tr><th>角色</th><th>Linux 结构</th><th>是什么</th></tr>
+<tr><td>总线</td><td>i2c bus</td><td>I2C 总线类型(内核已实现,负责撮合)</td></tr>
+<tr><td>控制器(主设备)</td><td><strong>i2c_adapter</strong></td><td>SoC 里的 I2C 控制器,产生时序、发起通信</td></tr>
+<tr><td>设备(从设备)</td><td><strong>i2c_client</strong></td><td>挂在总线上的一个传感器/芯片</td></tr>
+<tr><td>设备驱动</td><td><strong>i2c_driver</strong></td><td>驱动某款 I2C 芯片的代码(你写的)</td></tr>
+</table>
+<blockquote><p><strong>对比第40章 platform(虚拟总线),I2C 是有真实两根线的物理总线,总线模型在这里"实至名归":</strong><code>i2c_adapter</code> 是 SoC 的 I2C 控制器(主设备,谁产生 SCL 时钟、发起通信);<code>i2c_client</code> 是挂在总线上的具体从设备(一个传感器);<code>i2c_driver</code> 是你写的、驱动某款芯片的代码。<strong>内核的 i2c 总线负责撮合:设备树里描述了某地址挂了个 compatible=X 的设备(生成 i2c_client),i2c 总线拿 X 去匹配 i2c_driver,匹配上调 driver 的 probe(第40章)。</strong>你会发现和 platform driver 的结构几乎一样——因为它们都基于同一套"总线-设备-驱动"模型,只是总线不同。<strong>学会 I2C driver,你就把第40章的抽象模型和真实硬件对应上了。</strong></p></blockquote>
+
+<h2 id="s7">45.7 adapter 与 client</h2>
+<p>厘清 adapter 和 client 的分工(常混淆):</p>
+<pre><code>            i2c_adapter (控制器/主, 一条I2C总线一个)
+                 │  管理这条总线, 提供发时序的能力
+        ┌────────┼────────┐
+   i2c_client  i2c_client  i2c_client   (挂在这条总线上的各设备)
+   (IMU@0x68) (气压@0x77) (EEPROM@0x50)
+
+  两类驱动:
+   ① adapter驱动(控制器驱动): 驱动SoC的I2C控制器硬件
+       —— 通常SoC厂商(如Rockchip)已经写好, 你不用碰
+   ② client驱动(设备驱动): 驱动某个传感器芯片 ★你写的是这个
+       —— 用adapter提供的能力去和传感器通信</code></pre>
+<p><strong>关键区分</strong>:<code>i2c_adapter</code>(控制器)的驱动通常 SoC 厂商写好了(RK3588 的 I2C 控制器驱动在内核里现成的);<strong>你写的一般是 <code>i2c_client</code> 的设备驱动</strong>——即"某款传感器芯片怎么用"。你的驱动<strong>不直接操作 SCL/SDA 硬件</strong>,而是调用 I2C 核心提供的 <code>i2c_transfer</code>/SMBus 函数(它们最终由 adapter 驱动产生时序)。<strong>这是又一层解耦:传感器驱动 与 具体 SoC 的 I2C 控制器解耦</strong>——同一个 IMU 驱动能用在 RK3588、树莓派等任何有 I2C 的板子上,因为它只依赖统一的 I2C 传输接口,不依赖具体控制器。</p>
+
+<h2 id="s8">45.8 写一个 I2C 设备驱动</h2>
+<p>一个 I2C 传感器驱动的骨架(和 platform driver 高度相似):</p>
+<pre><code>static int sensor_probe(struct i2c_client *client){   // ★配对成功
+    // client里有: 设备地址、所在adapter
+    u8 id = i2c_smbus_read_byte_data(client, REG_WHOAMI); // 读芯片ID
+    if (id != EXPECTED_ID) return -ENODEV;   // 验证是不是这款芯片
+    i2c_smbus_write_byte_data(client, REG_CONFIG, 0x01);  // 初始化配置
+    // 注册为iio设备/字符设备, 供上层读数据...
+    return 0;
+}
+static const struct of_device_id sensor_of[] = {
+    { .compatible = "invensense,mpu6050" }, { }    // 匹配设备树
+};
+static const struct i2c_device_id sensor_id[] = {
+    { "mpu6050", 0 }, { }
+};
+static struct i2c_driver sensor_driver = {
+    .driver = { .name="mpu6050", .of_match_table=sensor_of },
+    .probe = sensor_probe,
+    .id_table = sensor_id,
+};
+module_i2c_driver(sensor_driver);   // ★一行注册
+MODULE_LICENSE("GPL");
+
+// 设备树里描述这个传感器挂在哪:
+// &i2c1 {
+//     mpu6050@68 {
+//         compatible = "invensense,mpu6050";
+//         reg = <0x68>;   ← ★I2C设备地址(不是内存地址!)
+//     };
+// };</code></pre>
+<p><strong>结构和 platform driver 一模一样</strong>:填 <code>i2c_driver</code>(probe + of_match_table)、<code>module_i2c_driver</code> 注册、设备树里描述设备(挂在哪个 i2c 控制器下、什么地址、compatible)。<strong>注意设备树里 I2C 设备的 <code>reg</code> 是"I2C 地址"(0x68),不是内存地址</strong>(区别于 platform 设备的 reg 是寄存器物理地址)。probe 里就能用 <code>i2c_smbus_read/write_byte_data</code> 和传感器通信了——常见做法是先读芯片 ID 寄存器验证"确实是这款芯片",再初始化。</p>
+
+<h2 id="s9">45.9 i2c_transfer 与 SMBus</h2>
+<p>驱动里和 I2C 设备通信有两套 API:</p>
+<table>
+<tr><th></th><th>i2c_transfer(底层灵活)</th><th>SMBus 函数(便捷)</th></tr>
+<tr><td>用法</td><td>手动构造 i2c_msg 数组(地址、方向、数据)</td><td>封装好的常见操作</td></tr>
+<tr><td>典型函数</td><td><code>i2c_transfer(adap, msgs, n)</code></td><td><code>i2c_smbus_read_byte_data(client, reg)</code></td></tr>
+<tr><td>适合</td><td>复杂/非标准时序</td><td>标准"读写寄存器"(最常见)</td></tr>
+</table>
+<pre><code>// SMBus便捷(最常用, 直接对应45.5的读寄存器时序):
+u8 val = i2c_smbus_read_byte_data(client, 0x3B);   // 读寄存器0x3B
+i2c_smbus_write_byte_data(client, 0x6B, 0x00);     // 写寄存器0x6B
+
+// i2c_transfer底层(需要精确控制时):
+struct i2c_msg msgs[2] = {
+    { .addr=client->addr, .flags=0,        .len=1, .buf=&reg },  // 写寄存器号
+    { .addr=client->addr, .flags=I2C_M_RD, .len=n, .buf=data }, // 读数据
+};
+i2c_transfer(client->adapter, msgs, 2);   // 一次事务完成 写+读</code></pre>
+<p><strong>SMBus 函数把 45.5 那个"先写寄存器号再读值"的常见时序封装成一个调用</strong>(<code>i2c_smbus_read_byte_data</code>)——90% 的传感器读写用它就够了,简洁。<strong>i2c_transfer 更底层</strong>:你手动构造 <code>i2c_msg</code> 数组(每个 msg 描述一段收发),适合非标准时序或需要精确控制的场景。<strong>i2c_transfer 的一个重要特性:一次调用里的多个 msg 是"原子事务"(中间不放总线),</strong>保证"写寄存器号+读值"之间不被别的 I2C 通信插入(总线是多设备共享的,第37章竞态思想在总线层的体现)。</p>
+
+<h2 id="s10">45.10 regmap：寄存器访问的抽象</h2>
+<p>一个现代驱动常用的利器。很多设备(I2C/SPI)的核心操作都是"读写寄存器",内核提供 <strong>regmap</strong> 把它统一抽象:</p>
+<pre><code>regmap: 统一"读写设备寄存器"的接口, 屏蔽底层是I2C还是SPI
+
+  // 初始化(告诉regmap这是I2C设备)
+  struct regmap *rm = devm_regmap_init_i2c(client, &config);
+
+  // 之后读写寄存器不用管是I2C还是SPI:
+  regmap_read(rm, REG, &val);
+  regmap_write(rm, REG, val);
+  regmap_update_bits(rm, REG, mask, val);  // 改某几位
+
+  好处:
+  ① 同一个传感器驱动, 换I2C版/SPI版芯片, 只改init那行 ★
+  ② regmap自动处理缓存、字节序、锁
+  ③ 代码更简洁清晰</code></pre>
+<blockquote><p><strong>regmap 是"寄存器访问"的又一层抽象,解决一个真实痛点:很多传感器同时出 I2C 和 SPI 两个版本(如同款 IMU 有 MPU6050 走 I2C、MPU6000 走 SPI),寄存器完全一样,只是通信总线不同。</strong>没有 regmap,你得为 I2C 版和 SPI 版写两套几乎一样的驱动(只有底层读写不同)。<strong>用 regmap,驱动逻辑只调 <code>regmap_read/write</code>,不关心底层总线;只在初始化时用 <code>devm_regmap_init_i2c</code> 或 <code>devm_regmap_init_spi</code> 指定总线——一份驱动代码同时支持 I2C 和 SPI 版!</strong>这是"加一层抽象统一接口"思想的又一次精彩应用(和 VFS、GPIO 子系统一脉相承)。regmap 还顺带处理寄存器缓存、字节序、加锁,让驱动更简洁。现代传感器驱动几乎都用 regmap——这也预告了下一章 SPI:regmap 让 I2C 和 SPI 驱动能共享大量代码。</p></blockquote>
+
+<h2 id="s11">45.11 回扣总线模型与实战</h2>
+<p>I2C 这章的知识连接:</p>
+<table>
+<tr><th>本章概念</th><th>连接到</th></tr>
+<tr><td>I2C 总线-设备-驱动</td><td>第40章总线模型(这里是真实总线)</td></tr>
+<tr><td>i2c_driver 结构同 platform_driver</td><td>第40章 probe/of_match_table</td></tr>
+<tr><td>设备树描述 I2C 设备</td><td>第41章设备树</td></tr>
+<tr><td>地址寻址多设备</td><td>第34章 MAC 地址、总线共享</td></tr>
+<tr><td>i2c_transfer 原子事务</td><td>第37章竞态/互斥(总线是共享资源)</td></tr>
+<tr><td>I2C 传输会睡眠</td><td>第43章线程化中断(读传感器在能睡的上下文)</td></tr>
+<tr><td>regmap 统一 I2C/SPI</td><td>第32章 VFS、GPIO 子系统(统一抽象)</td></tr>
+</table>
+<blockquote><p><strong>I2C 是把第40章抽象的"总线-设备-驱动模型"落到真实硬件的最好案例。</strong>platform 是虚拟总线,你可能觉得那套模型有点抽象;I2C 有实实在在的两根线、真实的从设备、真实的地址,总线模型在这里变得具体可感。<strong>而且你会发现 I2C driver 和 platform driver 结构几乎一样(填 probe、of_match_table、module_xxx_driver)——这正说明总线模型的威力:一套框架,适配所有总线(platform/i2c/spi/usb),你学一次,处处能用。</strong>实战上,I2C 传感器是机器人的标配(IMU、气压计、磁力计),而且 <strong>I2C 传输是"会睡眠"的慢操作</strong>(要等时序完成),所以读 I2C 传感器不能在硬中断里做,要在进程上下文或线程化中断(第43章)里——这个细节把中断和总线知识连了起来。<strong>掌握 I2C,你就掌握了嵌入式 Linux 接传感器的主力技能。</strong></p></blockquote>
+
+<h2 id="s12">45.12 面试常问问题</h2>
+<p><strong>Q1:I2C 的特点?和 UART/SPI 比?</strong><br>两线(SCL 时钟+SDA 数据)、同步、多设备(靠地址区分)、低速、主从。比 UART:有时钟线(同步)、能挂多设备。比 SPI:线更少但更慢。省引脚是核心优势。</p>
+<p><strong>Q2:I2C 怎么在一条总线上区分多个设备?</strong><br>每个从设备有唯一 7 位地址,主设备通信前先发地址"点名",被点到的设备 ACK 应答,其余沉默。地址冲突会通信混乱。</p>
+<p><strong>Q3:I2C 为什么要上拉电阻?</strong><br>SCL/SDA 是开漏,设备只能拉低、靠外部上拉拉高。这样多设备共线不冲突(线与逻辑)。不接上拉线一直低,通信不通——这是最常见硬件错误。</p>
+<p><strong>Q4:读一个 I2C 传感器寄存器的时序?</strong><br>START→发[地址|写]+ACK→发寄存器号+ACK→RESTART→发[地址|读]+ACK→读数据→STOP。即"先写告诉它读哪个寄存器,再转向读值"。ACK 缺失是调试关键线索。</p>
+<p><strong>Q5:Linux I2C 框架的角色?你写哪个?</strong><br>i2c_adapter(控制器/主,SoC 厂商写好)、i2c_client(从设备)、i2c_driver(设备驱动,你写的)。你写 client 驱动,调 i2c_transfer/SMBus 通信,不直接操作 SCL/SDA。</p>
+<p><strong>Q6:i2c_transfer 和 SMBus 的区别?</strong><br>SMBus 封装常见"读写寄存器"操作(i2c_smbus_read_byte_data),简洁,最常用;i2c_transfer 底层,手动构造 i2c_msg,适合非标准时序,且一次调用多 msg 是原子事务(不被插入)。</p>
+<p><strong>Q7:regmap 有什么用?</strong><br>统一"读写设备寄存器"接口,屏蔽底层是 I2C 还是 SPI。同一驱动换 I2C/SPI 版芯片只改初始化一行,还自动处理缓存/字节序/锁。现代传感器驱动标配。</p>
+
+<h2 id="s13">45.13 常见误区</h2>
+<ol>
+  <li><strong>"I2C 和 UART 一样异步"</strong>——I2C 有时钟线 SCL,是同步的。</li>
+  <li><strong>"I2C 不用上拉电阻"</strong>——必须接,开漏靠上拉拉高,否则不通。</li>
+  <li><strong>"设备树里 I2C 设备的 reg 是内存地址"</strong>——是 I2C 地址(如 0x68),不是内存地址。</li>
+  <li><strong>"写 I2C 驱动要自己操作 SCL/SDA"</strong>——调 i2c_transfer/SMBus,时序由 adapter 硬件产生。</li>
+  <li><strong>"可以在硬中断里读 I2C 传感器"</strong>——不行,I2C 传输会睡眠,要在进程上下文/线程化中断。</li>
+  <li><strong>"同款传感器 I2C 版和 SPI 版要写两套驱动"</strong>——用 regmap 可共用一套。</li>
+</ol>
+
+<h2 id="s14">45.14 本章总结</h2>
+<ul>
+  <li><strong>I2C</strong>:两线(SCL 时钟+SDA 数据)、<strong>同步</strong>、<strong>多设备靠地址区分</strong>、低速、主从;<strong>省引脚</strong>是核心优势,接传感器主力。</li>
+  <li>硬件:<strong>开漏+上拉电阻</strong>(多设备共线不冲突,必接);每从设备唯一 <strong>7 位地址</strong>。</li>
+  <li>时序:START→地址+读写位→<strong>ACK</strong>→数据(每字节 ACK)→STOP;<strong>ACK 缺失是调试关键</strong>。读寄存器=先写寄存器号再 RESTART 读值。</li>
+  <li>框架三角色:<strong>i2c_adapter</strong>(控制器/主,厂商写)、<strong>i2c_client</strong>(从设备)、<strong>i2c_driver</strong>(设备驱动,你写);是第40章总线模型的<strong>真实物理总线</strong>案例。</li>
+  <li>你写 client 驱动:填 i2c_driver(probe+of_match_table)+module_i2c_driver,设备树描述(reg=<strong>I2C 地址</strong>)。</li>
+  <li>通信 API:<strong>SMBus</strong>(i2c_smbus_read/write_byte_data,封装常见读写寄存器,最常用)、<strong>i2c_transfer</strong>(底层灵活,多 msg 原子事务)。</li>
+  <li><strong>regmap</strong>:统一寄存器访问,屏蔽 I2C/SPI,一份驱动支持两种总线,自动处理缓存/锁。</li>
+  <li>要点:I2C 传输<strong>会睡眠</strong>,读传感器要在进程上下文/线程化中断(第43章)。</li>
+</ul>
+
+<h2 id="s15">45.15 思维导图 / 课后题</h2>
+<pre><code>I2C 驱动
+├─ 一、I2C:SCL+SDA两线·★同步·多设备靠地址·低速·主从(省引脚)
+├─ 二、硬件:★开漏+上拉电阻(共线不冲突,必接); 7位地址
+├─ 三、★时序:START→地址+RW→ACK→数据→STOP; ACK缺失=调试线索
+├─ 四、读寄存器:先写寄存器号→RESTART→读值(两段式)
+├─ 五、★框架三角色:adapter(控制器,厂商写)/client(设备)/driver(你写)
+│      └─ 第40章总线模型的真实物理总线案例
+├─ 六、你写client驱动:i2c_driver(probe)+module_i2c_driver+设备树(reg=I2C地址)
+├─ 七、API:SMBus(read/write_byte_data常用) / i2c_transfer(底层,原子事务)
+├─ 八、★regmap:统一寄存器访问, 屏蔽I2C/SPI, 一份驱动两总线
+└─ 九、要点:I2C传输会睡眠→读传感器在进程上下文/线程化中断
+        回扣:总线模型(40)+设备树(41)+中断(43)</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li><code>i2cdetect -l</code> 列出 I2C 总线;<code>i2cdetect -y 1</code> 扫描总线 1 上的设备(看到地址=有 ACK 的设备),理解地址寻址。</li>
+  <li><code>i2cget -y 1 0x68 0x75</code> 读某传感器的 ID 寄存器;<code>i2cset</code> 写寄存器,对照 45.5 的读寄存器时序。</li>
+  <li>照 45.8 写一个 I2C 传感器驱动骨架,设备树里加挂载节点(reg=设备地址),probe 里读 WHOAMI 验证芯片,加载观察 probe。</li>
+  <li>用逻辑分析仪(或仿真)抓一次 I2C 通信波形,找出 START/地址/ACK/数据/STOP,理解时序。</li>
+  <li>读一个内核 I2C 传感器驱动(如 <code>drivers/iio/imu/mpu6050/</code>),找到它用 regmap 还是 SMBus、probe 怎么验证芯片,对照本章。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>I2C 的特点?和 UART、SPI 的区别?</li>
+  <li>一条 I2C 总线怎么区分多个设备?地址冲突会怎样?</li>
+  <li>I2C 为什么需要上拉电阻?</li>
+  <li>读一个 I2C 传感器寄存器的完整时序?ACK 的意义?</li>
+  <li>Linux I2C 框架的三个角色?你通常写哪个?</li>
+  <li>i2c_transfer 和 SMBus 函数的区别?</li>
+  <li>regmap 解决什么问题?为什么现代驱动爱用它?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第四十五章 完 · 下一章《第四十六章 SPI 驱动》</p>
+<div class="nav">
+  <a href="第44章-UART串口驱动.html">← 第四十四章</a>
+  <a href="index.html">目录</a>
+  <a href="第46章-SPI驱动.html">第四十六章 →</a>
+</div>
+
+</div>
+</body>
+</html>

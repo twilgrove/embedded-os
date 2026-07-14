@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第四十三章 中断驱动与 DMA</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第42章-GPIO与Pinctrl.html">← 第四十二章</a>
+  <a href="index.html">目录</a>
+  <a href="第44章-UART串口驱动.html">第四十四章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第六卷 · Linux 驱动</div>
+  <h1>第四十三章 中断驱动与 DMA</h1>
+  <div class="sub">让 CPU 别干等——高效数据搬运的两大法宝</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">轮询的浪费</a></li>
+    <li><a href="#s2">生活例子:等快递</a></li>
+    <li><a href="#s3">中断驱动:request_irq</a></li>
+    <li><a href="#s4">ISR 的写法与规矩</a></li>
+    <li><a href="#s5">上下半部在驱动里的落地</a></li>
+    <li><a href="#s6">线程化中断 threaded IRQ</a></li>
+    <li><a href="#s7">DMA:为什么要它</a></li>
+    <li><a href="#s8">DMA 怎么工作</a></li>
+    <li><a href="#s9">Cache 一致性:DMA 的大坑</a></li>
+    <li><a href="#s10">一致性 DMA vs 流式 DMA</a></li>
+    <li><a href="#s11">中断+DMA 的黄金组合</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:驱动怎么高效地和硬件交换数据?两大法宝:<strong>中断</strong>(硬件有事主动通知 CPU,不用轮询)和 <strong>DMA</strong>(硬件自己搬数据,不劳 CPU 逐字节拷)。第七章讲了中断硬件原理,第36章讲了上/下半部,本章讲<strong>驱动里怎么实际用中断和 DMA</strong>。DMA 还会踩到第14章 Cache 一致性的大坑。这两样是高性能驱动(UART/SPI/网卡/摄像头)的命脉,必考。</p></blockquote>
+
+<h2 id="s1">43.1 轮询的浪费</h2>
+<p>驱动要从一个设备读数据,最笨的办法是<strong>轮询(polling)</strong>:CPU 不停地问"数据好了吗?好了吗?"</p>
+<pre><code>轮询方式:
+  while (!(读状态寄存器 & 数据就绪位))
+      ;              // CPU死循环空转, 一直问"好了吗"
+  data = 读数据寄存器;  // 终于好了, 读走
+
+  问题: 数据没来的这段时间, CPU 100%忙在这个死循环里,
+        什么别的事都干不了 → 巨大浪费(尤其数据来得慢时)</code></pre>
+<p><strong>轮询的问题:CPU 把时间全耗在"反复询问"上,数据没来时纯属空转。</strong>对于慢速设备(串口一秒才几 KB),CPU 99.99% 的时间在白问。这在裸机小程序里也许能忍,但 Linux 要同时跑很多任务,不能让 CPU 干等一个设备。<strong>解法就是第七章的中断:让设备"数据好了主动告诉 CPU",CPU 平时去干别的,被通知了再来处理。</strong></p>
+
+<h2 id="s2">43.2 生活例子：等快递</h2>
+<p><strong>轮询</strong>像你在等快递,每隔一分钟跑到门口看一次"到了吗"——你什么正事都干不了,全耗在跑门口上。<strong>中断</strong>像你装了个门铃:你安心在家干活(CPU 干别的),快递到了按门铃(设备触发中断),你听到铃声再去开门(CPU 响应中断处理)。显然中断高效得多。</p>
+<p>再进一步:快递到了,还得有人把一大堆包裹从门口搬进仓库。<strong>你亲自一趟趟搬</strong>(CPU 逐字节拷数据)很累。<strong>DMA</strong> 像你雇了个搬运工:门铃响后,你只需吩咐搬运工"把这批货搬到仓库 3 号位"(配置 DMA),搬运工自己搬(DMA 引擎自主传输),搬完再按铃告诉你(DMA 完成中断)。<strong>你(CPU)全程不用搬,只在开头吩咐、结尾收尾。</strong>这就是中断+DMA 的配合。</p>
+
+<h2 id="s3">43.3 中断驱动：request_irq</h2>
+<p>驱动里用中断,核心是 <strong><code>request_irq</code></strong>——向内核申请一个中断,注册处理函数:</p>
+<pre><code>// 通常在probe里(第40章):
+int irq = platform_get_irq(pdev, 0);   // 从设备树取中断号(第41章)
+
+ret = request_irq(irq,                  // 中断号
+                  my_isr,               // ★中断处理函数(ISR)
+                  IRQF_TRIGGER_RISING,  // 触发方式(上升沿/电平等)
+                  "mydevice",           // 名字(/proc/interrupts里显示)
+                  dev);                 // 传给ISR的私有数据
+
+// 更推荐devm版本(自动释放):
+devm_request_irq(&pdev->dev, irq, my_isr, flags, "mydev", dev);
+
+// 卸载时(非devm): free_irq(irq, dev);</code></pre>
+<p><strong><code>request_irq</code> 把"某个中断号"和"你的处理函数"绑定</strong>:此后该设备触发中断,内核就自动调用你的 <code>my_isr</code>。中断号来自设备树(第41章 interrupts 属性)、经 platform_get_irq 取得,底层连到 GIC(第13章)。<strong>触发方式</strong>(边沿/电平)要和硬件实际信号匹配。<code>dev</code> 参数会原样传给 ISR(用来区分是哪个设备,共享中断时有用)。<code>/proc/interrupts</code> 能看到已注册的中断和触发计数。</p>
+
+<h2 id="s4">43.4 ISR 的写法与规矩</h2>
+<p>中断处理函数(ISR)有固定签名和严格规矩(第七章、第36章的落地):</p>
+<pre><code>static irqreturn_t my_isr(int irq, void *dev){
+    struct my_data *d = dev;    // 拿回probe时传的私有数据
+
+    // 读硬件状态、清中断标志(★必须清, 否则一直触发)
+    u32 status = readl(d->base + STATUS_REG);
+    writel(status, d->base + STATUS_REG);  // 写1清标志(看硬件手册)
+
+    // 做【最少】的紧急处理(上半部!)
+    // ... 比如把数据从硬件FIFO读进缓冲 ...
+
+    return IRQ_HANDLED;   // 表示"这个中断我处理了"
+}</code></pre>
+<p><strong>ISR 的铁律(承接第七章/第36章)</strong>:①<strong>要短</strong>——ISR 在中断上下文运行,期间可能屏蔽中断,久了误事;②<strong>不能睡眠</strong>——中断上下文不能调用可能阻塞的函数(不能 mutex、不能 GFP_KERNEL 大分配、不能 copy_to_user);③<strong>必须清中断标志</strong>——否则硬件认为中断没处理完,会反复触发(死循环);④返回 <code>IRQ_HANDLED</code>(我处理了)或 <code>IRQ_NONE</code>(不是我的,共享中断时)。<strong>紧急的少量活在 ISR 里做,费时的重活推给下半部(第36章)。</strong></p>
+
+<h2 id="s5">43.5 上下半部在驱动里的落地</h2>
+<p>把第36章的上/下半部,在驱动代码里具体化:</p>
+<pre><code>典型模式: ISR(上半部) 触发 下半部 处理重活
+
+// 上半部: 极短
+static irqreturn_t my_isr(int irq, void *dev){
+    struct my_data *d = dev;
+    读走硬件数据到缓冲; 清中断标志;
+    schedule_work(&d->work);   // ★触发下半部(workqueue, 第36章)
+    // 或 tasklet_schedule(&d->tasklet);  // tasklet下半部
+    return IRQ_HANDLED;
+}
+
+// 下半部: 慢慢处理(workqueue在进程上下文, 能睡眠)
+static void my_work(struct work_struct *w){
+    struct my_data *d = container_of(w, struct my_data, work);
+    解析数据、可能睡眠的操作、通知用户...  // 这里可以从容干重活
+}</code></pre>
+<p><strong>标准套路</strong>:ISR 只做"读走数据+清标志+触发下半部",立刻返回;真正的数据解析、可能阻塞的操作放下半部。<strong>选哪种下半部看需求(第36章决策):要睡眠用 workqueue,不睡要快用 tasklet。</strong>这个"ISR 触发 + 下半部处理"的结构,就是第34章网卡"硬中断→软中断"、你 STM32 里"中断置 flag→主循环处理"的驱动版落地。<strong>记住:ISR 是"接警",下半部是"出警办案"。</strong></p>
+
+<h2 id="s6">43.6 线程化中断 threaded IRQ</h2>
+<p>现代内核提供一个更优雅的方式:<strong>线程化中断(threaded IRQ)</strong>,把上下半部合并成一个 API:</p>
+<pre><code>request_threaded_irq(irq,
+    my_isr_quick,    // 上半部(硬中断上下文): 极短, 可为NULL
+    my_isr_thread,   // ★下半部(在专门的内核线程里, 能睡眠!)
+    IRQF_ONESHOT, "mydev", dev);
+
+// 上半部(可选): 快速判断、清标志
+static irqreturn_t my_isr_quick(int irq, void *dev){
+    return IRQ_WAKE_THREAD;   // 唤醒下半部线程
+}
+// 下半部: 在内核线程运行, 【可以睡眠】(如I2C/SPI慢速读)
+static irqreturn_t my_isr_thread(int irq, void *dev){
+    读传感器(可能睡眠的I2C传输)...   // 从容处理
+    return IRQ_HANDLED;
+}</code></pre>
+<p><strong>线程化中断把"下半部"直接做成一个内核线程</strong>(类似第36章 workqueue,但更专用):你提供一个快速上半部(判断+唤醒)和一个能睡眠的线程下半部。<strong>好处:下半部能睡眠(可以直接在里面做 I2C/SPI 慢速读传感器,第45/46章),代码更清晰,且中断线程能被调度(利于实时性,第七卷)。</strong>现代很多驱动尤其是慢速外设(传感器)用它——因为读传感器往往要通过 I2C(会睡眠),不能在硬中断里做,线程化中断正好。这是当前推荐的中断处理方式。</p>
+
+<h2 id="s7">43.7 DMA：为什么要它</h2>
+<p>转到第二个法宝。中断解决了"何时处理",但<strong>搬数据本身</strong>还是问题。假设网卡收了 1500 字节,CPU 要把它从硬件缓冲逐字节拷到内存——<strong>大数据量时,CPU 光搬运就累死了。</strong></p>
+<blockquote><p><strong>DMA(Direct Memory Access,直接内存访问)</strong>:一个专门的硬件"搬运引擎",能<strong>不经过 CPU,直接在内存和设备之间搬数据。</strong>CPU 只需告诉 DMA"从哪搬到哪、搬多少",DMA 就自主完成整个传输,搬完发个中断通知 CPU。<strong>这期间 CPU 完全解放,去干别的活。</strong>对比:没有 DMA,CPU 要执行几百上千条 load/store 指令逐字节搬(还占满内存带宽和 Cache,第八章);有 DMA,CPU 只发几条配置指令就撒手。<strong>DMA 是高吞吐外设(网卡、摄像头、SPI 屏、音频、SD 卡)的必备</strong>——图传、激光雷达那种大数据流,全靠 DMA 搬,否则 CPU 根本扛不住。</p></blockquote>
+
+<h2 id="s8">43.8 DMA 怎么工作</h2>
+<p>DMA 传输的基本流程:</p>
+<pre><code>DMA 一次传输(以设备→内存 接收为例):
+  ① CPU配置DMA: 源地址(设备FIFO)、目的地址(内存缓冲)、长度
+  ② CPU启动DMA, 然后【去干别的】(不再管搬运)
+  ③ DMA引擎自主工作: 从设备读数据 → 写入内存, 一批批搬
+       (此时CPU并行做别的事, DMA用内存总线搬)
+  ④ 搬完, DMA触发【DMA完成中断】
+  ⑤ CPU的ISR响应: "数据到齐了", 处理数据/通知用户
+
+驱动里用DMA引擎API(dmaengine子系统):
+  chan = dma_request_chan(dev, "rx");        // 申请DMA通道
+  desc = dmaengine_prep_slave_single(chan,   // 描述一次传输
+              dma_addr, len, DMA_DEV_TO_MEM, ...);
+  desc->callback = my_dma_done;              // 完成回调
+  dmaengine_submit(desc); dma_async_issue_pending(chan); // 启动</code></pre>
+<p><strong>核心:CPU"配置+启动"DMA,然后撒手;DMA 自主搬运;搬完中断通知。</strong>Linux 用 <strong>dmaengine 子系统</strong>统一管理 DMA(又是子系统统一抽象):申请通道、描述传输、提交启动、注册完成回调。<strong>注意 DMA 用的是物理地址(<code>dma_addr</code>)</strong>——因为 DMA 引擎不走 CPU 的 MMU(第九章),它直接访问物理内存,所以要给它物理地址(或经 IOMMU 映射的地址)。这引出 DMA 的最大坑——Cache 一致性。</p>
+
+<h2 id="s9">43.9 Cache 一致性：DMA 的大坑</h2>
+<p>DMA 有个极其经典、面试必问的坑,根源是第八/14章的 Cache:</p>
+<pre><code>问题场景(DMA写内存, CPU读到旧数据):
+  ① CPU之前读过这块内存 → 数据在【Cache】里(第八章)
+  ② DMA把新数据【直接写进内存】(DMA不经过CPU的Cache!)
+  ③ CPU再读这块内存 → 命中Cache → 读到的是【旧数据】! ✗
+     (Cache里还是老的, 不知道内存已被DMA更新)
+
+反方向(CPU写, DMA读到旧数据):
+  ① CPU写了数据, 还在Cache里没回写内存(写回策略, 第八章)
+  ② DMA从内存读 → 读到的是【旧数据】(CPU的新数据还在Cache) ✗</code></pre>
+<blockquote><p><strong>DMA 一致性问题的本质:DMA 直接访问物理内存,绕过了 CPU 的 Cache,导致 Cache 和内存不一致(第八/14章)。</strong>CPU 看 Cache、DMA 看内存,两者可能不同步。<strong>解决靠 Cache 维护操作</strong>:①DMA 接收(设备→内存)前,要<strong>invalidate(失效)</strong>对应 Cache 行(丢弃旧的 Cache,强制 CPU 下次从内存读新数据);②DMA 发送(内存→设备)前,要<strong>flush/clean(回写)</strong>Cache(把 CPU 在 Cache 里的新数据写回内存,让 DMA 读到)。<strong>好在 Linux 的 DMA API 会帮你自动做这些 Cache 维护</strong>(下一节的 <code>dma_map_single</code> 等),你不用手动写——但<strong>必须理解为什么</strong>,否则遇到"DMA 数据错乱/读到旧值"这类 bug 会一头雾水。<strong>这是第八章 Cache、第14章一致性知识在驱动里最重要的实战应用,极爱考。</strong></p></blockquote>
+
+<h2 id="s10">43.10 一致性 DMA vs 流式 DMA</h2>
+<p>Linux 提供两种 DMA 内存映射方式,应对上面的一致性问题:</p>
+<table>
+<tr><th></th><th>一致性 DMA(coherent)</th><th>流式 DMA(streaming)</th></tr>
+<tr><td>API</td><td><code>dma_alloc_coherent</code></td><td><code>dma_map_single</code>/<code>dma_unmap_single</code></td></tr>
+<tr><td>Cache 处理</td><td>分配的内存本身不可缓存/硬件保证一致,<strong>无需手动维护</strong></td><td>每次传输前后<strong>做 Cache 维护</strong>(map/unmap 时自动 invalidate/flush)</td></tr>
+<tr><td>适合</td><td>长期反复用的缓冲(如网卡描述符环)</td><td>一次性传输的缓冲(如一次读写的数据块)</td></tr>
+<tr><td>开销</td><td>不可缓存, 访问慢些, 但省去每次维护</td><td>可缓存(访问快), 但每次传输有维护开销</td></tr>
+</table>
+<p><strong>一致性 DMA</strong>:分配一块"始终一致"的内存(通常不可缓存或硬件保证一致),CPU 和 DMA 都能直接用、不用每次维护——适合<strong>频繁复用</strong>的缓冲(如描述符环)。<strong>流式 DMA</strong>:用普通(可缓存)内存,但每次传输时用 <code>dma_map_single</code>(传输前)/<code>dma_unmap_single</code>(传输后)<strong>自动做 Cache 维护</strong>——适合<strong>一次性</strong>的数据传输。<strong>选择:反复用的固定缓冲用一致性 DMA;一次性大块传输用流式 DMA。</strong>两种方式都帮你处理了 Cache 一致性,区别在"预先一致"还是"每次维护"。</p>
+
+<h2 id="s11">43.11 中断+DMA 的黄金组合</h2>
+<p>把两个法宝合起来,这是高性能驱动的标准架构:</p>
+<pre><code>高性能数据接收(如网卡/SPI/UART大数据):
+  ① CPU配置DMA: 让DMA把设备数据搬到内存缓冲, 启动DMA
+  ② CPU去干别的 (不轮询、不逐字节搬 —— 全解放!)
+  ③ DMA自主把一大批数据搬进内存
+  ④ 搬完 → DMA触发【完成中断】
+  ⑤ ISR(上半部)响应: 确认完成, 触发下半部
+  ⑥ 下半部: 处理这批数据、准备下一次DMA
+  → 循环: CPU只在开头启动、结尾处理, 中间全靠DMA+中断, 极高效</code></pre>
+<blockquote><p><strong>"DMA 搬运 + 中断通知"是高吞吐驱动的黄金组合,它把 CPU 从"数据搬运工"彻底解放:</strong>DMA 负责搬(不占 CPU)、中断负责通知(不用轮询)。CPU 只在"配置启动"和"处理完成"两个瞬间参与,中间大量时间去跑别的任务。<strong>的图传、激光雷达、摄像头(第八卷 RK3588)这些每秒几十上百 MB 的数据流,全靠这个组合</strong>——没有 DMA,CPU 光搬数据就 100% 占满;没有中断,CPU 光轮询就空转。<strong>两者结合,才让一颗 CPU 能同时高效处理多路高速数据。</strong>回顾第34章网络接收,正是这个模式(网卡 DMA 收包 + 中断 + 软中断处理)。理解这个组合,你就掌握了高性能驱动的核心架构——后面 UART(44)、SPI(46)、以及网卡类驱动都用它。</p></blockquote>
+
+<h2 id="s12">43.12 面试常问问题</h2>
+<p><strong>Q1:轮询和中断的区别?为什么用中断?</strong><br>轮询:CPU 不停问"数据好了吗",空转浪费。中断:设备数据好了主动通知 CPU,CPU 平时干别的、被通知才处理。中断高效,不浪费 CPU。</p>
+<p><strong>Q2:驱动里怎么申请和处理中断?</strong><br>request_irq/devm_request_irq 绑定中断号和 ISR(中断号来自设备树 platform_get_irq)。ISR 里读状态、清中断标志、做最少紧急处理、返回 IRQ_HANDLED。</p>
+<p><strong>Q3:ISR 有哪些规矩?</strong><br>要短、不能睡眠(中断上下文,不能 mutex/copy_to_user/大分配)、必须清中断标志(否则反复触发)、重活推给下半部。</p>
+<p><strong>Q4:什么是线程化中断?好处?</strong><br>request_threaded_irq 把下半部做成内核线程,下半部能睡眠(可在里面做 I2C/SPI 慢速读)、能被调度(利于实时)。现代慢速外设驱动常用。</p>
+<p><strong>Q5:DMA 是什么?解决什么问题?</strong><br>专门的硬件搬运引擎,不经 CPU 直接在内存和设备间搬数据。CPU 只配置启动,DMA 自主搬完发中断。解放 CPU,不用逐字节拷,适合大数据量高吞吐外设。</p>
+<p><strong>Q6:DMA 的 Cache 一致性问题?怎么解决?★</strong><br>DMA 直接访问内存绕过 CPU Cache,导致不一致:DMA 写后 CPU 可能从 Cache 读到旧值;CPU 写后数据在 Cache 没回写,DMA 读到旧值。解决:DMA 接收前 invalidate Cache、发送前 flush Cache。Linux DMA API(dma_map_single/dma_alloc_coherent)自动处理。</p>
+<p><strong>Q7:一致性 DMA 和流式 DMA 的区别?</strong><br>一致性(dma_alloc_coherent):内存始终一致、无需每次维护,适合反复用的缓冲(描述符环),但不可缓存访问慢。流式(dma_map_single):可缓存内存,每次传输前后自动做 Cache 维护,适合一次性传输。</p>
+
+<h2 id="s13">43.13 常见误区</h2>
+<ol>
+  <li><strong>"ISR 里能调用 copy_to_user/mutex/大内存分配"</strong>——不能,中断上下文不能睡眠。</li>
+  <li><strong>"ISR 不用清中断标志"</strong>——必须清,否则硬件反复触发,系统卡死。</li>
+  <li><strong>"DMA 传输 CPU 要全程参与"</strong>——只配置启动和处理完成,中间 DMA 自主搬。</li>
+  <li><strong>"DMA 用虚拟地址"</strong>——用物理地址/DMA 地址(不经 MMU),要用 DMA API 获取。</li>
+  <li><strong>"DMA 不用管 Cache"</strong>——DMA 绕过 Cache,必须做一致性维护(API 帮你做,但要懂原理)。</li>
+  <li><strong>"中断越多性能越好"</strong>——中断也有开销,高速场景常用 DMA 批量 + 少量中断(甚至中断合并)。</li>
+</ol>
+
+<h2 id="s14">43.14 本章总结</h2>
+<ul>
+  <li><strong>轮询</strong>浪费 CPU(空转问"好了吗");<strong>中断</strong>让设备主动通知,CPU 平时干别的。</li>
+  <li>驱动用中断:<strong>request_irq/devm_request_irq</strong> 绑中断号(设备树取)和 ISR。</li>
+  <li><strong>ISR 规矩</strong>:短、<strong>不能睡眠</strong>、<strong>必须清中断标志</strong>、返回 IRQ_HANDLED;重活推下半部。</li>
+  <li>上下半部落地:ISR 读数据+清标志+<strong>触发下半部</strong>(workqueue/tasklet),下半部处理重活。</li>
+  <li><strong>线程化中断</strong>(request_threaded_irq):下半部是内核线程,<strong>能睡眠</strong>(适合 I2C/SPI 读传感器)、能调度,现代推荐。</li>
+  <li><strong>DMA</strong>:硬件搬运引擎,不经 CPU 直接在内存/设备间搬;CPU 只配置启动、搬完中断通知 → 解放 CPU,适合高吞吐。用 dmaengine 子系统,DMA 用物理地址。</li>
+  <li><strong>Cache 一致性坑★</strong>:DMA 绕过 Cache 致不一致;接收前 invalidate、发送前 flush;DMA API 自动处理(需懂原理)。</li>
+  <li><strong>一致性 DMA</strong>(alloc_coherent,反复用缓冲)vs <strong>流式 DMA</strong>(map_single,一次性)。</li>
+  <li><strong>中断+DMA 黄金组合</strong>:DMA 搬运+中断通知,CPU 只在头尾参与,高性能驱动标准架构(网卡/图传/雷达)。</li>
+</ul>
+
+<h2 id="s15">43.15 思维导图 / 课后题</h2>
+<pre><code>中断驱动与 DMA
+├─ 一、轮询浪费(CPU空转问"好了吗") → 用中断
+├─ 二、★request_irq:绑中断号(设备树)+ISR; devm版自动释放
+├─ 三、★ISR规矩:短/不能睡/必须清中断标志/返回IRQ_HANDLED
+├─ 四、上下半部落地:ISR读数据+清标志+触发下半部(WQ/tasklet)
+├─ 五、★线程化中断request_threaded_irq:下半部内核线程, 能睡眠
+├─ 六、★DMA:硬件搬运引擎, 不经CPU搬数据, 配置启动→搬完中断
+├─ 七、dmaengine子系统; DMA用物理地址(不经MMU)
+├─ 八、★★Cache一致性坑:DMA绕过Cache→不一致
+│      └─ 收前invalidate, 发前flush; DMA API自动做
+├─ 九、一致性DMA(alloc_coherent反复用) vs 流式(map_single一次性)
+└─ 十、★中断+DMA黄金组合:搬运+通知, CPU只头尾参与(图传/雷达)</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li><code>cat /proc/interrupts</code> 看系统所有中断、各 CPU 的触发计数、设备名;敲键盘/动网络后再看对应中断计数增长。</li>
+  <li>给第42章的按键驱动用 devm_request_irq 注册中断,ISR 里 printk,按键触发观察(体会中断 vs 轮询)。</li>
+  <li>把上面改成 request_threaded_irq,在线程下半部里做一个 msleep,验证下半部能睡眠而硬 ISR 不能。</li>
+  <li>阅读一个真实驱动(如 <code>drivers/spi/spi-rockchip.c</code>)里的 DMA 使用:找 dma_request_chan、dmaengine_prep、完成回调,对照本章。</li>
+  <li>思考并写出:一个 SPI 读传感器的驱动,DMA 接收前后分别要对 Cache 做什么操作、为什么。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>轮询和中断的区别?各自适用场景?</li>
+  <li>驱动怎么申请中断?ISR 有哪些限制?为什么要清中断标志?</li>
+  <li>线程化中断是什么?相比传统上下半部好在哪?</li>
+  <li>DMA 是什么?为什么能解放 CPU?</li>
+  <li>DMA 的 Cache 一致性问题是怎么产生的?怎么解决?(重点)</li>
+  <li>一致性 DMA 和流式 DMA 的区别和适用?</li>
+  <li>为什么高性能驱动要"中断+DMA"结合?举例。</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第四十三章 完 · 下一章《第四十四章 UART 串口驱动》</p>
+<div class="nav">
+  <a href="第42章-GPIO与Pinctrl.html">← 第四十二章</a>
+  <a href="index.html">目录</a>
+  <a href="第44章-UART串口驱动.html">第四十四章 →</a>
+</div>
+
+</div>
+</body>
+</html>

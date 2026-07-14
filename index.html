@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>嵌入式操作系统</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#8b949e;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--done:#1a7f37;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#6e7681;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--done:#3fb950;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+    line-height:1.7;}
+  .wrap{max-width:920px;margin:0 auto;padding:40px 22px 100px;}
+  header{text-align:center;padding:30px 0 20px;border-bottom:1px solid var(--border);margin-bottom:30px;}
+  header h1{font-size:32px;margin:0 0 10px;}
+  header p{color:var(--muted);margin:4px 0;font-size:15px;}
+  .vol{background:var(--card);border:1px solid var(--border);border-radius:14px;
+    padding:18px 24px;margin:18px 0;}
+  .vol h2{margin:0 0 12px;font-size:20px;color:var(--accent);
+    display:flex;align-items:center;gap:10px;}
+  .vol h2 .n{background:var(--accent-soft);border-radius:8px;padding:2px 10px;font-size:14px;}
+  .chapters{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;}
+  .ch{display:block;padding:8px 12px;border-radius:8px;border:1px solid var(--border);
+    text-decoration:none;color:var(--fg);font-size:14.5px;background:var(--bg);transition:.15s;}
+  .ch.done{border-color:var(--done);}
+  .ch.done:hover{background:var(--accent-soft);}
+  .ch.done::before{content:"✓ ";color:var(--done);font-weight:700;}
+  .ch.todo{color:var(--muted);border-style:dashed;cursor:default;}
+  .ch.todo::before{content:"○ ";}
+  .stat{text-align:center;color:var(--muted);font-size:14px;margin-top:8px;}
+  .tag{display:inline-block;background:var(--accent-soft);color:var(--accent);
+    border-radius:6px;padding:1px 8px;font-size:12px;margin-left:6px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>嵌入式操作系统</h1>
+  <p>全书九卷 62 章 · 约 29 万字</p>
+  <p>适合有单片机、实时操作系统(RTOS)、Linux 系统开发基础的人</p>
+</header>
+
+<div class="vol">
+  <h2><span class="n">第一卷</span> 计算机组成原理</h2>
+  <div class="chapters">
+    <a class="ch done" href="第01章-为什么需要操作系统.html">第一章 为什么需要操作系统</a>
+    <a class="ch done" href="第02章-CPU到底是什么.html">第二章 CPU 到底是什么</a>
+    <a class="ch done" href="第03章-指令如何执行.html">第三章 指令如何执行</a>
+    <a class="ch done" href="第04章-寄存器.html">第四章 寄存器</a>
+    <a class="ch done" href="第05章-Stack.html">第五章 Stack</a>
+    <a class="ch done" href="第06章-函数调用.html">第六章 函数调用</a>
+    <a class="ch done" href="第07章-中断.html">第七章 中断</a>
+    <a class="ch done" href="第08章-Cache.html">第八章 Cache</a>
+    <a class="ch done" href="第09章-MMU.html">第九章 MMU</a>
+    <a class="ch done" href="第10章-虚拟内存.html">第十章 虚拟内存</a>
+  </div>
+</div>
+
+<div class="vol">
+  <h2><span class="n">第二卷</span> ARM 架构</h2>
+  <div class="chapters">
+    <a class="ch done" href="第11章-ARM架构与CortexM和A.html">第十一章 ARM架构与 Cortex-M/A</a>
+    <a class="ch done" href="第12章-异常与异常等级.html">第十二章 异常与异常等级 EL0-EL3</a>
+    <a class="ch done" href="第13章-GIC中断控制器.html">第十三章 GIC 中断控制器</a>
+    <a class="ch done" href="第14章-Cache一致性.html">第十四章 Cache 一致性 (MESI)</a>
+    <a class="ch done" href="第15章-TrustZone.html">第十五章 TrustZone 安全世界</a>
+  </div>
+</div>
+
+<div class="vol">
+  <h2><span class="n">第三卷</span> FreeRTOS 源码</h2>
+  <div class="chapters">
+    <a class="ch done" href="第16章-FreeRTOS-Task任务.html">第十六章 总览与 Task 任务</a>
+    <a class="ch done" href="第17章-FreeRTOS-调度器.html">第十七章 调度器 Scheduler</a>
+    <a class="ch done" href="第18章-FreeRTOS-SysTick与PendSV.html">第十八章 SysTick 与 PendSV 上下文切换</a>
+    <a class="ch done" href="第19章-FreeRTOS-Queue队列.html">第十九章 Queue 队列</a>
+    <a class="ch done" href="第20章-FreeRTOS-Semaphore信号量.html">第二十章 Semaphore 信号量</a>
+    <a class="ch done" href="第21章-FreeRTOS-Mutex与优先级继承.html">第廿一章 Mutex 与优先级继承</a>
+    <a class="ch done" href="第22章-FreeRTOS-EventGroup事件组.html">第廿二章 EventGroup 事件组</a>
+    <a class="ch done" href="第23章-FreeRTOS-SoftwareTimer软件定时器.html">第廿三章 SoftwareTimer 软件定时器</a>
+    <a class="ch done" href="第24章-FreeRTOS-Heap内存管理.html">第廿四章 Heap 内存管理</a>
+  </div>
+</div>
+
+<div class="vol">
+  <h2><span class="n">第四卷</span> RT-Thread 源码</h2>
+  <div class="chapters">
+    <a class="ch done" href="第25章-RTThread总览与内核对象.html">第廿五章 总览·内核对象·调度器</a>
+    <a class="ch done" href="第26章-RTThread-IPC与设备框架.html">第廿六章 IPC 与设备驱动框架</a>
+    <a class="ch done" href="第27章-RTThread-内存FinSH与BSP.html">第廿七章 内存·FinSH·BSP</a>
+  </div>
+</div>
+
+<div class="vol">
+  <h2><span class="n">第五卷</span> Linux 内核</h2>
+  <div class="chapters">
+    <a class="ch done" href="第28章-Linux内核总览与task_struct.html">第廿八章 内核总览与 task_struct</a>
+    <a class="ch done" href="第29章-Linux进程线程与fork.html">第廿九章 进程线程与 fork/exec/clone</a>
+    <a class="ch done" href="第30章-Linux调度器与CFS.html">第三十章 进程调度与 CFS</a>
+    <a class="ch done" href="第31章-Linux内存管理Buddy与Slab.html">第卅一章 内存管理:Buddy 与 Slab</a>
+    <a class="ch done" href="第32章-Linux-VFS.html">第卅二章 VFS 虚拟文件系统</a>
+    <a class="ch done" href="第33章-Linux-Signal信号.html">第卅三章 Signal 信号</a>
+    <a class="ch done" href="第34章-Linux-Socket与网络协议栈.html">第卅四章 Socket 与网络协议栈</a>
+    <a class="ch done" href="第35章-Linux-Epoll与IO多路复用.html">第卅五章 Epoll 与 IO 多路复用</a>
+    <a class="ch done" href="第36章-Linux-中断与SoftIRQ.html">第卅六章 中断与 SoftIRQ</a>
+    <a class="ch done" href="第37章-Linux-并发同步.html">第卅七章 并发同步:原子/SpinLock/Mutex</a>
+    <a class="ch done" href="第38章-Linux-RCU.html">第卅八章 RCU</a>
+  </div>
+</div>
+
+<div class="vol">
+  <h2><span class="n">第六卷</span> Linux 驱动</h2>
+  <div class="chapters">
+    <a class="ch done" href="第39章-驱动总览与字符设备.html">第卅九章 驱动总览与字符设备</a>
+    <a class="ch done" href="第40章-内核模块与PlatformDriver.html">第四十章 内核模块与 Platform Driver</a>
+    <a class="ch done" href="第41章-设备树DeviceTree.html">第四十一章 设备树 DeviceTree</a>
+    <a class="ch done" href="第42章-GPIO与Pinctrl.html">第四十二章 GPIO 与 Pinctrl</a>
+    <a class="ch done" href="第43章-中断驱动与DMA.html">第四十三章 中断驱动与 DMA</a>
+    <a class="ch done" href="第44章-UART串口驱动.html">第四十四章 UART 串口驱动</a>
+    <a class="ch done" href="第45章-I2C驱动.html">第四十五章 I2C 驱动</a>
+    <a class="ch done" href="第46章-SPI驱动.html">第四十六章 SPI 驱动</a>
+    <a class="ch done" href="第47章-CAN总线驱动.html">第四十七章 CAN 总线驱动</a>
+    <a class="ch done" href="第48章-mmap与ioctl.html">第四十八章 mmap 与 ioctl</a>
+    <a class="ch done" href="第49章-USB与PCIe概览.html">第四十九章 USB 与 PCIe 概览</a>
+  </div>
+</div>
+
+<div class="vol">
+  <h2><span class="n">第七卷</span> 实时系统</h2>
+  <div class="chapters">
+    <a class="ch done" href="第50章-什么是实时性.html">第五十章 什么是实时性</a>
+    <a class="ch done" href="第51章-延迟Latency的来源.html">第五十一章 延迟 Latency 的来源</a>
+    <a class="ch done" href="第52章-实时调度.html">第五十二章 实时调度:优先级/RMS/EDF</a>
+    <a class="ch done" href="第53章-优先级反转与继承.html">第五十三章 优先级反转与继承</a>
+    <a class="ch done" href="第54章-WCET最坏执行时间.html">第五十四章 WCET 最坏执行时间</a>
+    <a class="ch done" href="第55章-PREEMPT_RT实时Linux.html">第五十五章 PREEMPT_RT 实时 Linux</a>
+  </div>
+</div>
+
+<div class="vol">
+  <h2><span class="n">第八卷</span> RK3588 工程实践</h2>
+  <div class="chapters">
+    <a class="ch done" href="第56章-RK3588架构总览.html">第五十六章 RK3588 架构总览</a>
+    <a class="ch done" href="第57章-SMP与CPU亲和隔离.html">第五十七章 SMP 与 CPU 亲和/隔离</a>
+    <a class="ch done" href="第58章-AMP非对称多处理.html">第五十八章 AMP 非对称多处理</a>
+    <a class="ch done" href="第59章-RemoteProc与RPMsg.html">第五十九章 RemoteProc 与 RPMsg 核间通信</a>
+    <a class="ch done" href="第60章-共享内存与零拷贝.html">第六十章 共享内存与零拷贝</a>
+    <a class="ch done" href="第61章-ROS2工程实践.html">第六十一章 ROS2 工程实践</a>
+  </div>
+</div>
+
+<div class="vol">
+  <h2><span class="n">第九卷</span> 面试宝典</h2>
+  <div class="chapters">
+    <a class="ch done" href="第62章-面试高频题精编.html">第六十二章 面试高频题精编(八大主题)</a>
+  </div>
+</div>
+
+</div>
+</body>
+</html>

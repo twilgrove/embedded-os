@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第卅五章 Epoll 与 IO 多路复用</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第34章-Linux-Socket与网络协议栈.html">← 第卅四章</a>
+  <a href="index.html">目录</a>
+  <a href="第36章-Linux-中断与SoftIRQ.html">第卅六章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第五卷 · Linux 内核</div>
+  <h1>第卅五章 Epoll 与 IO 多路复用</h1>
+  <div class="sub">一个线程如何同时盯住上万个连接</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么需要 IO 多路复用</a></li>
+    <li><a href="#s2">生活例子:餐厅服务员</a></li>
+    <li><a href="#s3">阻塞/非阻塞/多路复用</a></li>
+    <li><a href="#s4">select/poll 的困境</a></li>
+    <li><a href="#s5">epoll 登场</a></li>
+    <li><a href="#s6">epoll 三个系统调用</a></li>
+    <li><a href="#s7">epoll 底层:红黑树+就绪链表</a></li>
+    <li><a href="#s8">回调:数据来了怎么变就绪</a></li>
+    <li><a href="#s9">水平触发 vs 边缘触发</a></li>
+    <li><a href="#s10">epoll 为什么快</a></li>
+    <li><a href="#s11">回扣全书</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:一个服务器要同时处理上万个连接(想想 IoT 网关、机器人多传感器汇聚),怎么用一个(或少数几个)线程盯住这么多 fd?答案是 <strong>IO 多路复用</strong>,而 Linux 上的王者是 <strong>epoll</strong>。这章你会看到 epoll 如何用第32章的 fd、第34章的 socket、第30章的进程唤醒、红黑树(第30章 CFS 见过)组合出一个高性能事件通知机制。这是高性能网络编程的核心,面试必问。</p></blockquote>
+
+<h2 id="s1">35.1 为什么需要 IO 多路复用</h2>
+<p>假设你写一个服务器,要同时和 10000 个客户端通信。最朴素的想法:每个连接开一个线程,线程里 <code>read()</code> 阻塞等数据。问题来了:<strong>10000 个线程</strong>——每个线程要栈(第五章,几 MB)、要被调度(第30章,上下文切换开销),10000 个线程光内存和调度开销就压垮系统。</p>
+<p>换个思路:<strong>大部分连接在大部分时间是"闲着的"(没数据)。</strong>能不能用<strong>一个</strong>线程,同时"盯着"这 10000 个 fd,哪个有数据了就处理哪个?这就是 <strong>IO 多路复用</strong>(IO multiplexing):<strong>用一个线程监控多个 IO 通道,只在有事件的通道上干活。</strong>"多路"=多个 fd,"复用"=复用一个线程。</p>
+
+<h2 id="s2">35.2 生活例子：餐厅服务员</h2>
+<p>一个服务员(线程)管 20 桌客人(20 个连接)。<strong>笨办法</strong>:给每桌配一个专属服务员(每连接一线程),20 个服务员大部分时间站着发呆(连接空闲),浪费。<strong>更笨</strong>:一个服务员挨桌问"您需要点餐吗?"(轮询),问一圈累死还慢。</p>
+<p><strong>聪明办法</strong>:一个服务员站在中间,<strong>哪桌举手(有事件)就去哪桌</strong>。他不用挨个问,也不用一桌一个人——<strong>他只在"有人举手"时行动。</strong>epoll 就是这个"看谁举手"的机制:你把所有桌(fd)登记给它,它告诉你"3 号桌和 7 号桌举手了",你只处理这两桌。<strong>关键是"举手"的通知机制,让服务员不用轮询、不用一对一。</strong></p>
+
+<h2 id="s3">35.3 阻塞 / 非阻塞 / 多路复用</h2>
+<p>先厘清几种 IO 模型,epoll 属于哪种:</p>
+<table>
+<tr><th>模型</th><th>做法</th><th>问题</th></tr>
+<tr><td><strong>阻塞 IO</strong></td><td>read 没数据就睡,直到有数据</td><td>一个线程只能等一个 fd</td></tr>
+<tr><td><strong>非阻塞 IO</strong></td><td>read 没数据立即返回 EAGAIN</td><td>要不停轮询所有 fd,忙等浪费 CPU</td></tr>
+<tr><td><strong>IO 多路复用</strong></td><td>一个 syscall(epoll_wait)同时等多个 fd,有就绪才返回</td><td>✓ 一线程高效等多个 fd</td></tr>
+<tr><td>异步 IO(AIO)</td><td>发起后内核完成再通知</td><td>Linux 支持有限,较少用</td></tr>
+</table>
+<p><strong>IO 多路复用的精髓:把"等待多个 fd"这件事交给内核用一个系统调用完成。</strong>你调 <code>epoll_wait</code> 睡下去(不占 CPU,第30章睡眠),内核帮你盯着所有登记的 fd,任何一个就绪就唤醒你并告诉你是哪个。<strong>既不像阻塞 IO 那样一线程只能等一个,也不像非阻塞轮询那样烧 CPU。</strong>三代多路复用 API:select → poll → epoll,epoll 是最终答案。</p>
+
+<h2 id="s4">35.4 select/poll 的困境</h2>
+<p>epoll 之前有 select/poll,它们能用但有致命性能问题(面试爱对比):</p>
+<pre><code>select/poll 的工作方式(每次调用):
+  1. 你把要监控的fd集合(比如10000个) 整个传给内核
+  2. 内核遍历这10000个fd, 逐个检查有没有就绪  ← O(n)
+  3. 返回后, 你还要再遍历10000个 找出哪几个就绪  ← O(n)
+
+  问题:
+  ① 每次调用都要把整个fd集合从用户拷到内核(大)
+  ② 每次都O(n)遍历所有fd(哪怕只有1个就绪)
+  ③ select还有FD_SETSIZE=1024上限</code></pre>
+<p><strong>核心痛点:select/poll 每次调用都要"重新告诉内核我关心哪些 fd",并且内核每次都 O(n) 遍历全部 fd。</strong>当 fd 有上万个而每次只有几个就绪时,绝大部分遍历是白费的。10000 个连接、每次只 2 个活跃,却要遍历 10000 次——效率随连接数线性恶化。<strong>epoll 就是来解决这两个"每次都全量"的问题的。</strong></p>
+
+<h2 id="s5">35.5 epoll 登场</h2>
+<p>epoll 的核心改进,一句话:<strong>把"关心哪些 fd"这件事在内核里"存起来"(一次登记,长期有效),内核用回调机制维护一个"就绪列表",你只取就绪的那几个。</strong></p>
+<pre><code>epoll 的思路对比 select:
+  select: 每次都问"这10000个里谁好了?" → 每次遍历10000
+  epoll:  fd登记一次存内核; 谁就绪了内核主动把它放进"就绪表";
+          你只需取就绪表 → 只看就绪的那几个, O(就绪数)
+
+  关键区别:
+  select 是"你每次拿全部去问"(拉, O(n))
+  epoll  是"内核把就绪的推给你"(推, O(就绪数))</code></pre>
+<p><strong>从"轮询式拉取"变成"事件式推送"</strong>——这是 epoll 高效的根本。fd 登记一次就存在内核的数据结构里(不用每次重传);哪个 fd 就绪由内核在数据到达时(第34章接收流程里)通过回调标记进就绪表;你 <code>epoll_wait</code> 只拿就绪表。<strong>无论登记了 1 万还是 10 万个 fd,epoll_wait 的开销只和"当前就绪的数量"有关,与总数无关。</strong>这就是 epoll 能撑百万连接的原因。</p>
+
+<h2 id="s6">35.6 epoll 三个系统调用</h2>
+<p>epoll 就三个 API,对应"创建、增删改、等待":</p>
+<pre><code>① epoll_create() → 创建一个epoll实例, 返回一个epfd(又是fd!)
+② epoll_ctl(epfd, ADD/MOD/DEL, fd, event)
+      → 往epoll里【登记/修改/删除】要监控的fd (一次性登记)
+③ epoll_wait(epfd, events, maxevents, timeout)
+      → 阻塞等待, 返回【就绪的fd列表】(只返回就绪的!)
+
+典型循环:
+  epfd = epoll_create();
+  epoll_ctl(epfd, ADD, listen_fd, ...);   // 登记监听socket
+  while(1){
+     n = epoll_wait(epfd, evs, MAX, -1);   // 睡到有事件
+     for(i=0; i<n; i++)                     // 只遍历就绪的n个!
+         handle(evs[i]);
+  }</code></pre>
+<p>对比 select:select 每次循环都要重建 fd 集合传进去;epoll 用 <code>epoll_ctl</code> <strong>登记一次</strong>,之后循环里只 <code>epoll_wait</code> 拿就绪。注意 <code>epoll_create</code> 也返回一个 fd(epoll 实例本身也是"文件",第32章)——所以 epoll 实例还能被另一个 epoll 监控(嵌套)。</p>
+
+<h2 id="s7">35.7 epoll 底层：红黑树 + 就绪链表</h2>
+<p>epoll 内核里两个关键数据结构,理解它俩就理解了 epoll:</p>
+<pre><code>epoll 实例(struct eventpoll)内部:
+
+  ┌─────────────────────────────────────┐
+  │  红黑树 (rbr)                          │
+  │  存所有【登记】的fd (epoll_ctl ADD进来的) │
+  │  → 增删查O(log n), 支持海量fd            │
+  └─────────────────────────────────────┘
+  ┌─────────────────────────────────────┐
+  │  就绪链表 (rdllist)                     │
+  │  存当前【已就绪】的fd                     │
+  │  → epoll_wait直接返回这个链表, O(就绪数)  │
+  └─────────────────────────────────────┘</code></pre>
+<blockquote><p>两个结构各司其职:<strong>红黑树管"所有登记的 fd"</strong>(可能上万,用红黑树保证增删查 O(log n)——又是第30章 CFS 用过的红黑树,可见这个"需要海量元素高效增删查找"的场景反复出现);<strong>就绪链表管"当前就绪的 fd"</strong>(通常很少)。<code>epoll_ctl ADD</code> 往红黑树加节点;<code>epoll_wait</code> 从就绪链表取。<strong>关键:epoll_wait 只碰就绪链表,和红黑树里登记了多少个 fd 无关</strong>——这就是 O(就绪数) 而非 O(总数) 的来源。那"谁把 fd 放进就绪链表"?回调机制,下一节。</p></blockquote>
+
+<h2 id="s8">35.8 回调：数据来了怎么变"就绪"</h2>
+<p>epoll 最精妙的部分:<strong>fd 就绪不是靠遍历发现的,而是靠"回调"主动通知的。</strong>把它和第34章的接收流程接起来:</p>
+<pre><code>epoll_ctl ADD 一个socket fd 时:
+  epoll 在这个fd的"等待队列"上挂一个【回调函数】
+
+数据到达时(第34章接收流程):
+  ① 网卡中断 → 软中断处理协议栈 → 数据放进socket接收缓冲
+  ② 内核唤醒等在这个socket上的东西 → 触发epoll挂的【回调】
+  ③ 回调做什么? 把这个fd加进epoll的【就绪链表】
+  ④ 并唤醒阻塞在epoll_wait的进程
+
+所以: 数据一来 → 回调自动把fd放进就绪表 → epoll_wait被唤醒返回它
+      全程没有"遍历所有fd", 谁来数据谁自己"报到"</code></pre>
+<p><strong>这就是 epoll 不用遍历的秘密:每个被监控的 fd 都在自己的等待队列上挂了 epoll 的回调,数据到达时(第34章那条中断→软中断→唤醒的链)顺手触发回调,fd "主动"把自己加进就绪链表。</strong>内核根本不需要问"谁就绪了",就绪的 fd 自己报到。<strong>这是"被动等待遍历"到"主动回调上报"的范式转变</strong>——和第34章"硬中断只标记、数据自己驱动流程"是同一种"事件驱动"思想。epoll 把网络接收的唤醒链,延伸成了对应用的事件通知。</p>
+
+<h2 id="s9">35.9 水平触发 vs 边缘触发</h2>
+<p>epoll 有两种触发模式,面试必问、用错会 bug:</p>
+<table>
+<tr><th></th><th>水平触发 LT(默认)</th><th>边缘触发 ET</th></tr>
+<tr><td>何时通知</td><td>只要 fd <strong>还有</strong>数据没读完,每次 epoll_wait 都通知</td><td>只在数据<strong>从无到有</strong>那一刻通知一次</td></tr>
+<tr><td>类比</td><td>只要水位高于线就一直响铃</td><td>只在水位"越过"线那一下响一次</td></tr>
+<tr><td>编程</td><td>宽松:这次没读完,下次还会提醒</td><td>严格:必须<strong>一次性读干净</strong>(循环 read 到 EAGAIN),否则漏数据</td></tr>
+<tr><td>性能</td><td>略多唤醒</td><td>唤醒更少,更高效</td></tr>
+</table>
+<blockquote><p>核心区别在"通知的持续性":<strong>LT 是"有数据就一直提醒你",ET 是"只在数据到来的边沿提醒一次"。</strong>ET 更高效(通知少),但<strong>危险</strong>:既然只提醒一次,你就必须在这次把数据<strong>全部读完</strong>(循环 read 直到返回 EAGAIN 表示读空),否则剩下的数据不会再触发通知,就"丢"了(其实是卡住了)。所以 ET 必须配合<strong>非阻塞 fd + 循环读到 EAGAIN</strong>。LT 宽松容错(这次没读完下次还提醒),是默认模式,新手用 LT 更安全。<strong>面试常问"LT 和 ET 区别、ET 为什么要循环读到 EAGAIN",这就是答案。</strong></p></blockquote>
+
+<h2 id="s10">35.10 epoll 为什么快（总结性)</h2>
+<p>把 epoll 高效的原因汇总(面试标准答案):</p>
+<table>
+<tr><th>优化点</th><th>select/poll</th><th>epoll</th></tr>
+<tr><td>fd 集合传递</td><td>每次调用全量拷进内核</td><td>epoll_ctl 登记一次,存内核红黑树</td></tr>
+<tr><td>找就绪 fd</td><td>每次 O(n) 遍历全部</td><td>回调直接放就绪链表,O(就绪数)</td></tr>
+<tr><td>返回结果</td><td>返回全集,用户再遍历找就绪</td><td>只返回就绪列表</td></tr>
+<tr><td>fd 上限</td><td>select 有 1024 限制</td><td>无硬上限(看内存)</td></tr>
+<tr><td>随连接数扩展</td><td>O(n) 线性恶化</td><td>与总连接数无关</td></tr>
+</table>
+<p><strong>一句话:epoll 把"每次全量拉取+遍历"变成"登记一次+回调推送就绪",使性能与"就绪数"挂钩而非"总 fd 数"挂钩。</strong>这让单机撑十万、百万连接成为可能(C10K/C10M 问题)。Nginx、Redis、Netty 等高性能服务全靠 epoll。</p>
+
+<h2 id="s11">35.11 回扣全书</h2>
+<p>epoll 是一个"集大成"的机制,它复用了前面几乎所有内核构件:</p>
+<table>
+<tr><th>epoll 用到的</th><th>来自</th></tr>
+<tr><td>fd / epoll 实例也是 fd / socket 是文件</td><td>第32章 VFS</td></tr>
+<tr><td>红黑树管理海量登记 fd</td><td>第30章 CFS(同款数据结构)</td></tr>
+<tr><td>epoll_wait 睡眠 / 就绪唤醒进程</td><td>第30章 调度、进程睡眠唤醒</td></tr>
+<tr><td>数据到达触发回调(中断→软中断→唤醒)</td><td>第34章接收、第七/36章中断</td></tr>
+<tr><td>事件驱动、不轮询</td><td>第七章中断思想的延伸</td></tr>
+</table>
+<blockquote><p><strong>epoll 完美展示了"内核构件如何组合成高级机制":</strong>它没发明什么全新的东西,而是把 fd 抽象(VFS)、红黑树、进程睡眠唤醒、等待队列回调这些<strong>已有零件</strong>巧妙拼装,解决了"一线程盯万连接"的难题。<strong>这正是本教材想教给你的能力——不是记住每个机制的孤立细节,而是理解这些机制如何相互咬合、组合出解决实际问题的方案。</strong>对机器人工程师,epoll 是写高性能网络服务(多传感器数据汇聚、多机通信中枢、图传服务器)的必备工具;理解它的原理,你才能在遇到"连接数上去后延迟飙升""ET 模式漏数据"等真实问题时诊断到根因。</p></blockquote>
+
+<h2 id="s12">35.12 面试常问问题</h2>
+<p><strong>Q1:什么是 IO 多路复用?解决什么问题?</strong><br>用一个线程同时监控多个 fd,只在有就绪事件的 fd 上干活,避免"每连接一线程"(太多线程)和"非阻塞轮询"(烧 CPU)。适合海量连接大多空闲的场景。</p>
+<p><strong>Q2:select/poll 和 epoll 的区别?epoll 为什么快?</strong><br>select/poll 每次调用全量传 fd 集合、内核 O(n) 遍历、返回后用户再遍历;epoll 用 epoll_ctl 登记一次存内核红黑树,数据到达靠回调把就绪 fd 放就绪链表,epoll_wait 只取就绪的 O(就绪数)。性能与就绪数挂钩而非总数。</p>
+<p><strong>Q3:epoll 的底层数据结构?</strong><br>红黑树(存所有登记 fd,增删查 O(log n))+ 就绪链表(存当前就绪 fd,epoll_wait 直接取)。</p>
+<p><strong>Q4:fd 怎么变"就绪"的?</strong><br>epoll_ctl ADD 时在 fd 等待队列挂回调;数据到达(网卡中断→软中断→放 socket 缓冲→唤醒等待队列)触发回调,回调把 fd 加进就绪链表并唤醒 epoll_wait。不靠遍历,靠回调上报。</p>
+<p><strong>Q5:LT 和 ET 的区别?ET 要注意什么?</strong><br>LT(默认)只要还有数据没读完就一直通知;ET 只在数据从无到有时通知一次。ET 更高效但必须一次性把数据读干净(非阻塞 fd 循环 read 到 EAGAIN),否则漏数据。</p>
+<p><strong>Q6:epoll_create 返回的也是 fd,有什么意义?</strong><br>epoll 实例本身是"文件"(一切皆文件),所以能被 close、能被另一个 epoll 监控(嵌套)、能在 fd 表统一管理。</p>
+<p><strong>Q7:为什么不直接每连接开一线程?</strong><br>线程有栈(几 MB)和调度开销,上万线程内存和上下文切换压垮系统;而连接大多空闲,一线程 epoll 更高效。</p>
+
+<h2 id="s13">35.13 常见误区</h2>
+<ol>
+  <li><strong>"epoll 一定比 select 快"</strong>——fd 少且大多活跃时优势不明显;epoll 的优势在"海量 fd、少数活跃"。</li>
+  <li><strong>"epoll_wait 返回所有登记的 fd"</strong>——只返回就绪的那些。</li>
+  <li><strong>"ET 模式 read 一次就行"</strong>——必须循环 read 到 EAGAIN 读干净,否则剩余数据不再通知。</li>
+  <li><strong>"epoll 靠遍历找就绪 fd"</strong>——靠回调主动上报,不遍历。</li>
+  <li><strong>"epoll 能加速单个 IO"</strong>——它不加速单次 IO,是高效"等待多个 fd"。</li>
+  <li><strong>"ET 用阻塞 fd 也行"</strong>——ET 循环读时,读空后阻塞 fd 会卡死,必须用非阻塞 fd。</li>
+</ol>
+
+<h2 id="s14">35.14 本章总结</h2>
+<ul>
+  <li><strong>IO 多路复用</strong>:一个线程用一个系统调用同时等多个 fd,只处理就绪的,解决"海量连接大多空闲"(避免每连接一线程、避免非阻塞轮询)。</li>
+  <li>select/poll 痛点:<strong>每次全量传 fd + O(n) 遍历全部</strong>,随连接数线性恶化。</li>
+  <li><strong>epoll</strong>:<code>epoll_create</code>(建实例,也是 fd)/<code>epoll_ctl</code>(登记一次)/<code>epoll_wait</code>(只取就绪)。从"拉取遍历"变"回调推送"。</li>
+  <li>底层:<strong>红黑树</strong>(存所有登记 fd,O(log n))+ <strong>就绪链表</strong>(存就绪 fd,epoll_wait 直接取)。</li>
+  <li>就绪机制:fd 等待队列挂<strong>回调</strong>,数据到达(中断→软中断→唤醒)触发回调把 fd 放就绪链表——<strong>不遍历,靠上报</strong>。</li>
+  <li><strong>LT(默认,有数据就一直通知,宽松)vs ET(边沿通知一次,高效但须非阻塞+循环读到 EAGAIN)</strong>。</li>
+  <li>epoll 快在:登记一次、回调推送、只处理就绪、性能与就绪数(非总数)挂钩 → 撑十万百万连接。</li>
+  <li>回扣:epoll 是 VFS(fd)+红黑树+调度(睡眠唤醒)+中断回调的组合,全书构件的集大成。</li>
+</ul>
+
+<h2 id="s15">35.15 思维导图 / 课后题</h2>
+<pre><code>Epoll 与 IO 多路复用
+├─ 一、为什么:一线程盯万连接(避免每连接一线程/非阻塞轮询)
+├─ 二、IO模型:阻塞/非阻塞/★多路复用/异步
+├─ 三、select/poll痛点:每次全量传fd + O(n)遍历
+├─ 四、★epoll思路:登记一次 + 回调推送就绪 (拉→推)
+├─ 五、三API:epoll_create / epoll_ctl(登记) / epoll_wait(取就绪)
+├─ 六、★底层:红黑树(所有fd,O(log n)) + 就绪链表(就绪fd)
+├─ 七、★回调机制:fd等待队列挂回调, 数据到达(中断→软中断)触发
+│      └─ fd自己报到进就绪表, 不遍历
+├─ 八、★LT(默认,一直通知) vs ET(边沿一次,须非阻塞循环读到EAGAIN)
+├─ 九、快在:与就绪数挂钩非总数 → 十万百万连接
+└─ 十、回扣:VFS+红黑树+调度唤醒+中断回调 的集大成</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>写一个 epoll 回声服务器:epoll_create/ctl/wait 循环,同时处理多个 telnet 连接,体会一线程管多连接。</li>
+  <li>把上面改成 ET 模式:先只 read 一次,发大数据观察漏读卡住;再改成循环 read 到 EAGAIN,理解 ET 要点。</li>
+  <li>对比实验:分别用 select 和 epoll 管理逐渐增多的空闲连接,测 CPU/延迟,观察 select 随连接数恶化。</li>
+  <li><code>strace</code> 一个 epoll 程序,看 epoll_create/epoll_ctl/epoll_wait 的调用序列。</li>
+  <li>读内核 <code>fs/eventpoll.c</code>:找到 <code>ep_insert</code>(挂回调)、<code>ep_poll_callback</code>(回调加就绪链表)、<code>ep_poll</code>(epoll_wait 取就绪),对照 35.7/35.8。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>IO 多路复用解决什么问题?和"每连接一线程""非阻塞轮询"比好在哪?</li>
+  <li>select/poll 和 epoll 的区别?epoll 为什么高效?</li>
+  <li>epoll 的两个核心数据结构及作用?</li>
+  <li>一个 fd 是怎么变成"就绪"并让 epoll_wait 返回的?</li>
+  <li>LT 和 ET 的区别?ET 编程为什么必须循环读到 EAGAIN?</li>
+  <li>epoll 复用了内核哪些已有机制?</li>
+  <li>什么场景 epoll 优势不明显?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第卅五章 完 · 下一章《第卅六章 中断与 SoftIRQ》</p>
+<div class="nav">
+  <a href="第34章-Linux-Socket与网络协议栈.html">← 第卅四章</a>
+  <a href="index.html">目录</a>
+  <a href="第36章-Linux-中断与SoftIRQ.html">第卅六章 →</a>
+</div>
+
+</div>
+</body>
+</html>

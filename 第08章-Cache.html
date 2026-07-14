@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第八章 Cache</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13.5px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第07章-中断.html">← 第七章</a>
+  <a href="index.html">目录</a>
+  <a href="第09章-MMU.html">第九章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第一卷 · 计算机组成原理</div>
+  <h1>第八章 Cache 高速缓存</h1>
+  <div class="sub">用一点点快内存，骗过 CPU：让它以为整个内存都很快</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么需要 Cache</a></li>
+    <li><a href="#s2">生活类比：办公桌与档案室</a></li>
+    <li><a href="#s3">局部性原理：Cache 能成立的前提</a></li>
+    <li><a href="#s4">Cache 行：为什么一次搬一整块</a></li>
+    <li><a href="#s5">命中与未命中</a></li>
+    <li><a href="#s6">Cache 怎么组织：直接映射到组相联</a></li>
+    <li><a href="#s7">替换策略与写策略</a></li>
+    <li><a href="#s8">多级 Cache</a></li>
+    <li><a href="#s9">Cache 对写代码的影响</a></li>
+    <li><a href="#s10">Cache 一致性问题(多核/DMA)</a></li>
+    <li><a href="#s11">伪共享 False Sharing</a></li>
+    <li><a href="#s12">回扣：上下文切换与 Cache</a></li>
+    <li><a href="#s13">面试常问</a></li>
+    <li><a href="#s14">常见误区</a></li>
+    <li><a href="#s15">本章总结</a></li>
+    <li><a href="#s16">思维导图</a></li>
+    <li><a href="#s17">课后练习与面试题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第四章的存储金字塔说过"内存比寄存器慢约百倍"。Cache 就是插在 CPU 和内存之间、专门缓解这个鸿沟的"快内存"。它是<strong>写高性能代码的头号话题</strong>,也是嵌入式 DMA、多核编程绕不开的坑。学完你要能解释"为什么遍历二维数组行序比列序快十倍""DMA 为什么要刷 Cache""什么是伪共享"。</p></blockquote>
+
+<h2 id="s1">8.1 为什么需要 Cache</h2>
+<p>第二章说 CPU 一秒几十亿个节拍,第四章说访问内存要约 100ns(相当于几百个节拍)。矛盾很尖锐:<strong>CPU 快得要命,但它要的数据和指令都在慢吞吞的内存里。</strong>每次访存,飞快的 CPU 都得干等几百个周期——就像法拉利每到路口都要停一分钟,再快的车也跑不起来。</p>
+<p>直接的想法:把内存也做得像寄存器一样快?不行——又快又大又便宜的存储不存在(第四章)。折中方案:<strong>在 CPU 和大而慢的内存之间,放一小块又快又贵的存储,把 CPU 最近/最常用的数据放进去。</strong>这块存储就是 <strong>Cache(高速缓存)</strong>。它不大(几十 KB~几十 MB),但快(接近寄存器),用"小而快"去缓冲"大而慢"。</p>
+
+<h2 id="s2">8.2 生活类比：办公桌与档案室</h2>
+<p>你(CPU)在办公室处理文件。文件都存在楼下的档案室(内存),取一次要跑很久。聪明人不会每用一份就跑一趟——他会<strong>把最近在用的文件放在办公桌上(Cache)</strong>,伸手就拿。</p>
+<ul>
+  <li>桌子小,只放得下几份(Cache 容量小);</li>
+  <li>要的文件在桌上 → 立刻拿到(<strong>命中 hit</strong>);</li>
+  <li>桌上没有 → 只好下楼取,顺便把它放桌上,以后再用就快了(<strong>未命中 miss</strong>);</li>
+  <li>桌子满了要放新文件 → 得把桌上某份旧的收回档案室(<strong>替换</strong>)。</li>
+</ul>
+<p>这个"办公桌"策略之所以有效,是因为一个关于"人怎么用文件"的规律——你正在处理的文件,接下来极可能还会用,而且很可能还要用它旁边相关的那几份。这个规律在计算机里叫<strong>局部性原理</strong>,是 Cache 能成立的根本。</p>
+
+<h2 id="s3">8.3 局部性原理：Cache 能成立的前提</h2>
+<p>程序访问内存不是乱来的,而是有很强的规律,分两种:</p>
+<table>
+<tr><th>局部性</th><th>含义</th><th>例子</th></tr>
+<tr><td><strong>时间局部性</strong></td><td>刚访问过的数据,不久后很可能再访问</td><td>循环变量 <code>i</code>、频繁调用的函数、热点变量</td></tr>
+<tr><td><strong>空间局部性</strong></td><td>访问了某地址,附近的地址很可能马上被访问</td><td>数组顺序遍历、结构体连续字段、顺序执行的指令</td></tr>
+</table>
+<p><strong>正因为程序有局部性,把"最近用的"和"它旁边的"放进 Cache,才能大概率命中。</strong>如果程序完全随机访问内存(没有局部性),Cache 就没用了。好在真实程序局部性极强——这就是 Cache 命中率能到 95%+ 的原因。</p>
+<blockquote><p>记住这句话,它是本章的灵魂:<strong>Cache 不是魔法,它赌的是"局部性"。你写的代码局部性越好,Cache 命中率越高,程序越快。</strong>高性能编程的一大半功夫,就是"写出对 Cache 友好、局部性好的代码"。</p></blockquote>
+
+<h2 id="s4">8.4 Cache 行：为什么一次搬一整块</h2>
+<p>基于空间局部性,Cache 有个重要设计:<strong>它不是一个字节一个字节地缓存,而是一次搬一整块连续内存</strong>,这一块叫 <strong>Cache 行(Cache Line)</strong>,通常 <strong>64 字节</strong>(ARM 常见 64B)。</p>
+<p>你只读了 1 个字节,Cache 会把包含它的整整 64 字节一起搬进来。为什么?因为空间局部性说"你马上会用旁边的",干脆一次搬来,省得再跑。就像你去档案室取一份文件,顺手把同一个文件夹里相邻的都带上来。</p>
+<pre><code>你访问 arr[0](假设int 4字节):
+  Cache 会把 arr[0]~arr[15] 这 64 字节整块搬进一个 Cache Line
+  → 接下来访问 arr[1]...arr[15] 全部命中, 飞快!
+
+这就是为什么"顺序访问数组"极快: 一次miss带来16次hit</code></pre>
+<p><strong>Cache Line = 64 字节</strong>这个数字要记住,它会在"数组遍历优化""伪共享""数据对齐"里反复出现。</p>
+
+<h2 id="s5">8.5 命中与未命中</h2>
+<p>CPU 要访问某地址时:</p>
+<pre><code>CPU 要读地址 X
+     │
+     ▼
+  X 在 Cache 里吗?
+   ┌──┴──┐
+  是(hit)  否(miss)
+   │        │
+ 直接返回   去内存读包含X的整个Cache Line搬进Cache
+ ~1-4周期   → 返回给CPU (~100+周期)
+            → 若Cache满, 先替换掉一行</code></pre>
+<ul>
+  <li><strong>命中率(hit rate)</strong>:命中次数占比,现代程序常 95%+。</li>
+  <li><strong>miss 的代价巨大</strong>:一次 miss 约 100+ 周期,够执行几十上百条指令。所以哪怕命中率从 95% 掉到 90%,性能可能腰斩——因为那多出来的 5% miss 每次都罚上百周期。</li>
+</ul>
+<h4>三种 miss(3C 模型)</h4>
+<ul>
+  <li><strong>强制 miss(Compulsory)</strong>:数据第一次被访问,Cache 里当然没有,不可避免。</li>
+  <li><strong>容量 miss(Capacity)</strong>:数据太多,Cache 装不下,旧的被挤走后又要用。</li>
+  <li><strong>冲突 miss(Conflict)</strong>:多个地址映射到 Cache 同一位置,互相踢出(和组织方式有关,下节)。</li>
+</ul>
+
+<h2 id="s6">8.6 Cache 怎么组织：直接映射到组相联</h2>
+<p>内存那么大,Cache 那么小,内存里的某块数据该放进 Cache 的哪个位置?三种策略,从简单到复杂:</p>
+<h4>① 直接映射(Direct Mapped)</h4>
+<p>每块内存只能放进 Cache 里<strong>固定的一个</strong>位置(用地址取模决定)。简单快,但缺点大:如果两块常用数据恰好映射到同一位置,会不停互相踢出(冲突 miss),哪怕 Cache 其他地方空着。像"每个人只能停自己工号对应的那个车位,车位被占了就没法停,哪怕旁边全空"。</p>
+<h4>② 全相联(Fully Associative)</h4>
+<p>任何块可以放进 Cache <strong>任意</strong>位置。灵活、冲突少,但每次查找要比对所有行,硬件昂贵慢。像"随便停,但找车要把整个停车场看一遍"。</p>
+<h4>③ 组相联(Set Associative)——折中,实际采用</h4>
+<p>把 Cache 分成若干"组",每块内存映射到<strong>固定的某一组</strong>,但组内有<strong>多个位置(路 way)</strong>可随便放。<strong>N 路组相联</strong>就是每组 N 个位置。兼顾灵活性和查找速度。像"按区域停(定组),但每个区域有 4 个车位随便挑(4 路)"。</p>
+<pre><code>4路组相联示意:
+  组0: [way0][way1][way2][way3]  ← 映射到组0的内存块, 可放这4个位置任一
+  组1: [way0][way1][way2][way3]
+  ...
+  查找: 用地址算出该去哪组 → 只在该组4个位置里比对(快)</code></pre>
+<p>实际 CPU 的 L1 常是 4~8 路组相联。你不用记细节,但要理解:<strong>组相联是"灵活性 vs 硬件成本"的折中,减少冲突 miss 的同时保持查找够快。</strong></p>
+
+<h2 id="s7">8.7 替换策略与写策略</h2>
+<h4>替换策略:Cache 满了踢谁</h4>
+<p>组内位置满了,新数据要进来,踢掉哪个旧的?常用 <strong>LRU(最近最少使用)</strong>:踢掉最久没被用的那个——赌它以后也用得少(基于时间局部性)。像清理办公桌时先收走最久没碰的文件。</p>
+<h4>写策略:改了 Cache 里的数据,怎么同步回内存</h4>
+<table>
+<tr><th>策略</th><th>做法</th><th>特点</th></tr>
+<tr><td><strong>写直达 Write-Through</strong></td><td>改 Cache 时立刻也写内存</td><td>简单、内存始终最新;但每次写都碰内存,慢</td></tr>
+<tr><td><strong>写回 Write-Back</strong></td><td>只改 Cache,标记为"脏",等这行被替换时才写回内存</td><td>快(合并多次写);但内存暂时是旧的 → 引出一致性问题</td></tr>
+</table>
+<p>现代 CPU 多用<strong>写回</strong>(快)。但"Cache 里是新的、内存里是旧的"这个状态,正是下面 DMA 和多核一致性问题的根源。</p>
+
+<h2 id="s8">8.8 多级 Cache</h2>
+<p>一层 Cache 不够,于是分级(第四章金字塔见过):</p>
+<pre><code>CPU核 ─ L1(最快最小,~32KB,每核独占,分指令L1I/数据L1D)
+        │
+        L2(较快较大,~256KB~1MB,通常每核独占)
+        │
+        L3(慢些大些,~几MB~几十MB,多核共享)
+        │
+       内存 DRAM(GB级)</code></pre>
+<p>越靠近 CPU 越小越快。L1 甚至分成"指令 Cache(L1I)"和"数据 Cache(L1D)"(哈佛结构思想,第二章),让取指令和取数据互不干扰。RK3588 的每个 A76 大核有自己的 L1/L2,所有核共享 L3。<strong>为什么分级?还是"小而快 vs 大而慢"的多级折中——用递进的几层,逼近"又快又大"。</strong></p>
+
+<h2 id="s9">8.9 Cache 对写代码的影响</h2>
+<p>这是本章最实用的部分。<strong>同样的算法,Cache 友好与否可能差 10 倍性能。</strong>几个必知例子:</p>
+<h4>例1:二维数组的遍历顺序(经典中的经典)</h4>
+<pre><code>C 里二维数组按"行"连续存放(行主序)。
+
+// 快: 行序遍历, 顺着内存走, 空间局部性好
+for (i=0; i<N; i++)
+    for (j=0; j<N; j++)
+        sum += a[i][j];   // a[i][0],a[i][1]... 连续, 一个Cache Line命中多次
+
+// 慢: 列序遍历, 每次跳一整行, 频繁miss
+for (j=0; j<N; j++)
+    for (i=0; i<N; i++)
+        sum += a[i][j];   // a[0][j],a[1][j]... 相隔很远, 几乎每次miss</code></pre>
+<p>两者算法完全一样,只是循环顺序不同,<strong>大数组下行序可能快 5~10 倍</strong>。原因纯粹是 Cache:行序顺着内存走,命中率高;列序到处跳,命中率低。<strong>这是面试和实战都超高频的知识点。</strong></p>
+<h4>例2:结构体布局</h4>
+<p>把常一起访问的字段放一起(挤进同一 Cache Line),把冷字段分开。数据对齐、去掉不必要的 padding,能提升命中率。</p>
+<h4>例3:数据结构选择</h4>
+<p>数组(连续,Cache 友好) vs 链表(节点分散,到处跳,Cache 不友好)。这就是为什么"现代 CPU 上,遍历数组常比遍历链表快得多",哪怕理论复杂度一样。</p>
+<blockquote><p>高性能编程的核心心法:<strong>让数据在内存里连续、让访问顺着地址走、让常用数据挤在一起。</strong>算法复杂度决定"做多少次",而 Cache 决定"每次多快"——在现代 CPU 上,后者常常更关键。</p></blockquote>
+
+<h2 id="s10">8.10 Cache 一致性问题(多核 / DMA)</h2>
+<p>写回策略埋的雷在这里爆。当有<strong>多个"访问者"</strong>时,Cache 里的数据和内存/别人的 Cache 可能不一致。</p>
+<h4>场景一:DMA(嵌入式必考)</h4>
+<p>DMA 是一个能<strong>绕过 CPU 直接读写内存</strong>的硬件(第六卷详讲)。问题来了:</p>
+<ul>
+  <li><strong>CPU 写、DMA 读</strong>:CPU 把数据改在了 Cache 里(写回策略,还没写回内存),然后启动 DMA 从<strong>内存</strong>发送——DMA 读到的是<strong>旧数据</strong>!解决:发送前先把 Cache <strong>刷回(clean/flush)</strong>内存。</li>
+  <li><strong>DMA 写、CPU 读</strong>:DMA 把新数据写进了<strong>内存</strong>,但 CPU 的 Cache 里还存着这块地址的<strong>旧值</strong>,CPU 一读读到旧的!解决:读之前先让这块 Cache <strong>失效(invalidate)</strong>,强制从内存重新读。</li>
+</ul>
+<blockquote><p>这就是你在嵌入式驱动里看到 <code>dma_cache_sync</code>、<code>Cache_flush</code>、<code>Cache_invalidate</code> 的原因。<strong>"DMA 收发数据前后要处理 Cache"是嵌入式高频 bug 和面试题</strong>——不处理就会收发到旧数据,现象诡异难查。理解了写回策略,你就懂了它的必然性。</p></blockquote>
+<h4>场景二:多核(SMP)</h4>
+<p>核 A 和核 B 各有自己的 L1。A 改了变量 x(在 A 的 Cache),B 读 x(读 B 自己 Cache 里的旧值)——不一致。为此硬件有<strong>Cache 一致性协议(如 MESI)</strong>:各核 Cache 互相"监听",一个核改了某行,让其他核的对应行失效。这套协议保证了多核看到一致的内存,是第二卷"Cache 一致性"和第五卷多核同步的基础。</p>
+
+<h2 id="s11">8.11 伪共享 False Sharing</h2>
+<p>一个隐蔽的多核性能杀手,进阶但很加分。回顾:Cache 以<strong>行(64字节)</strong>为单位。假设两个核分别频繁修改两个<strong>不同但相邻</strong>的变量,而这两个变量恰好落在<strong>同一个 Cache Line</strong> 里:</p>
+<pre><code>变量 a 和 b 挨着, 在同一个64字节Cache Line:
+  核0 频繁写 a  →  为保持一致性, 让核1的这行失效
+  核1 频繁写 b  →  又让核0的这行失效
+  → 两个核明明操作不同变量, 却因为共享同一行而不停互相失效
+  → Cache Line 在两核间"乒乓"来回, 性能暴跌!</code></pre>
+<p>它叫"伪"共享,因为两个核逻辑上没共享数据(a 和 b 不同),却因为物理上共享一个 Cache Line 而互相拖累。解决:<strong>把这类被不同核访问的变量,用 padding 填充或对齐,让它们落在不同的 Cache Line。</strong>Linux 内核里大量用 <code>__cacheline_aligned</code> 就是防这个。多核高性能编程必知。</p>
+
+<h2 id="s12">8.12 回扣：上下文切换与 Cache</h2>
+<p>把 Cache 接回操作系统主线。第一章面试题里那个"加分点"——<strong>Linux 上下文切换比 RTOS 慢在哪</strong>——答案有一大半在 Cache。</p>
+<p>切换任务(尤其切换进程,换了地址空间)时:</p>
+<ul>
+  <li>新任务的代码和数据大概率<strong>不在当前 Cache 里</strong>(之前是旧任务的),于是新任务开跑时会经历一连串 Cache miss,慢慢"预热"。这叫 Cache 的"冷启动"。</li>
+  <li>切进程还会导致 <strong>TLB 失效</strong>(第九章),雪上加霜。</li>
+</ul>
+<blockquote><p>所以上下文切换的真实成本,不只是"保存恢复几十个寄存器"那点指令,更大的隐性成本是<strong>切换后 Cache/TLB 需要重新预热</strong>带来的一连串 miss。这就是为什么:①切换越频繁性能损失越大(所以调度器不会无脑高频切换);②把关联的线程尽量调度到同一个核(CPU 亲和性,第八卷),能复用已预热的 Cache;③RTOS 因为通常不换地址空间、任务少、Cache 影响小,切换才那么快而确定。<strong>你现在能把"上下文切换慢"这个答案答得比 90% 的候选人都深了。</strong></p></blockquote>
+
+<h2 id="s13">8.13 面试常问问题</h2>
+<p><strong>Q1:为什么需要 Cache?它靠什么原理起作用?</strong><br>弥补 CPU 与内存约百倍的速度差。靠程序的<strong>时间/空间局部性</strong>:把最近用的和相邻的数据放进小而快的 Cache,大概率命中。</p>
+<p><strong>Q2:什么是 Cache Line?为什么一次搬一块?</strong><br>Cache 的最小单位(常 64 字节)。基于空间局部性,一次搬一整块,后续访问相邻数据即命中。</p>
+<p><strong>Q3:为什么行序遍历二维数组比列序快?</strong><br>C 数组行主序连续存放,行序访问顺着内存走、空间局部性好、命中率高;列序每次跨行跳、频繁 miss。可差 5~10 倍。</p>
+<p><strong>Q4:写直达和写回的区别?写回带来什么问题?</strong><br>写直达同时写内存(简单慢),写回只改 Cache 延迟写(快),但造成 Cache 与内存暂时不一致,引出 DMA/多核一致性问题。</p>
+<p><strong>Q5:DMA 收发数据为什么要处理 Cache?</strong><br>写回策略下,CPU 数据可能只在 Cache;DMA 直接访问内存。发送前需 flush(Cache→内存),接收后需 invalidate(丢弃 Cache 旧值重读),否则收发旧数据。</p>
+<p><strong>Q6:什么是伪共享?怎么解决?</strong><br>不同核修改落在同一 Cache Line 的不同变量,导致该行在核间反复失效"乒乓",性能暴跌。用对齐/padding 让变量分处不同 Cache Line。</p>
+<p><strong>Q7:上下文切换为什么慢?和 Cache 什么关系?</strong><br>除保存恢复寄存器,切换后新任务面临 Cache/TLB 冷启动的大量 miss;切进程还导致 TLB 失效。故高频切换损耗大,亲和性调度可复用 Cache。</p>
+
+<h2 id="s14">8.14 常见误区</h2>
+<ol>
+  <li><strong>"Cache 是内存的一部分"</strong>——不是,是 CPU 和内存之间独立的一层快存储。</li>
+  <li><strong>"Cache 一次缓存一个字节/一个变量"</strong>——以 Cache Line(约 64 字节)为单位整块搬。</li>
+  <li><strong>"算法复杂度一样性能就一样"</strong>——Cache 友好性可造成数倍差距(数组 vs 链表、行序 vs 列序)。</li>
+  <li><strong>"写回内存总是最新的"</strong>——写回策略下内存可能滞后,故有 DMA/多核一致性问题。</li>
+  <li><strong>"多核变量各自独立就没竞争"</strong>——落在同一 Cache Line 会伪共享,物理层面仍互相拖累。</li>
+  <li><strong>"上下文切换成本就是存恢复寄存器"</strong>——更大成本常在 Cache/TLB 冷启动。</li>
+</ol>
+
+<h2 id="s15">8.15 本章总结</h2>
+<ul>
+  <li>Cache 用"小而快"缓冲"大而慢",弥补 CPU 与内存百倍速度差。</li>
+  <li>成立前提是<strong>局部性原理</strong>(时间/空间);程序局部性越好命中率越高。</li>
+  <li><strong>Cache Line(约 64 字节)</strong>是缓存单位,一次搬一块,故顺序访问极快。</li>
+  <li>命中 hit(几周期)vs 未命中 miss(上百周期);3C:强制/容量/冲突 miss。</li>
+  <li>组织:直接映射(冲突多)→全相联(贵)→<strong>组相联</strong>(折中,实际采用);替换常用 LRU。</li>
+  <li>写策略:写直达(简单慢)vs <strong>写回</strong>(快,但引出一致性问题)。</li>
+  <li>多级 L1/L2/L3,越近越小越快;L1 分指令/数据。</li>
+  <li>写代码影响巨大:<strong>行序遍历、连续数据结构、字段挤同 Line</strong> 提升命中率。</li>
+  <li>一致性:<strong>DMA 收发要 flush/invalidate</strong>;多核靠 MESI 协议;<strong>伪共享</strong>用对齐解决。</li>
+  <li>回扣:上下文切换的隐性大成本是<strong>Cache/TLB 冷启动</strong>,解释了切换慢和亲和性调度。</li>
+</ul>
+
+<h2 id="s16">8.16 思维导图</h2>
+<pre><code>Cache
+├─ 一、为何需要:弥补CPU与内存百倍速度差
+├─ 二、类比:办公桌(Cache) vs 档案室(内存)
+├─ 三、局部性原理(Cache成立前提)
+│  ├─ 时间局部性:刚用的还会用
+│  └─ 空间局部性:用了这个,旁边也要用
+├─ 四、Cache Line(~64字节,一次搬一块)
+├─ 五、命中hit(几周期)/未命中miss(上百周期)
+│  └─ 3C:强制/容量/冲突miss
+├─ 六、组织:直接映射→全相联→组相联(折中)
+├─ 七、替换LRU;写策略:写直达 vs 写回(快但一致性问题)
+├─ 八、多级L1/L2/L3(L1分指令/数据)
+├─ 九、写代码影响
+│  ├─ ★行序遍历二维数组(vs列序快5-10倍)
+│  ├─ 结构体字段布局/对齐
+│  └─ 数组(友好) vs 链表(不友好)
+├─ 十、一致性
+│  ├─ ★DMA:发送前flush,接收后invalidate
+│  └─ 多核:MESI协议
+├─ 十一、伪共享:不同核变量同Line互相失效→对齐解决
+└─ 十二、回扣:切换隐性成本=Cache/TLB冷启动</code></pre>
+
+<h2 id="s17">8.17 课后练习与面试题</h2>
+<h3>课后练习</h3>
+<ol>
+  <li>写行序和列序遍历大二维数组(如 4096×4096)求和的两个版本,计时对比,亲历 Cache 差异;数组越大差距越明显。</li>
+  <li>写顺序遍历数组 vs 遍历等长链表求和,对比耗时,理解连续 vs 分散。</li>
+  <li>(多核)写两个线程分别频繁自增两个相邻全局变量,再改成用 <code>alignas(64)</code> 或 padding 隔开,对比性能,复现并消除伪共享。</li>
+  <li>查你的 CPU/RK3588 的 Cache 信息(Linux <code>lscpu</code> 或 <code>/sys/devices/system/cpu/cpu0/cache/</code>),记录 L1/L2/L3 大小和 Cache Line 大小。</li>
+  <li>看一段嵌入式 DMA 驱动代码,找出 flush/invalidate 的调用,理解在收发的哪一步、为什么。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>Cache 靠什么原理有效?局部性有哪两种?</li>
+  <li>Cache Line 是什么?为什么按行缓存?</li>
+  <li>为什么行序访问二维数组比列序快?从 Cache 角度解释。</li>
+  <li>写回和写直达的区别?写回为什么带来一致性问题?</li>
+  <li>DMA 收发数据前后为什么要操作 Cache?分别做什么?</li>
+  <li>什么是伪共享?如何避免?</li>
+  <li>组相联相比直接映射解决了什么问题?</li>
+  <li>上下文切换的真实开销有哪些?为什么和 Cache 有关?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第八章 完 · 下一章《第九章 MMU》</p>
+<div class="nav">
+  <a href="第07章-中断.html">← 第七章</a>
+  <a href="index.html">目录</a>
+  <a href="第09章-MMU.html">第九章 →</a>
+</div>
+
+</div>
+</body>
+</html>

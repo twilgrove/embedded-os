@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第卅三章 Signal 信号</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第32章-Linux-VFS.html">← 第卅二章</a>
+  <a href="index.html">目录</a>
+  <a href="第34章-Linux-Socket与网络协议栈.html">第卅四章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第五卷 · Linux 内核</div>
+  <h1>第卅三章 Signal 信号</h1>
+  <div class="sub">内核给进程发的"软件中断"</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么需要信号</a></li>
+    <li><a href="#s2">生活例子:拍肩膀通知</a></li>
+    <li><a href="#s3">信号就是软件中断</a></li>
+    <li><a href="#s4">常见信号一览</a></li>
+    <li><a href="#s5">信号的一生:产生→挂起→递送</a></li>
+    <li><a href="#s6">三种处理方式</a></li>
+    <li><a href="#s7">内核数据结构</a></li>
+    <li><a href="#s8">信号在何时递送(关键)</a></li>
+    <li><a href="#s9">可靠信号与不可靠信号</a></li>
+    <li><a href="#s10">异步信号安全</a></li>
+    <li><a href="#s11">回扣中断与 RTOS</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:你按 <kbd>Ctrl+C</kbd> 停掉程序,用过 <code>kill -9</code>,程序崩溃时看到 "Segmentation fault"——这些背后都是<strong>信号(signal)</strong>。信号是内核向进程发送的<strong>异步通知</strong>,本质是"<strong>软件层面的中断</strong>"。学完第七章硬件中断,你会发现信号就是它在软件/进程层的翻版:同样是"打断正常流程去处理突发事件"。</p></blockquote>
+
+<h2 id="s1">33.1 为什么需要信号</h2>
+<p>进程正在运行,突然发生了一件<strong>它没预料到、但必须知道</strong>的事:用户按了 Ctrl+C 想终止它、它访问了非法内存、它的子进程死了、定时器到点了……这些事件<strong>异步</strong>发生(不知道什么时候来),进程不可能一直"轮询"检查。<strong>需要一种机制,让内核能"打断"进程,通知它"出事了"。</strong></p>
+<p>这个需求和第七章硬件中断<strong>一模一样</strong>:CPU 正在跑,外设突然有事(按键、数据到了),需要打断 CPU 去处理。硬件中断解决"硬件→CPU"的异步通知;<strong>信号解决"内核→进程"的异步通知。</strong>所以信号又叫"软件中断"——它是中断思想在进程层的复刻。</p>
+
+<h2 id="s2">33.2 生活例子：拍肩膀通知</h2>
+<p>你在专心写代码(进程在运行)。同事有急事要通知你,他不会等你自然停下(那太久),而是<strong>走过来拍你肩膀</strong>——你被打断,抬头处理这件事,处理完再回去写代码。这一"拍肩膀"就是信号:<strong>异步、打断当前工作、迫使你处理。</strong></p>
+<p>不同的拍法对应不同信号:轻拍(SIGTERM,"请你停一下")你可以说"等我保存一下再停";使劲拽走(SIGKILL,"立刻走")你没得商量必须走;告诉你"你孩子放学了"(SIGCHLD,子进程结束)。有的通知你能选择怎么回应(捕获处理),有的(SIGKILL)你无权拒绝。</p>
+
+<h2 id="s3">33.3 信号就是软件中断</h2>
+<p>把信号和硬件中断(第七章)并列,你会秒懂信号的整个模型:</p>
+<table>
+<tr><th></th><th>硬件中断(第七章)</th><th>信号(本章)</th></tr>
+<tr><td>触发方</td><td>硬件设备</td><td>内核 / 其他进程</td></tr>
+<tr><td>打断谁</td><td>CPU 当前执行流</td><td>进程当前执行流</td></tr>
+<tr><td>处理程序</td><td>中断处理函数 ISR</td><td>信号处理函数 handler</td></tr>
+<tr><td>处理表</td><td>中断向量表</td><td>进程的信号处理表</td></tr>
+<tr><td>能否屏蔽</td><td>可屏蔽/不可屏蔽(NMI)</td><td>可阻塞 / 不可阻塞(SIGKILL/STOP)</td></tr>
+<tr><td>处理后</td><td>返回被打断处继续</td><td>返回被打断处继续</td></tr>
+</table>
+<blockquote><p>对应关系严丝合缝:<strong>信号 = 进程层面的中断。</strong>硬件中断有向量表映射"中断号→ISR",信号有处理表映射"信号号→handler";硬件中断可屏蔽(第七章 PRIMASK/GIC),信号可阻塞(信号掩码);都是"打断→处理→返回"。<strong>你在第七章建立的整个中断心智模型,直接搬到信号上就对了。</strong>这也是本书反复强调的:核心机制会在不同层次反复出现,学通一个,触类旁通。</p></blockquote>
+
+<h2 id="s4">33.4 常见信号一览</h2>
+<p>记住这些高频信号(面试和调试都要):</p>
+<table>
+<tr><th>信号</th><th>号</th><th>含义</th><th>默认动作</th></tr>
+<tr><td><strong>SIGINT</strong></td><td>2</td><td>Ctrl+C 中断</td><td>终止</td></tr>
+<tr><td><strong>SIGKILL</strong></td><td>9</td><td>强制杀死(<code>kill -9</code>)</td><td>终止(<strong>不可捕获/阻塞</strong>)</td></tr>
+<tr><td><strong>SIGTERM</strong></td><td>15</td><td>请求终止(<code>kill</code> 默认)</td><td>终止(可捕获,优雅退出)</td></tr>
+<tr><td><strong>SIGSEGV</strong></td><td>11</td><td>段错误(非法内存访问)</td><td>终止 + core</td></tr>
+<tr><td><strong>SIGCHLD</strong></td><td>17</td><td>子进程状态变化(结束等)</td><td>忽略</td></tr>
+<tr><td><strong>SIGSTOP/SIGCONT</strong></td><td>19/18</td><td>暂停/继续进程</td><td>停止/继续(STOP 不可捕获)</td></tr>
+<tr><td>SIGALRM</td><td>14</td><td>定时器到点</td><td>终止</td></tr>
+<tr><td>SIGPIPE</td><td>13</td><td>写已关闭的管道/socket</td><td>终止</td></tr>
+<tr><td>SIGUSR1/2</td><td>10/12</td><td>用户自定义</td><td>终止</td></tr>
+</table>
+<p><strong>两个"不可抗拒"的信号:SIGKILL(9)和 SIGSTOP(19)——不能被捕获、阻塞或忽略。</strong>这是内核给自己留的"最终手段":无论进程怎么设置,内核总能用这俩杀死/暂停它(否则失控进程就没法收拾了)。所以 <code>kill -9</code> 是"必杀"。</p>
+
+<h2 id="s5">33.5 信号的一生：产生 → 挂起 → 递送</h2>
+<p>一个信号从产生到被处理,走三步。<strong>这三步之间可能有延迟,是理解信号的关键:</strong></p>
+<pre><code>① 产生(generate): 事件发生, 内核决定给进程发信号
+      来源: 键盘(Ctrl+C)、kill命令、硬件异常(段错误)、内核(SIGCHLD)
+              │
+              ▼
+② 挂起(pending): 信号记录在进程的"未决信号集"里
+      —— 但进程可能正在运行/睡眠, 还没处理它
+      —— 如果该信号被"阻塞", 就一直挂起, 等解除阻塞
+              │
+              ▼
+③ 递送(deliver): 进程真正处理这个信号
+      —— 在合适的时机(见33.8), 内核让进程执行handler或默认动作</code></pre>
+<p><strong>核心洞察:信号的"产生"和"递送"之间有时间差。</strong>产生只是"记一笔"(设置未决位),真正处理(递送)要等一个合适时机。中间可以用"信号掩码"阻塞某些信号,让它们停在"挂起"状态暂不递送。<strong>这个"产生≠立即处理"的异步性,是信号所有复杂行为的根源。</strong></p>
+
+<h2 id="s6">33.6 三种处理方式</h2>
+<p>进程收到信号,有三种处置(用 <code>signal()</code>/<code>sigaction()</code> 设置):</p>
+<table>
+<tr><th>方式</th><th>说明</th></tr>
+<tr><td><strong>默认动作(SIG_DFL)</strong></td><td>按信号的默认行为(终止/忽略/停止),见 33.4 表</td></tr>
+<tr><td><strong>忽略(SIG_IGN)</strong></td><td>丢弃该信号(SIGKILL/STOP 除外)</td></tr>
+<tr><td><strong>捕获(自定义 handler)</strong></td><td>注册一个函数,信号来时执行它(SIGKILL/STOP 除外)</td></tr>
+</table>
+<pre><code>void handler(int sig){ printf("收到信号 %d\n", sig); }
+int main(){
+    signal(SIGINT, handler);   // 捕获Ctrl+C
+    while(1) pause();          // 按Ctrl+C不再退出, 而是打印
+}</code></pre>
+<p><strong>捕获</strong>是最有用的:程序可以拦截 SIGTERM,在退出前做清理(存盘、关文件、通知对端)——这叫"优雅退出"。<strong>这就是为什么服务程序用 <code>kill</code>(SIGTERM,可捕获)而不是 <code>kill -9</code>(SIGKILL,不可捕获)——给程序一个善后的机会。</strong>的无人机/机器人程序退出前要安全停桨、保存状态,就靠捕获 SIGTERM。</p>
+
+<h2 id="s7">33.7 内核数据结构</h2>
+<p>信号相关的状态存在 task_struct(第28章)里,核心是三样:</p>
+<pre><code>task_struct 里的信号相关字段:
+  ├─ pending       未决信号集(哪些信号在挂起, 位图)
+  ├─ blocked       信号掩码(哪些信号被阻塞, 位图)★
+  └─ sighand       信号处理表(每个信号→handler/默认/忽略)
+        struct sigaction action[64];  // 类比中断向量表!
+
+判断"有信号要处理":  pending & ~blocked  != 0
+  (有未决的, 且没被阻塞的)</code></pre>
+<p><strong>两个位图 <code>pending</code> 和 <code>blocked</code></strong>:pending 记"哪些信号来了还没处理",blocked 记"哪些信号被暂时挡住"。真正要递送的信号 = <code>pending & ~blocked</code>(来了且没被挡)。<strong><code>sighand</code> 就是信号版的中断向量表</strong>——数组下标是信号号,内容是处理方式。fork 时子进程复制这些,exec 时捕获的 handler 被重置为默认(因为代码换了,handler 函数地址失效)。</p>
+
+<h2 id="s8">33.8 信号在何时递送(关键)</h2>
+<p>最容易被忽略、面试最爱问的点:<strong>信号不是产生就立刻处理,而是在特定时机递送。</strong>什么时机?</p>
+<pre><code>信号的递送时机: 进程"从内核态返回用户态"的那一刻检查
+
+  典型场景:
+   ① 系统调用返回时(如read返回前, 内核检查有没有信号)
+   ② 中断/异常处理返回用户态时(第七章的返回路径)
+   ③ 从睡眠中被唤醒时
+
+  内核在返回用户态前问: pending & ~blocked 有信号吗?
+    有 → 先去执行信号handler(或默认动作), 再回用户代码</code></pre>
+<blockquote><p>为什么是"返回用户态时"?<strong>因为这是内核能安全介入进程执行流的天然检查点。</strong>进程要么在跑用户代码(内核插不进去),要么在内核里(执行系统调用/被中断)。内核在"即将回到用户代码"的关口做检查,顺势把控制权导向 handler,是最自然的切入点。<strong>这直接解释了一个经典现象:一个卡在 <code>read()</code> 阻塞的进程,信号能"叫醒"它</strong>——信号唤醒睡眠的进程,使其从内核返回用户态,在返回点递送信号(read 则返回 EINTR)。<strong>这也和第30章"系统调用返回是检查 need_resched 抢占的时机"呼应——返回用户态是内核统一的"处理待办事项"关口:检查抢占、检查信号,都在这。</strong></p></blockquote>
+
+<h2 id="s9">33.9 可靠信号与不可靠信号</h2>
+<p>历史遗留但面试会问:信号分两类。</p>
+<table>
+<tr><th></th><th>不可靠信号(1-31)</th><th>可靠信号(34-64,实时信号)</th></tr>
+<tr><td>会不会丢</td><td>同种信号连发多次,可能只留一个(不排队)</td><td>排队,每个都送达</td></tr>
+<tr><td>顺序</td><td>无保证</td><td>按顺序</td></tr>
+<tr><td>携带数据</td><td>不能</td><td>能(sigqueue 带值)</td></tr>
+</table>
+<p><strong>关键坑:传统信号(如 SIGINT)不排队。</strong>如果一个信号还挂起未处理时,同种信号又来了,<strong>它们会"合并"成一个</strong>——因为 pending 是位图,一个信号只占一位,来 10 次也是那一位置 1。<strong>所以"收到 N 个 SIGCHLD"可能只触发一次 handler</strong>——这是处理子进程回收的经典 bug(必须在 SIGCHLD handler 里用 <code>while(waitpid(...))</code> 循环回收所有子进程,不能假设一个信号对应一个子进程)。实时信号(34+)才排队、不丢。</p>
+
+<h2 id="s10">33.10 异步信号安全(async-signal-safe)</h2>
+<p>一个进阶但重要的坑。信号 handler 是<strong>异步打断</strong>主流程执行的——就像中断打断主程序(第七章)。想象主程序正在 <code>malloc</code>(第31章)中途(改到一半内部链表),信号来了,handler 里也调 <code>malloc</code>……<strong>会破坏 malloc 的内部状态(重入问题)。</strong></p>
+<blockquote><p><strong>所以信号 handler 里只能调用"异步信号安全"的函数</strong>(可重入的,如 write、_exit),<strong>不能调 malloc、printf 等</strong>(它们不可重入,handler 打断主程序时它们可能正被执行到一半)。<strong>这和第七章"中断 ISR 里不能做耗时/阻塞操作、要注意重入"是同一个问题的两个层次!</strong>ISR 打断主程序、handler 打断主流程,都面临"打断了正在操作共享状态的代码"的重入风险。<strong>解决思路也一样:handler 尽量短,只设个标志位(<code>volatile sig_atomic_t flag=1</code>),真正的活留给主循环做</strong>——正如中断里"ISR 只置标志,主循环处理"。又一次,中断的经验直接迁移到信号。</p></blockquote>
+
+<h2 id="s11">33.11 回扣中断与 RTOS</h2>
+<p>信号这一章,处处是第七章中断的影子,把它们连起来:</p>
+<table>
+<tr><th>概念</th><th>硬件中断(第七章)</th><th>信号(本章)</th></tr>
+<tr><td>本质</td><td>硬件异步打断 CPU</td><td>软件异步打断进程</td></tr>
+<tr><td>屏蔽机制</td><td>PRIMASK / GIC 使能位</td><td>信号掩码 blocked</td></tr>
+<tr><td>不可屏蔽</td><td>NMI</td><td>SIGKILL / SIGSTOP</td></tr>
+<tr><td>处理表</td><td>中断向量表</td><td>sighand 处理表</td></tr>
+<tr><td>递送/处理时机</td><td>指令边界</td><td>返回用户态时</td></tr>
+<tr><td>重入陷阱</td><td>ISR 不可重入 → 只置标志</td><td>handler 只能调 async-safe → 只置标志</td></tr>
+</table>
+<blockquote><p>RTOS 里没有"信号"这个完整机制(FreeRTOS 用任务通知/事件组做类似的异步通知,第22章),但<strong>"异步打断 + 处理表 + 屏蔽 + 重入注意"这套思想是通用的。</strong>Linux 的信号,是把硬件中断的整套模型"抬"到进程层,让进程之间、内核对进程也能做"中断式"的异步通知。<strong>学到这里你应该形成一个统一认识:无论硬件中断、软件信号、还是 RTOS 的事件通知,都是"异步事件通知"这一需求的不同实现,共享同一套设计考量(屏蔽、优先级、重入、处理时机)。</strong>抓住这个统一模型,以后遇到任何"异步通知"机制都能快速理解。</p></blockquote>
+
+<h2 id="s12">33.12 面试常问问题</h2>
+<p><strong>Q1:信号是什么?和中断什么关系?</strong><br>信号是内核向进程发送的异步通知,本质是"软件中断"——进程层面的中断。有处理表、可屏蔽(掩码)、打断→处理→返回,和硬件中断模型完全对应。</p>
+<p><strong>Q2:SIGKILL 和 SIGTERM 的区别?</strong><br>SIGTERM(15)可被捕获,程序能拦截做优雅退出(存盘、清理);SIGKILL(9)不可捕获/阻塞/忽略,内核直接杀,是必杀手段。服务程序退出应先发 SIGTERM。</p>
+<p><strong>Q3:信号从产生到处理经历什么?何时递送?</strong><br>产生(设未决位)→挂起(pending,可能被 blocked 挡住)→递送(在进程"从内核返回用户态"时检查 pending&~blocked 并处理)。产生≠立即处理。</p>
+<p><strong>Q4:为什么信号能打断阻塞的 read?</strong><br>信号唤醒睡眠进程,使其从内核返回用户态,在返回点递送信号,read 被中断返回 EINTR(需重试)。</p>
+<p><strong>Q5:传统信号会丢吗?SIGCHLD 处理要注意什么?</strong><br>传统信号(1-31)不排队,同种多次挂起会合并成一个。所以 SIGCHLD handler 里必须 <code>while(waitpid(-1,..,WNOHANG)>0)</code> 循环回收所有子进程,不能假设一信号对应一子进程。</p>
+<p><strong>Q6:信号 handler 里能调 printf/malloc 吗?</strong><br>不能。handler 异步打断主流程,若主流程正在 malloc/printf 中途,handler 再调会重入破坏状态。只能调 async-signal-safe 函数(write/_exit),最佳实践是 handler 只设标志位,主循环处理。</p>
+<p><strong>Q7:哪两个信号不可捕获?为什么?</strong><br>SIGKILL 和 SIGSTOP。内核给自己保留的最终控制手段,保证任何进程都能被杀死/暂停,防止失控进程无法收拾。</p>
+
+<h2 id="s13">33.13 常见误区</h2>
+<ol>
+  <li><strong>"信号一发就立刻处理"</strong>——产生后先挂起,在返回用户态时才递送,有延迟。</li>
+  <li><strong>"SIGKILL 能被捕获做清理"</strong>——不能,SIGKILL/SIGSTOP 不可捕获;要清理用 SIGTERM。</li>
+  <li><strong>"发 N 个 SIGCHLD 就触发 N 次 handler"</strong>——传统信号不排队会合并,要循环 waitpid。</li>
+  <li><strong>"handler 里能随便调库函数"</strong>——只能调 async-signal-safe 的,别调 malloc/printf。</li>
+  <li><strong>"信号能携带大量数据"</strong>——传统信号只是个号;实时信号(sigqueue)才能带一个值。</li>
+  <li><strong>"信号是进程间通信的主力"</strong>——信号是通知(轻量、易丢),传数据用管道/共享内存/socket。</li>
+</ol>
+
+<h2 id="s14">33.14 本章总结</h2>
+<ul>
+  <li>信号 = <strong>进程层面的软件中断</strong>:内核/进程向进程发的<strong>异步通知</strong>,模型与硬件中断一一对应(处理表、屏蔽、打断-处理-返回)。</li>
+  <li>常见:SIGINT(Ctrl+C)、<strong>SIGKILL(9,必杀不可捕获)</strong>、SIGTERM(15,可捕获优雅退出)、SIGSEGV(段错误)、SIGCHLD(子进程变化)。<strong>SIGKILL/SIGSTOP 不可捕获/阻塞。</strong></li>
+  <li>一生:<strong>产生(设未决位)→挂起(pending,被 blocked 掩码可挡)→递送(返回用户态时处理)</strong>。产生≠立即处理。</li>
+  <li>三种处理:默认 / 忽略 / 捕获(自定义 handler)。捕获用于优雅退出。</li>
+  <li>结构在 task_struct:<strong>pending(未决位图)、blocked(掩码)、sighand(处理表=信号版中断向量表)</strong>。</li>
+  <li>递送时机:<strong>进程从内核态返回用户态时</strong>(和抢占检查同一关口);故能打断阻塞的 read(→EINTR)。</li>
+  <li>坑:传统信号<strong>不排队会合并</strong>(SIGCHLD 要循环 waitpid);handler <strong>只能调 async-signal-safe 函数</strong>(和 ISR 重入问题同源,最佳实践"只置标志")。</li>
+</ul>
+
+<h2 id="s15">33.15 思维导图 / 课后题</h2>
+<pre><code>Signal 信号
+├─ 一、本质:进程层面的软件中断(异步通知)
+├─ 二、★与硬件中断一一对应(处理表/屏蔽/打断-处理-返回)
+├─ 三、常见:SIGINT/SIGKILL(9必杀)/SIGTERM(15优雅)/SIGSEGV/SIGCHLD
+│      └─ SIGKILL & SIGSTOP 不可捕获/阻塞
+├─ 四、★一生:产生(未决位)→挂起(pending, blocked掩码挡)→递送
+├─ 五、三种处理:默认 / 忽略 / 捕获(handler)
+├─ 六、结构:pending位图 / blocked掩码 / sighand处理表
+├─ 七、★递送时机:从内核态返回用户态时(同抢占检查关口)
+│      └─ 能打断阻塞read → EINTR
+├─ 八、坑1:传统信号不排队会合并 → SIGCHLD循环waitpid
+├─ 九、坑2:handler只能调async-signal-safe → 只置标志(同ISR重入)
+└─ 十、回扣:硬件中断/信号/RTOS事件 = "异步通知"的不同实现</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>写程序捕获 SIGINT,按 Ctrl+C 不退出而是打印计数,连按几次观察;再试捕获 SIGTERM 做"存盘后退出"。</li>
+  <li>验证 SIGKILL 不可捕获:给 SIGKILL 注册 handler(会失败或无效),<code>kill -9</code> 仍能杀死。</li>
+  <li>写产生子进程的程序,SIGCHLD handler 里先只 <code>waitpid</code> 一次,快速 fork 多个子进程,观察僵尸进程残留;改成 <code>while</code> 循环回收后消失,理解信号合并。</li>
+  <li>在阻塞的 <code>read(stdin)</code> 时按 Ctrl+C(已捕获),观察 read 返回 EINTR,理解递送时机。</li>
+  <li>读内核 <code>kernel/signal.c</code> 的 <code>do_signal</code>/<code>get_signal</code>,找到"返回用户态时处理信号"的调用点,对照 33.8。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>信号的本质?与硬件中断的对应关系?</li>
+  <li>SIGKILL 与 SIGTERM 的区别?为什么要有不可捕获的信号?</li>
+  <li>信号从产生到处理的三个阶段?递送发生在什么时机?</li>
+  <li>为什么信号能打断阻塞的系统调用?EINTR 怎么来的?</li>
+  <li>传统信号会不会丢?SIGCHLD 回收子进程要注意什么?</li>
+  <li>信号 handler 里为什么不能调 printf/malloc?最佳实践是什么?</li>
+  <li>把信号和第七章中断、RTOS 事件通知做统一对比。</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第卅三章 完 · 下一章《第卅四章 Socket 与网络协议栈》</p>
+<div class="nav">
+  <a href="第32章-Linux-VFS.html">← 第卅二章</a>
+  <a href="index.html">目录</a>
+  <a href="第34章-Linux-Socket与网络协议栈.html">第卅四章 →</a>
+</div>
+
+</div>
+</body>
+</html>

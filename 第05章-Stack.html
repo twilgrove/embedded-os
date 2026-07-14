@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第五章 Stack 栈</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13.5px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第04章-寄存器.html">← 第四章</a>
+  <a href="index.html">目录</a>
+  <a href="第06章-函数调用.html">第六章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第一卷 · 计算机组成原理</div>
+  <h1>第五章 Stack 栈</h1>
+  <div class="sub">一叠盘子的智慧，函数、局部变量、上下文快照都存在这里</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么需要栈</a></li>
+    <li><a href="#s2">生活类比：一叠盘子</a></li>
+    <li><a href="#s3">栈的本质：一段内存 + 一个指针</a></li>
+    <li><a href="#s4">压栈与出栈的硬件动作</a></li>
+    <li><a href="#s5">栈为什么向下增长</a></li>
+    <li><a href="#s6">栈帧：每个函数的私人抽屉</a></li>
+    <li><a href="#s7">局部变量为什么"函数返回就没了"</a></li>
+    <li><a href="#s8">栈溢出：最危险的 bug 之一</a></li>
+    <li><a href="#s9">每个任务一个栈</a></li>
+    <li><a href="#s10">中断与栈</a></li>
+    <li><a href="#s11">栈 vs 堆</a></li>
+    <li><a href="#s12">回扣：上下文快照存在栈里</a></li>
+    <li><a href="#s13">面试常问</a></li>
+    <li><a href="#s14">常见误区</a></li>
+    <li><a href="#s15">本章总结</a></li>
+    <li><a href="#s16">思维导图</a></li>
+    <li><a href="#s17">课后练习与面试题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第四章说"上下文快照存在任务的栈里",但栈到底是什么、为什么存在、为什么每个任务要有自己的栈?这一章讲透。栈是嵌入式最容易出隐蔽 bug 的地方(栈溢出),也是理解函数调用(第六章)和任务切换(第三卷)的前提。学完你要能解释"局部变量为什么返回后失效""栈为什么会溢出""RTOS 建任务时那个栈大小参数意味着什么"。</p></blockquote>
+
+<h2 id="s1">5.1 为什么需要栈</h2>
+<p>先想一个具体问题。函数 A 调用函数 B,B 又调用 C。每个函数都有自己的局部变量、都需要记住"我干完要返回到谁"。这些信息存哪儿?</p>
+<ul>
+  <li>存寄存器?寄存器就十几个,A、B、C 的局部变量加起来早就装不下了。</li>
+  <li>存固定的内存位置?不行——如果 A 递归调用自己十层,每层都要一份独立的局部变量,固定位置只有一份,会互相覆盖。</li>
+</ul>
+<p>我们需要一种存储,满足:<strong>①能动态地随调用深入而增加、随返回而减少;②后进的先出(最内层的函数最先返回)。</strong>符合这个规律的数据结构,就是<strong>栈(Stack)</strong>。栈不是谁发明的花招,而是"函数调用天然的嵌套结构"逼出来的必然选择。</p>
+
+<h2 id="s2">5.2 生活类比：一叠盘子</h2>
+<p>栈的行为和"食堂里一叠盘子"一模一样:</p>
+<ul>
+  <li>洗好的盘子一个个<strong>摞上去</strong>(压栈 push);</li>
+  <li>要用时从<strong>最上面拿</strong>(出栈 pop);</li>
+  <li>你永远只能碰最上面那个,不能从中间抽。</li>
+</ul>
+<p>这个规律叫 <strong>LIFO(Last In First Out,后进先出)</strong>。最后摞上去的盘子最先被拿走。</p>
+<p>为什么函数调用天然是 LIFO?因为<strong>调用是嵌套的</strong>:A 调 B 调 C,一定是 C 最先结束返回(回到 B),然后 B 结束(回到 A),最后 A 结束。<strong>最后进入的(C)最先离开</strong>——完美的后进先出。所以用栈来管理函数调用,是天作之合。</p>
+<pre><code>调用: A → B → C          栈(盘子):
+                              ┌─────┐ ← C(最后压,最先弹)
+返回: C → B → A              ├─────┤ ← B
+                              ├─────┤ ← A
+                              └─────┘</code></pre>
+
+<h2 id="s3">5.3 栈的本质：一段内存 + 一个指针</h2>
+<p>别把栈想得玄乎。<strong>栈就是内存里划出的一段连续区域,再加一个记录"当前用到哪儿"的指针——这个指针就是第四章的 SP(栈指针)。</strong></p>
+<pre><code>内存里的一段区域就是"栈":
+
+  高地址  ┌──────────┐ ← 栈底(栈的起点, 固定)
+          │          │
+          │  已使用   │
+          │          │
+          ├──────────┤ ← SP 栈指针指向这里(栈顶, 浮动)
+          │          │
+          │  空闲     │
+          │          │
+  低地址  └──────────┘ ← 栈的上限(再往下就溢出了)</code></pre>
+<p>关键:<strong>栈本身没有特殊硬件,它就是普通内存。"栈"这个身份是 SP 寄存器赋予的</strong>——SP 指到哪段内存,哪段就被当作栈用。压栈就是"把数据放到 SP 指的地方,然后移动 SP";出栈就是"移动 SP,露出下面的数据"。</p>
+
+<h2 id="s4">5.4 压栈与出栈的硬件动作</h2>
+<p>用 ARM 指令看压栈/出栈到底做了什么(假设栈向下增长,这是主流):</p>
+<pre><code>压栈 PUSH {R4}  (把 R4 存进栈)
+   SP = SP - 4        ① 栈指针先下移 4 字节(腾出位置)
+   内存[SP] = R4      ② 把 R4 的值写进新的栈顶
+
+出栈 POP {R4}   (从栈恢复 R4)
+   R4 = 内存[SP]      ① 读出当前栈顶的值
+   SP = SP + 4        ② 栈指针上移(释放这个位置)</code></pre>
+<p>就这么简单——<strong>压栈/出栈的全部,就是"读写内存 + 加减 SP"。</strong>ARM 有 <code>PUSH/POP</code> 指令一次能压/弹多个寄存器(如 <code>PUSH {R4-R11, LR}</code>),这在函数入口保存现场时极常用。</p>
+<blockquote><p>注意 SP 永远指向"最后压入的那个数据"(满栈)或"下一个空位"(空栈),不同架构约定不同。ARM 用"满递减栈"(Full Descending):SP 指向最后压入的数据,且向低地址增长。你不必背,但调试看栈时要知道 SP 指的是有效数据还是空位。</p></blockquote>
+
+<h2 id="s5">5.5 栈为什么向下增长</h2>
+<p>你一定注意到:栈从高地址往低地址长(压栈 SP 减小)。为什么反着来?</p>
+<p>这是历史 + 布局的巧妙安排。一个进程的内存布局大致是:代码和全局数据在低地址,堆(动态分配)从下往上长,栈从上(高地址)往下长。<strong>让堆和栈从内存两端相向生长,中间的空闲区被两者共享</strong>——谁需要多谁就多用点,最大化利用空间。如果两者同向,就得预先划死界限,浪费。</p>
+<pre><code>进程内存布局(经典):
+
+  高地址 ┌──────────────┐
+         │     栈 Stack  │ ↓ 向下长
+         ├──────────────┤
+         │               │  ← 中间空闲, 两边共享
+         │   (空闲)       │
+         ├──────────────┤
+         │     堆 Heap    │ ↑ 向上长
+         ├──────────────┤
+         │  全局/静态数据  │
+         ├──────────────┤
+  低地址 │   代码 .text   │
+         └──────────────┘</code></pre>
+<p>这个布局图请记牢,第十章(虚拟内存)、第五卷(进程地址空间)会反复用它。<strong>栈向下、堆向上、相向而行</strong>,是几十年沿用的经典设计。</p>
+
+<h2 id="s6">5.6 栈帧：每个函数的私人抽屉</h2>
+<p>每个函数被调用时,会在栈顶"开辟一块自己的空间",用来放它的局部变量、保存的寄存器、返回地址、传给下一层的参数。这块空间叫<strong>栈帧(Stack Frame)</strong>,也叫"活动记录"。</p>
+<pre><code>A 调 B 调 C 时的栈(向下增长):
+
+  高地址 ┌──────────────┐
+         │  A 的栈帧      │  ← A 的局部变量、A 保存的东西
+         ├──────────────┤
+         │  B 的栈帧      │  ← B 的局部变量、返回A的地址...
+         ├──────────────┤
+         │  C 的栈帧      │  ← C 的局部变量、返回B的地址...
+  SP ──▶ ├──────────────┤  ← 当前栈顶(C 正在执行)
+         │   (空闲)       │
+  低地址 └──────────────┘
+
+C 返回时: SP 上移, C 的栈帧被"丢弃"(其实只是SP退回去)
+          → B 的栈帧重新成为栈顶</code></pre>
+<p>一个栈帧里典型装着(第六章会精确讲):</p>
+<ul>
+  <li>返回地址(我干完回哪儿,通常来自 LR);</li>
+  <li>被调用者保存的寄存器(R4-R11,来自 4.8 的调用约定);</li>
+  <li>本函数的局部变量;</li>
+  <li>传给再下一层函数的参数(超过寄存器能传的部分)。</li>
+</ul>
+<p>还记得第四章的 FP(帧指针,ARM64 的 X29)吗?它指向当前栈帧的一个固定位置,方便通过"FP + 偏移"(3.4 的基址+偏移寻址!)访问本帧的局部变量和参数。调试器能打印出完整的函数调用链(backtrace),就是靠一个栈帧一个栈帧地顺着 FP 往回走。</p>
+
+<h2 id="s7">5.7 局部变量为什么"函数返回就没了"</h2>
+<p>这是新手最经典的 bug 之源。看这段危险代码:</p>
+<pre><code>char* get_name() {
+    char name[] = "";   // 局部数组, 在 get_name 的栈帧里
+    return name;           // ★返回了栈上变量的地址!
+}
+// 调用者拿到的指针指向一块"已经被丢弃的栈帧",内容随时被覆盖 → 未定义行为</code></pre>
+<p>为什么危险?现在你有能力彻底理解了:<code>name</code> 住在 <code>get_name</code> 的栈帧里。函数一返回,SP 退回去,这块栈帧就<strong>被标记为空闲</strong>——下一个函数调用会重新用这块内存,把 <code>name</code> 的内容覆盖掉。你返回的那个地址,指向的是一块随时会被别人占用的地。</p>
+<blockquote><p><strong>"局部变量出了函数就失效",本质不是它被删除了(数据可能还在),而是它所在的栈帧被释放,那块内存的所有权交还给了栈,随时会被后续调用覆盖。</strong>理解了栈帧,这类"返回局部指针""野指针"的 bug 你就能一眼看穿。要返回数据,要么用堆(malloc,5.11)、要么用 static、要么让调用者传缓冲区进来。</p></blockquote>
+
+<h2 id="s8">5.8 栈溢出：最危险的 bug 之一</h2>
+<p>栈是一段<strong>有限</strong>的内存(5.3 图里的上下界)。如果压栈压太多,超过了下界,就<strong>栈溢出(Stack Overflow)</strong>。三种常见原因:</p>
+<ol>
+  <li><strong>递归太深/无限递归</strong>:每层调用开一个栈帧,层数太多栈被撑爆。</li>
+  <li><strong>局部变量开太大</strong>:如函数里 <code>char buf[1000000];</code>,一个栈帧就想吃掉 1MB。</li>
+  <li><strong>RTOS 任务栈给太小</strong>:见下一节。</li>
+</ol>
+<h4>栈溢出的后果:从崩溃到被黑</h4>
+<ul>
+  <li>在有 MMU 的 Linux 上:栈溢出通常撞到一个"保护页",触发段错误(Segmentation Fault),程序崩溃——算幸运,至少暴露了。</li>
+  <li>在<strong>没有 MMU 的裸机/RTOS</strong>上:栈溢出会<strong>默默地踩坏相邻内存</strong>(别的任务的栈、全局变量),不立即崩,而是过一会儿在别处莫名其妙出错——极难查!这是嵌入式最折磨人的 bug 类型之一。</li>
+</ul>
+<h4>安全视角:栈溢出攻击</h4>
+<p>经典的"缓冲区溢出攻击":往栈上的数组写入超长数据,覆盖掉栈帧里保存的<strong>返回地址</strong>,让函数返回时跳到攻击者的代码。这是几十年来最著名的漏洞类型。防御手段有栈保护(Stack Canary,在返回地址前放个"哨兵值",返回前检查是否被改)、不可执行栈(NX)、地址随机化(ASLR)等——这些第五卷/安全部分会讲。</p>
+
+<h2 id="s9">5.9 每个任务一个栈</h2>
+<p>现在接上第一章、第四章的主线。<strong>为什么每个任务(线程)必须有自己独立的栈?</strong></p>
+<p>因为栈里存着这个任务"函数调用到哪一层、每层的局部变量、返回地址"——这是任务执行状态的一大部分。如果两个任务共用一个栈,A 的栈帧和 B 的栈帧混在一起,切换时根本没法各自续上。<strong>独立的栈,是任务能被独立暂停/恢复的物理前提。</strong></p>
+<pre><code>系统内存里, 每个任务一段独立的栈:
+
+  ┌────────────┐  任务A的栈  ← A的SP在这段里
+  ├────────────┤  任务B的栈  ← B的SP在这段里
+  ├────────────┤  任务C的栈  ← C的SP在这段里
+  ├────────────┤  中断栈(MSP)
+  └────────────┘
+
+切换任务 = 换 SP 指向另一段栈 (+ 恢复寄存器)</code></pre>
+<p>这解释了你用 FreeRTOS 时那个熟悉的参数:</p>
+<pre><code>xTaskCreate(vTask, "T1", 128, NULL, 1, NULL);
+                          ↑
+                    栈大小(单位:字, 128字=512字节)</code></pre>
+<p>这个 <code>128</code> 就是"给这个任务的栈划多大"。<strong>给小了 → 任务栈溢出踩坏别人 → 诡异崩溃;给大了 → 浪费宝贵的 RAM。</strong>怎么定?看这个任务里最深的调用链 + 最大的局部变量 + 中断嵌套。这是嵌入式的一门手艺,FreeRTOS 提供 <code>uxTaskGetStackHighWaterMark()</code> 帮你测"栈最多用到过多少",第三卷细讲。</p>
+
+<h2 id="s10">5.10 中断与栈</h2>
+<p>中断来了,现场往哪存?也是栈。第四章说过 Cortex-M 进中断硬件自动压 R0-R3,R12,LR,PC,xPSR——压到<strong>栈</strong>上。压到哪个栈?这就是第四章说的 MSP/PSP 设计:</p>
+<ul>
+  <li>任务运行时用 <strong>PSP</strong>(进程栈);</li>
+  <li>进中断后切用 <strong>MSP</strong>(主栈)。</li>
+</ul>
+<p>好处:<strong>中断的开销压在独立的中断栈(MSP)上,不占用任务栈</strong>。否则每个任务栈都得预留出"最坏情况下中断嵌套要用的空间",太浪费。分开后,只需一个中断栈够所有中断用即可。这是嵌入式栈大小估算的一个重要细节。</p>
+
+<h2 id="s11">5.11 栈 vs 堆</h2>
+<p>C 里两种主要的动态存储,新手常混。对比记牢:</p>
+<table>
+<tr><th></th><th>栈 Stack</th><th>堆 Heap</th></tr>
+<tr><td>谁管理</td><td>编译器/CPU 自动(进出函数)</td><td>程序员手动(malloc/free)</td></tr>
+<tr><td>分配方式</td><td>移动 SP,极快(一条指令)</td><td>找空闲块,慢,可能碎片化</td></tr>
+<tr><td>生命周期</td><td>函数返回即释放</td><td>直到你 free(忘了就泄漏)</td></tr>
+<tr><td>大小</td><td>小而固定(KB~MB级)</td><td>大(可到整个可用内存)</td></tr>
+<tr><td>典型内容</td><td>局部变量、返回地址、寄存器备份</td><td>动态数据结构、大缓冲区</td></tr>
+<tr><td>方向</td><td>高→低</td><td>低→高</td></tr>
+</table>
+<p>什么时候用哪个?<strong>短小、随函数生死的数据用栈(默认);大的、要跨函数长期存在的用堆。</strong>嵌入式里堆还很敏感——malloc 的不确定延迟和碎片化对实时性有害,很多 RTOS/安全关键系统禁用动态分配或用特殊的内存池(第三卷 Heap 那章讲 FreeRTOS 的 5 种 heap 实现)。</p>
+
+<h2 id="s12">5.12 回扣：上下文快照存在栈里</h2>
+<p>第四章结论:上下文 = 一组寄存器快照。第五章补上:<strong>这张快照,就存在任务自己的栈上,栈顶地址记在 TCB 里。</strong>完整看一次切换:</p>
+<pre><code>切换前(任务A运行):
+   A的SP ─▶ ┌───────────┐ A的栈
+            │ ...A的栈帧 │
+            └───────────┘
+
+保存A的上下文:
+   把 A 的 R4-R11、xPSR 等 PUSH 到 A 的栈  → A的SP下移
+   把 A 当前的 SP 值存进 A 的 TCB          ← 关键!TCB记住栈顶
+
+恢复B的上下文:
+   从 B 的 TCB 取出 B 的 SP → 装入 SP 寄存器  ← 现在CPU"看向"B的栈
+   从 B 的栈 POP 出 R4-R11、xPSR 等          → 填回CPU寄存器
+
+结果: CPU 的 SP、寄存器全变成 B 的现场 → B 继续运行</code></pre>
+<blockquote><p>看懂这段,第一章的"三支柱之首"就彻底闭环了:<strong>上下文(寄存器快照)存在栈里,TCB 只保存"栈顶指针"这个线索(第一章说的 pxTopOfStack!),换任务=换 SP=换整个栈+现场。</strong>第一章埋的"上下文存在栈里、TCB 只存栈顶"这个反常识的点,到这里你终于完全理解了。下一章(函数调用)会把栈帧的构造讲到指令级,第三卷会带你逐行读 FreeRTOS 的切换汇编——那时你会发现,全是这五章讲过的东西。</p></blockquote>
+
+<h2 id="s13">5.13 面试常问问题</h2>
+<p><strong>Q1:栈为什么是后进先出?为什么适合管理函数调用?</strong><br>函数调用天然嵌套,最内层最先返回,正是 LIFO。栈的进出规律与之完美匹配。</p>
+<p><strong>Q2:局部变量返回后为什么失效?返回局部数组指针为什么危险?</strong><br>局部变量在函数栈帧里,函数返回后栈帧被释放,内存交还给栈,会被后续调用覆盖。返回其地址得到野指针。</p>
+<p><strong>Q3:栈为什么向下增长?</strong><br>与堆相向生长,共享中间空闲区,最大化内存利用。</p>
+<p><strong>Q4:栈溢出会怎样?RTOS/裸机上和 Linux 上有何不同?</strong><br>Linux 有保护页,通常直接段错误崩溃;裸机/RTOS 无 MMU,会默默踩坏相邻内存,延迟暴露、极难查。</p>
+<p><strong>Q5:为什么每个任务要有独立的栈?</strong><br>栈保存任务的调用链和局部状态,是任务执行状态的一部分,独立栈才能各自独立暂停/恢复。</p>
+<p><strong>Q6:栈和堆的区别?嵌入式为什么慎用堆?</strong><br>见 5.11 表。堆有不确定延迟和碎片,损害实时性,故实时/安全系统常禁用或用内存池。</p>
+<p><strong>Q7:FreeRTOS 建任务的栈大小怎么定?</strong><br>看最深调用链+最大局部变量+中断需求,用 high water mark 测量调优;小了溢出、大了浪费 RAM。</p>
+
+<h2 id="s14">5.14 常见误区</h2>
+<ol>
+  <li><strong>"栈是特殊硬件"</strong>——不是,就是普通内存,身份由 SP 赋予。</li>
+  <li><strong>"局部变量返回后一定是垃圾值"</strong>——不一定立刻变,数据可能暂时还在,但内存已可被覆盖,是未定义行为,不能依赖。</li>
+  <li><strong>"栈溢出一定会崩溃报错"</strong>——无 MMU 时可能默默踩坏别人,延迟很久才在别处出错。</li>
+  <li><strong>"所有任务共用一个栈也行"</strong>——不行,无法各自保存独立的调用状态。</li>
+  <li><strong>"栈越大越安全,尽量开大"</strong>——嵌入式 RAM 宝贵,过大浪费;应测量后合理设置。</li>
+  <li><strong>"堆和栈是一回事"</strong>——管理方式、速度、生命周期、方向全不同。</li>
+</ol>
+
+<h2 id="s15">5.15 本章总结</h2>
+<ul>
+  <li>栈是被"函数调用天然嵌套(LIFO)"逼出来的结构;像一叠盘子,后进先出。</li>
+  <li>栈的本质 = 一段普通内存 + SP 指针;压栈=写内存并移 SP,出栈反之。</li>
+  <li>栈向下增长,与堆相向而行,共享空闲区。</li>
+  <li><strong>栈帧</strong>是每个函数的私人空间,装返回地址、保存的寄存器、局部变量、参数。</li>
+  <li>局部变量随栈帧生死;返回其地址=野指针,是经典 bug。</li>
+  <li><strong>栈溢出</strong>:递归深/大局部变量/任务栈太小;无 MMU 时默默踩坏邻居,极难查;也是缓冲区溢出攻击的根。</li>
+  <li>每个任务独立一个栈,是能独立暂停/恢复的前提;RTOS 建任务的栈大小参数要精心估算。</li>
+  <li>中断用独立的 MSP 栈,不占任务栈。</li>
+  <li>栈 vs 堆:自动/手动、快/慢、随函数/需手动释放。</li>
+  <li>回扣:<strong>上下文快照存在任务的栈里,TCB 只存栈顶指针(pxTopOfStack)</strong>,换任务=换 SP=换整个现场。第一章闭环。</li>
+</ul>
+
+<h2 id="s16">5.16 思维导图</h2>
+<pre><code>Stack 栈
+├─ 一、为何需要:函数调用嵌套,需要动态LIFO存储
+├─ 二、类比:一叠盘子(后进先出LIFO)
+├─ 三、本质:一段内存 + SP指针
+├─ 四、压栈/出栈=读写内存+加减SP
+├─ 五、向下增长:与堆相向,共享空闲区
+│  └─ 进程内存布局:栈↓ 空闲 堆↑ 数据 代码
+├─ 六、栈帧=每个函数私人抽屉
+│  └─ 装:返回地址/保存的寄存器/局部变量/参数;FP定位
+├─ 七、局部变量返回即失效(栈帧释放被覆盖)
+│  └─ 返回局部指针=野指针
+├─ 八、栈溢出
+│  ├─ 因:递归深/大局部变量/任务栈小
+│  ├─ 无MMU:默默踩坏邻居,难查
+│  └─ 安全:缓冲区溢出攻击/栈保护Canary
+├─ 九、每任务一个栈(独立暂停恢复的前提)
+│  └─ xTaskCreate 栈大小参数;high water mark
+├─ 十、中断用MSP独立栈,不占任务栈
+├─ 十一、栈 vs 堆(自动/手动,快/慢,方向)
+└─ 十二、回扣:上下文快照存栈里,TCB存栈顶(第一章闭环)</code></pre>
+
+<h2 id="s17">5.17 课后练习与面试题</h2>
+<h3>课后练习</h3>
+<ol>
+  <li>写一个返回局部数组指针的函数,编译运行,观察未定义行为(可能正常、可能乱码),再改成 malloc 或传入缓冲区修复。</li>
+  <li>写一个深递归函数(如无终止条件),运行触发栈溢出,在 Linux 上看段错误,理解栈有上限。</li>
+  <li>用 gdb 的 <code>bt</code>(backtrace)打印一个多层调用的调用栈,对照 5.6 的栈帧图,理解每一帧。</li>
+  <li>在 FreeRTOS 里故意把某任务栈设得很小 + 里面开个大局部数组,观察崩溃;再用 <code>uxTaskGetStackHighWaterMark</code> 测量实际用量,调到合理值。</li>
+  <li>画出你当前一个程序的进程内存布局(栈/堆/数据/代码),用 <code>cat /proc/self/maps</code>(Linux)验证。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>栈为什么是 LIFO?和函数调用什么关系?</li>
+  <li>栈的物理本质是什么?压栈出栈做了哪些动作?</li>
+  <li>为什么局部变量出了函数就不能用?怎么正确返回数据?</li>
+  <li>栈溢出的原因和后果?无 MMU 环境为什么更可怕?</li>
+  <li>为什么每个线程/任务要独立栈?</li>
+  <li>栈和堆的区别?嵌入式为什么慎用 malloc?</li>
+  <li>上下文切换时,现场保存在哪里?TCB 里存的是什么?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第五章 完 · 下一章《第六章 函数调用》</p>
+<div class="nav">
+  <a href="第04章-寄存器.html">← 第四章</a>
+  <a href="index.html">目录</a>
+  <a href="第06章-函数调用.html">第六章 →</a>
+</div>
+
+</div>
+</body>
+</html>

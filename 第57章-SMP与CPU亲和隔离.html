@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第五十七章 SMP 与 CPU 亲和/隔离</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第56章-RK3588架构总览.html">← 第五十六章</a>
+  <a href="index.html">目录</a>
+  <a href="第58章-AMP非对称多处理.html">第五十八章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第八卷 · RK3588 工程实践</div>
+  <h1>第五十七章 SMP 与 CPU 亲和/隔离</h1>
+  <div class="sub">8 个核怎么用,才能又快又稳</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">SMP:对称多处理</a></li>
+    <li><a href="#s2">生活例子:多个收银台</a></li>
+    <li><a href="#s3">Linux 如何管理多核</a></li>
+    <li><a href="#s4">负载均衡与迁移的代价</a></li>
+    <li><a href="#s5">CPU 亲和性 affinity</a></li>
+    <li><a href="#s6">为什么绑核能提升性能与实时性</a></li>
+    <li><a href="#s7">CPU 隔离 isolcpus</a></li>
+    <li><a href="#s8">隔离核的完整净化</a></li>
+    <li><a href="#s9">中断亲和性</a></li>
+    <li><a href="#s10">大小核的绑核策略</a></li>
+    <li><a href="#s11">回扣实时与工程实战</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:RK3588 有 8 个核(第56章),Linux 默认把它们当成一个"对称"的核池(SMP)自动调度。但对<strong>实时任务</strong>,自动调度会带来不确定性(任务被迁来迁去、被别的任务干扰)。本章讲如何<strong>手动控制任务在哪个核上跑</strong>——<strong>CPU 亲和性(绑核)</strong>和 <strong>CPU 隔离(独占核)</strong>。这是在多核 Linux 上保证实时性和性能的关键工程手段,第55章调优清单里的核心一项,做多核实时必用。</p></blockquote>
+
+<h2 id="s1">57.1 SMP：对称多处理</h2>
+<p>先明确多核的基本模型——<strong>SMP(Symmetric Multi-Processing,对称多处理)</strong>:</p>
+<pre><code>SMP: 多个核【地位对等】, 共享同一份内存和操作系统
+  ┌────┬────┬────┬────┐
+  │核0 │核1 │核2 │核3 │  ... 所有核跑【同一个】Linux内核
+  └────┴────┴────┴────┘  共享同一块内存、同一个任务队列体系
+       共享 DDR 内存
+
+  "对称"含义: 每个核都能跑任何任务、访问任何内存,
+             操作系统把它们当成一个"核池"统一调度
+  → Linux调度器(第30章)自动把任务分配到空闲的核上
+  → 你写多线程程序, 内核自动让它们并行在多个核跑</code></pre>
+<p><strong>SMP 是"多个对等的核共享一份内存、跑同一个 OS"的模型。</strong>"对称"意味着每个核地位平等、都能跑任何任务、访问任何内存,操作系统把它们当成一个统一的"核池"来调度。<strong>这是最常见的多核模型</strong>——你在 RK3588 上跑 Linux,默认就是 SMP:8 个核由一个 Linux 内核统一管理,调度器(第30章)自动把任务分派到各核并行。<strong>好处是简单透明</strong>——你写多线程程序,不用管它跑在哪个核,内核自动并行化。<strong>但"自动"对实时是把双刃剑</strong>:方便,却带来不确定性(任务可能被迁到任何核、被任何任务干扰)——这正是本章要用亲和/隔离来控制的。SMP 与下一章的 AMP(非对称)形成对比。</p>
+
+<h2 id="s2">57.2 生活例子：多个收银台</h2>
+<p>SMP 像超市的<strong>多个收银台</strong>(核),顾客(任务)来了,由一个统一的排队系统(调度器)分配到空闲的收银台。<strong>对称</strong>=每个收银台都一样、能服务任何顾客;<strong>自动调度</strong>=你不用指定去哪个台,系统看哪个空就分你去哪。这很高效(充分利用所有收银台)。</p>
+<p>但设想一位<strong>VIP 顾客(实时任务)</strong>要求"必须快速、稳定地结账,不能中途被打断、不能排队等"。在自动系统里,他可能被分到一个正忙的台、或者结到一半系统把他挪到别的台(任务迁移,要重新熟悉)。<strong>更好的办法:给 VIP 专门留一个收银台(CPU 隔离),只服务他,别的顾客不许用——这样他随到随结、绝不被干扰。</strong>这就是 CPU 亲和(指定台)和隔离(专用台)的价值:<strong>对普通顾客用自动调度(高效),对 VIP 用专台专用(稳定确定)。</strong></p>
+
+<h2 id="s3">57.3 Linux 如何管理多核</h2>
+<p>回顾第30章,看 Linux SMP 调度的关键机制:</p>
+<pre><code>Linux SMP 调度的组织:
+  ① 每个CPU核有自己的【运行队列 runqueue】(per-CPU, 第30章)
+     → 减少多核抢一个全局队列的锁竞争
+  ② 调度器在每个核上独立选任务(CFS/实时类, 第30/52章)
+  ③ ★负载均衡(load balancing): 定期检查各核忙闲,
+     把任务从忙的核【迁移】到闲的核, 让负载均匀
+  ④ current、per-CPU变量等(第28章): 每个核有自己的一份
+
+  → 结果: 任务默认可以在【任意核】上跑, 且【会被迁移】
+     好处: 负载均衡, 充分利用所有核
+     坏处(对实时): 迁移有代价、被别的任务干扰、行为不确定</code></pre>
+<p><strong>Linux SMP 调度的核心:每个核有自己的运行队列(per-CPU,减少锁竞争,第30章),调度器在每个核独立选任务,并通过负载均衡定期在核间迁移任务以均衡负载。</strong>这套机制追求<strong>吞吐和公平</strong>(第50章)——让所有核都忙起来、负载均匀。<strong>但对实时任务,"任务默认可在任意核跑且会被迁移"是问题</strong>:①迁移有代价(下一节);②任务可能被调度到正被别的任务占用的核,受干扰;③行为不确定(不知道下次跑哪个核)。<strong>这就是为什么实时任务需要"绑核"和"隔离"来摆脱自动调度的不确定性</strong>——把关键任务从"随波逐流的核池"里拎出来,固定到可控的核上。</p>
+
+<h2 id="s4">57.4 负载均衡与迁移的代价</h2>
+<p>任务在核间迁移看似免费,实则有隐性代价——这是绑核的主要动机之一:</p>
+<pre><code>任务从 核A 迁移到 核B 的代价:
+  ① ★Cache失效: 任务在核A跑时, 它的数据在核A的L1/L2 Cache里(第8章)
+     迁到核B后, 核B的Cache里没有这些数据 → 全部Cache未命中
+     → 要重新从内存/L3加载 → 慢! (Cache亲和性丢失)
+  ② TLB失效: 类似, 地址翻译缓存也要重建(第9章)
+  ③ 迁移本身的调度开销、跨核同步
+
+  → 频繁迁移 = 频繁Cache/TLB重建 = 性能损失 + 时间不确定(伤实时)
+
+  ★这就是"Cache亲和性"的价值: 让任务尽量留在同一个核,
+    复用它在该核Cache里的热数据 → 快且确定</code></pre>
+<blockquote><p><strong>任务迁移最大的隐性代价是"Cache 亲和性丢失":任务在一个核上跑时,它频繁访问的数据都缓存在该核的 L1/L2 Cache 里(第八章);一旦被迁到另一个核,新核的 Cache 里没有这些数据,全部变成 Cache 未命中,要重新从内存加载——又慢又造成时间波动。</strong>TLB(第九章)同理。<strong>所以频繁迁移不仅慢(性能损失),更让执行时间不确定(伤实时,第54章 WCET)。</strong>反过来,<strong>让任务尽量留在同一个核(Cache 亲和),就能复用该核 Cache 里的"热数据",又快又稳定。</strong>这是绑核(CPU 亲和)提升性能和实时性的根本原理——<strong>把第八章 Cache 的知识用到了多核任务放置上。</strong>对实时任务,把它固定在一个核,避免迁移带来的 Cache 抖动,是保证 WCET 可控的重要手段。</p></blockquote>
+
+<h2 id="s5">57.5 CPU 亲和性 affinity</h2>
+<p><strong>CPU 亲和性(CPU affinity)</strong>就是"指定一个任务只能在哪些核上跑",即<strong>绑核</strong>:</p>
+<pre><code>CPU 亲和性: 限制一个任务(线程/进程)只在指定的核上运行
+
+  命令行:
+   taskset -c 2 ./myprogram      # 让程序只在核2上跑
+   taskset -cp 2,3 <pid>         # 把已运行的进程绑到核2,3
+   taskset -cp <pid>             # 查看某进程的亲和性
+
+  代码(pthread):
+   cpu_set_t set;
+   CPU_ZERO(&set);
+   CPU_SET(2, &set);             // 只允许核2
+   pthread_setaffinity_np(thread, sizeof(set), &set);
+   // 或 sched_setaffinity(pid, ...)
+
+  效果: 任务被"钉"在指定核, 不再被负载均衡迁走
+   → Cache亲和保持、行为确定 → 性能稳、实时性好</code></pre>
+<p><strong>CPU 亲和性让你把任务"钉"在指定的核上,不再被负载均衡迁移。</strong>命令行用 <code>taskset</code>,代码里用 <code>sched_setaffinity</code>/<code>pthread_setaffinity_np</code>(设置一个 CPU 掩码表示允许哪些核)。<strong>绑核后,任务始终在固定核跑,保持 Cache 亲和(第57.4)、行为确定</strong>——性能更稳、实时性更好。<strong>典型用法:把实时控制线程绑到某个专用核。</strong>但注意:<strong>光绑核还不够</strong>——你把实时任务绑到核 3,但别的任务(和内核的中断、后台线程)可能<strong>也</strong>被调度到核 3 干扰它。要彻底独占,还需要"隔离"这个核(57.7),把别人都赶走。绑核是第一步,隔离是第二步。</p>
+
+<h2 id="s6">57.6 为什么绑核能提升性能与实时性</h2>
+<p>汇总绑核的好处(面试常问"绑核有什么用"):</p>
+<table>
+<tr><th>好处</th><th>原理</th></tr>
+<tr><td><strong>保持 Cache 亲和</strong></td><td>任务不迁移,复用该核 Cache 热数据,减少未命中(第8章)</td></tr>
+<tr><td><strong>减少迁移开销</strong></td><td>没有 Cache/TLB 重建、跨核同步的代价</td></tr>
+<tr><td><strong>行为确定</strong></td><td>始终在固定核,执行时间稳定(利于 WCET,第54章)</td></tr>
+<tr><td><strong>隔离干扰(配合隔离)</strong></td><td>专用核不被别的任务抢占</td></tr>
+<tr><td><strong>NUMA/大小核优化</strong></td><td>绑到就近内存的核 / 绑到大核保证性能</td></tr>
+</table>
+<blockquote><p><strong>绑核对性能和实时性都有好处,但要区分两种收益:</strong>①<strong>性能收益(Cache 亲和)</strong>——即使不隔离,把一个计算密集的线程绑到固定核,让它复用 Cache 热数据、避免迁移抖动,就能提升性能(如高吞吐服务、密集计算);②<strong>实时收益(确定性)</strong>——绑核让执行时间稳定(利于 WCET),配合隔离(57.7)让实时任务独占核、不被干扰。<strong>对 :计算密集的视觉线程绑到大核(保证性能+Cache 亲和),实时控制线程绑到隔离核(保证确定性)。</strong>需要强调:<strong>绑核不是万能药,乱绑可能更差</strong>——比如把两个都很忙的线程绑到同一个核会互相拖累,或绑核后破坏了负载均衡导致某些核闲置。<strong>绑核是"精细控制"的工具,要基于对任务特性的理解来用,不是无脑绑。</strong>下一步是用隔离让绑核的实时任务真正独占核。</p></blockquote>
+
+<h2 id="s7">57.7 CPU 隔离 isolcpus</h2>
+<p>光绑核不够,要让实时任务<strong>独占</strong>一个核,需要 <strong>CPU 隔离</strong>——把某些核从 Linux 的"通用核池"里<strong>拿走</strong>,专门留给实时任务:</p>
+<pre><code>CPU 隔离: 告诉Linux "这几个核不要用于普通调度", 留给专门任务
+
+  内核启动参数(cmdline):
+   isolcpus=6,7            # 把核6,7隔离出通用调度
+   → 普通任务默认不会被调度到核6,7
+   → 核6,7"空着", 只有你【显式绑核】过去的任务才在上面跑
+
+  配合使用:
+   isolcpus=6,7 (隔离核6,7)
+   + taskset -c 6 ./realtime_task (把实时任务绑到核6)
+   → 实时任务独占核6, 没有任何普通任务来抢/干扰 ★
+
+  区别:
+   绑核(affinity): 限制"我"只在某核 —— 但别人还能来这核
+   隔离(isolcpus): 把某核从通用池拿走 —— 别人不来这核
+   两者配合 = 实时任务真正独占一个干净的核</code></pre>
+<p><strong>CPU 隔离(isolcpus 启动参数)把指定的核从 Linux 通用调度中"拿走",这些核默认不跑任何普通任务,空出来专门留给你显式绑核过去的实时任务。</strong><strong>关键区分绑核和隔离</strong>:<strong>绑核</strong>是"限制我只在某核跑"(但别人还能来这核干扰我);<strong>隔离</strong>是"把某核从通用池拿走"(别人不来这核)。<strong>两者配合才完整</strong>:<code>isolcpus=6,7</code> 隔离出核 6/7,再 <code>taskset -c 6</code> 把实时任务绑上去——这样实时任务<strong>独占</strong>一个干净的核,没有任何普通任务来抢占或干扰,执行时间高度确定。<strong>这是在多核 Linux 上给实时任务创造"类 RTOS 环境"的核心手段</strong>(第55章调优清单的关键项),车企在 RK3588 上跑实时控制必用。</p>
+
+<h2 id="s8">57.8 隔离核的完整净化</h2>
+<p>isolcpus 只隔离了"普通任务调度",但一个核上还有别的干扰源(中断、内核线程、时钟)要一并清理,才能得到"真正干净"的核:</p>
+<pre><code>让一个核彻底"干净"(给实时任务)的完整净化:
+  □ isolcpus=6         隔离普通任务调度
+  □ nohz_full=6        关闭该核的周期时钟中断(tickless)
+                       → 减少时钟中断周期性打扰实时任务
+  □ rcu_nocbs=6        RCU回调不在该核处理(第38章)
+                       → RCU的宽限期处理不干扰该核
+  □ irqaffinity=0-5    把中断都导向其他核(57.9)
+                       → 该核不处理外设中断
+  □ 迁移kernel线程、关watchdog等
+
+  → 核6变成一个几乎"什么系统杂务都不做"的纯净核
+  → 绑上去的实时任务几乎独占, 延迟极低且确定
+  → 接近RTOS的实时环境, 但仍在Linux里(能用Linux功能)</code></pre>
+<blockquote><p><strong>要给实时任务一个"真正干净"的核,光 isolcpus 不够,还要清除该核上的其他系统干扰源:关闭周期时钟中断(nohz_full,让核不被每毫秒的时钟中断打扰)、把 RCU 回调赶走(rcu_nocbs,第38章)、把外设中断导向别的核(irqaffinity,57.9)、迁走内核后台线程。</strong>做完这一整套"净化",这个核就几乎不做任何系统杂务,绑上去的实时任务几乎完全独占它,延迟极低且确定。<strong>这本质上是在一颗跑 Linux 的多核 SoC 上,"划出"一个核营造接近 RTOS 的实时环境——既有 RTOS 级的确定性(在这个净化核上),又保留 Linux 的全部功能(在其他核上)。</strong>这是 PREEMPT_RT(第55章)之外,另一个在 Linux 上做实时的强力手段,而且两者常结合用。<strong>它也预示了下一章 AMP 的思想:与其在 SMP 里费力净化一个核,不如干脆让那个核跑独立的 RTOS——那就是 AMP(第58章)。</strong>可以说,"净化的隔离核"是 SMP 和 AMP 之间的过渡形态。</p></blockquote>
+
+<h2 id="s9">57.9 中断亲和性</h2>
+<p>净化里提到把中断导向别的核——这是<strong>中断亲和性(IRQ affinity)</strong>,单独讲(实时重要):</p>
+<pre><code>中断亲和性: 指定某个中断由哪个(些)核处理
+
+  默认: 中断可能被送到任意核处理(包括你的实时核)
+   → 中断在实时核上触发ISR, 打断实时任务 → 延迟!
+
+  设置(把中断irq号N导向核0-5, 不用核6):
+   echo 3f > /proc/irq/N/smp_affinity   # 位掩码0x3f=核0-5
+   # 或 /proc/irq/N/smp_affinity_list 写 "0-5"
+
+  策略:
+   ① 实时核(核6): 不处理任何外设中断 → 不被中断打扰
+   ② 把网络/存储等高频中断集中到某几个普通核
+   ③ 中断和它服务的任务放同一核(Cache亲和) —— 看场景
+
+  → 中断亲和性 + CPU隔离 = 实时核既无任务干扰、也无中断干扰</code></pre>
+<p><strong>中断亲和性控制"某个中断由哪个核处理"。</strong>默认中断可能落到任意核(包括你的实时核),中断触发时 ISR 会打断实时核上的任务,造成延迟(第51章)。<strong>通过 <code>/proc/irq/N/smp_affinity</code> 把中断导向别的核,让实时核不处理任何外设中断,就消除了中断对实时任务的干扰。</strong>反过来,对普通任务,可以把中断和它服务的处理任务放同一核(Cache 亲和)提升效率。<strong>中断亲和性 + CPU 隔离 + nohz 一起,才能让实时核既无任务干扰、也无中断干扰、也无时钟打扰——真正纯净。</strong>这些 <code>/proc</code> 接口(又是第32章"一切皆文件")是多核实时调优的实际操作面。</p>
+
+<h2 id="s10">57.10 大小核的绑核策略</h2>
+<p>RK3588 是大小核(第56章),绑核时要考虑大小核差异,这是 RK3588 特有的实战:</p>
+<table>
+<tr><th>任务类型</th><th>绑到</th><th>原因</th></tr>
+<tr><td>高性能计算(视觉/AI 前后处理)</td><td>大核 A76</td><td>要性能,大核强</td></tr>
+<tr><td>硬实时控制(高频、要 WCET 稳)</td><td>隔离的核(大核或小核均可,要净化)</td><td>要确定性,独占+净化</td></tr>
+<tr><td>后台/常驻/低负载服务</td><td>小核 A55</td><td>省电,小核够用</td></tr>
+<tr><td>普通应用</td><td>不绑,让调度器自动分</td><td>自动负载均衡即可</td></tr>
+</table>
+<pre><code>RK3588典型分配(视觉机器人):
+  核0-3 (A55小核): 系统服务、后台、低负载任务
+  核4-5 (A76大核): 视觉/AI计算 (高性能)
+  核6-7 (A76大核): isolcpus隔离+净化 → 实时控制任务独占
+
+  → 大核性能给计算, 隔离核确定性给实时, 小核省电给杂务
+  各得其所, 兼顾性能/实时/功耗</code></pre>
+<p><strong>RK3588 的绑核要利用大小核差异:高性能计算绑大核(A76)、省电常驻绑小核(A55)、硬实时控制绑隔离并净化的核(独占,大小核看需求)、普通应用交给自动调度。</strong>一个典型的视觉机器人分配:小核跑系统杂务(省电)、部分大核跑视觉 AI(性能)、隔离的大核跑实时控制(确定性)。<strong>这样每类任务都在最合适的核上:计算要性能给大核、实时要确定给隔离核、杂务要省电给小核——兼顾性能、实时、功耗三个目标。</strong>这就是在 RK3588 这样的异构多核 SoC 上做系统设计的核心决策:<strong>不是让 8 个核平均分担,而是根据任务特性精细分配。</strong>机器人的多核部署方案,本质就是这套"任务-核"映射设计。</p>
+
+<h2 id="s11">57.11 回扣实时与工程实战</h2>
+<p>本章连接:</p>
+<table>
+<tr><th>本章概念</th><th>连接到</th></tr>
+<tr><td>SMP、per-CPU 队列、负载均衡</td><td>第30章 Linux 调度</td></tr>
+<tr><td>迁移代价=Cache/TLB 重建</td><td>第8/9章 Cache/TLB</td></tr>
+<tr><td>绑核/隔离降低延迟</td><td>第51章延迟、第54章 WCET、第55章调优清单</td></tr>
+<tr><td>中断亲和性</td><td>第13章 GIC、第43章中断</td></tr>
+<tr><td>净化隔离核过渡到 AMP</td><td>第58章 AMP</td></tr>
+</table>
+<blockquote><p><strong>本章是"多核 + 实时"的工程落地,把第30章的多核调度和第七卷的实时需求结合起来。</strong>核心思想:<strong>Linux 默认的 SMP 自动调度追求吞吐/公平(第50章),但实时任务需要的是确定性——所以要用亲和(绑核)和隔离(独占+净化)把实时任务从"随波逐流的核池"里拎出来,给它一个可控、纯净的核。</strong>这套手段(taskset 绑核、isolcpus 隔离、nohz_full/rcu_nocbs 净化、irq affinity 导流中断)是第55章实时调优清单的核心,也是车企在 RK3588 上做实时控制的标准操作。<strong>它还揭示了一个深层逻辑:在多核时代,实时性不只靠"调度算法"(第52章)和"内核可抢占"(第55章),更靠"空间隔离"——把关键任务在物理核层面隔离开,从源头消除干扰。</strong>这比在共享核上费力保证实时更简单直接。<strong>而当你把一个核"净化"到极致(什么系统杂务都不做),自然会想:何不干脆让这个核跑一个独立的 RTOS?那就是下一章 AMP。</strong>本章的"净化隔离核"正是通向 AMP 的桥梁——两者都是"用空间换确定性"的思路,AMP 是它的极致形态。</p></blockquote>
+
+<h2 id="s12">57.12 面试常问问题</h2>
+<p><strong>Q1:什么是 SMP?Linux 怎么管多核?</strong><br>对称多处理:多个对等的核共享内存、跑同一个 OS,当成核池统一调度。Linux 每核一个运行队列(per-CPU),调度器各核独立选任务,负载均衡定期在核间迁移任务均衡负载。</p>
+<p><strong>Q2:任务在核间迁移有什么代价?★</strong><br>主要是 Cache 亲和性丢失:任务的热数据在原核 Cache 里,迁到新核后全部 Cache/TLB 未命中要重建,又慢又造成时间波动(伤性能和实时)。</p>
+<p><strong>Q3:什么是 CPU 亲和性(绑核)?有什么用?</strong><br>限制任务只在指定核跑(taskset/sched_setaffinity)。好处:保持 Cache 亲和、减少迁移开销、执行时间确定(利于 WCET)。用于把实时/计算密集任务钉在固定核。</p>
+<p><strong>Q4:绑核和 CPU 隔离的区别?为什么要一起用?★</strong><br>绑核:限制"我"只在某核(但别人还能来这核干扰);隔离(isolcpus):把某核从通用池拿走(别人不来)。两者配合=实时任务独占一个干净核,没有普通任务干扰。</p>
+<p><strong>Q5:怎么让一个核"彻底干净"给实时任务?</strong><br>isolcpus 隔离普通任务 + nohz_full 关时钟中断 + rcu_nocbs 赶走 RCU 回调 + irq affinity 把中断导向别的核 + 迁走内核线程。让该核不做系统杂务,实时任务近乎独占。</p>
+<p><strong>Q6:中断亲和性是什么?对实时有什么用?</strong><br>指定中断由哪个核处理(/proc/irq/N/smp_affinity)。把中断导向非实时核,让实时核不被中断 ISR 打扰,降低延迟。</p>
+<p><strong>Q7:RK3588 上怎么分配任务到大小核?</strong><br>计算密集(视觉/AI)绑大核 A76(性能);硬实时控制绑隔离净化的核(确定性);后台常驻绑小核 A55(省电);普通应用交自动调度。兼顾性能/实时/功耗。</p>
+
+<h2 id="s13">57.13 常见误区</h2>
+<ol>
+  <li><strong>"绑核一定提升性能"</strong>——乱绑可能更差(俩忙线程绑一核、破坏均衡);要基于任务特性。</li>
+  <li><strong>"绑核就等于独占核"</strong>——绑核只限制自己,别人和中断还能来;要配合 isolcpus 隔离。</li>
+  <li><strong>"isolcpus 就够干净了"</strong>——还有时钟中断、RCU、外设中断,要 nohz/rcu_nocbs/irq affinity 一起净化。</li>
+  <li><strong>"任务迁移没代价"</strong>——有 Cache/TLB 重建代价,伤性能和实时。</li>
+  <li><strong>"多核就是核越多越快"</strong>——要合理分配任务、处理迁移和干扰,盲目并行未必快。</li>
+  <li><strong>"中断落哪个核无所谓"</strong>——中断打断实时核会增加延迟,要用亲和性导流。</li>
+</ol>
+
+<h2 id="s14">57.14 本章总结</h2>
+<ul>
+  <li><strong>SMP</strong>:多个对等核共享内存跑同一 OS;Linux 每核 per-CPU 队列 + <strong>负载均衡</strong>自动迁移任务(追求吞吐/公平)。</li>
+  <li>迁移代价:<strong>Cache/TLB 亲和性丢失</strong>(热数据没了要重建),又慢又不确定(伤实时)。</li>
+  <li><strong>CPU 亲和性(绑核)</strong>:taskset/sched_setaffinity 把任务钉在指定核 → 保持 Cache 亲和、行为确定。</li>
+  <li><strong>CPU 隔离(isolcpus)</strong>:把核从通用池拿走,留给显式绑核的任务。<strong>绑核(我只在某核)+ 隔离(别人不来)= 实时任务独占干净核</strong>。</li>
+  <li>完整净化:isolcpus + <strong>nohz_full</strong>(关时钟中断)+ <strong>rcu_nocbs</strong> + <strong>中断亲和性</strong>(导流中断)→ 近乎纯净核,类 RTOS 环境。</li>
+  <li><strong>中断亲和性</strong>(/proc/irq/N/smp_affinity):把中断导向非实时核,实时核不被打扰。</li>
+  <li>RK3588 大小核策略:计算绑<strong>大核</strong>、实时绑<strong>隔离核</strong>、常驻绑<strong>小核</strong>、普通交自动;兼顾性能/实时/功耗。</li>
+  <li>核心:实时靠<strong>空间隔离</strong>(把任务隔到物理核)从源头消除干扰;净化隔离核是通向 <strong>AMP(第58章)</strong>的桥梁。</li>
+</ul>
+
+<h2 id="s15">57.15 思维导图 / 课后题</h2>
+<pre><code>SMP 与 CPU 亲和/隔离
+├─ 一、SMP:对等核共享内存跑同一OS; per-CPU队列+负载均衡自动迁移
+├─ 二、★迁移代价:Cache/TLB亲和丢失(热数据重建)→慢+不确定
+├─ 三、★CPU亲和(绑核):taskset/setaffinity钉在指定核→Cache亲和+确定
+├─ 四、绑核好处:Cache亲和/减迁移/行为确定/隔离干扰/大小核优化
+├─ 五、★CPU隔离isolcpus:把核从通用池拿走
+│      └─ ★绑核(我只在某核)+隔离(别人不来)=独占干净核
+├─ 六、★完整净化:isolcpus+nohz_full(关时钟)+rcu_nocbs+中断亲和
+│      └─ 类RTOS纯净核 → 通向AMP的桥梁
+├─ 七、中断亲和性:/proc/irq/N/smp_affinity 把中断导向非实时核
+├─ 八、★RK3588大小核策略:计算→大核/实时→隔离核/常驻→小核/普通→自动
+└─ 九、核心:实时靠空间隔离从源头消干扰(比共享核保证实时更直接)
+        回扣:第30调度+第8Cache+第51延迟+第55调优清单</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>用 <code>taskset -c 4 ./cpu_bench</code> 把一个计算基准绑到某核,和不绑对比性能和稳定性;用 <code>htop</code> 观察任务在哪个核跑。</li>
+  <li>在内核 cmdline 加 <code>isolcpus=6,7</code> 重启,<code>cat /sys/devices/system/cpu/isolated</code> 确认;观察普通任务不跑核 6/7,再 taskset 绑一个任务到核 6 独占。</li>
+  <li>对隔离核跑 cyclictest(绑到隔离核)vs 普通核,对比 Max 延迟,验证隔离+净化对实时的提升。</li>
+  <li>用 <code>cat /proc/irq/*/smp_affinity_list</code> 看各中断在哪些核;把某高频中断的亲和性改到特定核,观察 <code>/proc/interrupts</code> 计数变化。</li>
+  <li>在 RK3588 上区分大小核(cpuinfo 的 CPU part:A76 vs A55),分别绑一个计算任务,对比性能差异。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>什么是 SMP?Linux 如何调度多核?负载均衡做什么?</li>
+  <li>任务在核间迁移有什么代价?为什么伤实时?</li>
+  <li>CPU 亲和性(绑核)是什么?有什么好处?</li>
+  <li>绑核和 CPU 隔离的区别?为什么要一起用?</li>
+  <li>怎么把一个核彻底净化给实时任务独占?</li>
+  <li>中断亲和性对实时任务有什么作用?</li>
+  <li>RK3588 上怎么把任务分配到大小核?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第五十七章 完 · 下一章《第五十八章 AMP 非对称多处理》</p>
+<div class="nav">
+  <a href="第56章-RK3588架构总览.html">← 第五十六章</a>
+  <a href="index.html">目录</a>
+  <a href="第58章-AMP非对称多处理.html">第五十八章 →</a>
+</div>
+
+</div>
+</body>
+</html>

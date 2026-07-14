@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第廿三章 SoftwareTimer 软件定时器</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第22章-FreeRTOS-EventGroup事件组.html">← 第廿二章</a>
+  <a href="index.html">目录</a>
+  <a href="第24章-FreeRTOS-Heap内存管理.html">第廿四章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第三卷 · FreeRTOS 源码</div>
+  <h1>第廿三章 SoftwareTimer 软件定时器</h1>
+  <div class="sub">不占硬件定时器，也能安排"多久之后干件事"</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">硬件定时器为什么不够用</a></li>
+    <li><a href="#s2">软件定时器的核心思想</a></li>
+    <li><a href="#s3">守护任务:Timer Daemon</a></li>
+    <li><a href="#s4">命令队列:一切操作先入队</a></li>
+    <li><a href="#s5">数据结构与到期列表</a></li>
+    <li><a href="#s6">单次 vs 周期</a></li>
+    <li><a href="#s7">回调函数的禁忌</a></li>
+    <li><a href="#s8">为什么不在中断里直接调回调</a></li>
+    <li><a href="#s9">和硬件定时器怎么配合</a></li>
+    <li><a href="#s10">面试常问</a></li>
+    <li><a href="#s11">常见误区</a></li>
+    <li><a href="#s12">本章总结</a></li>
+    <li><a href="#s13">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：你经常要"5 秒后关灯""每 100ms 采样一次"这类定时任务。硬件定时器数量有限、还要写中断,用起来重。软件定时器让你<strong>创建任意多个"软"定时器</strong>,到期自动调用你的回调,不占硬件、不写中断。学完你要理解它靠一个"守护任务+命令队列"实现、以及回调函数的严格禁忌(不能阻塞)。这一章较短。</p></blockquote>
+
+<h2 id="s1">23.1 硬件定时器为什么不够用</h2>
+<p>MCU 有硬件定时器(TIM),但有局限:</p>
+<ul>
+  <li><strong>数量有限</strong>:一个芯片就几个 TIM,被 PWM、编码器、输入捕获等占用后,没剩几个给你做"延时办事"。</li>
+  <li><strong>用起来重</strong>:每个都要配寄存器、写中断服务程序、处理中断上下文限制(第七章)。想要 20 个不同的定时逻辑?写 20 个中断?不现实。</li>
+</ul>
+<p>而很多需求其实<strong>不需要硬件级的精度</strong>,只要"大概几秒后/每隔多久做件事"——比如超时检测、周期上报、LED 慢闪、看门狗喂狗。<strong>软件定时器就是用软件模拟出任意多个这种"低精度但够用"的定时器</strong>,全部复用系统那一个 SysTick 心跳(第18章),不额外占硬件。</p>
+
+<h2 id="s2">23.2 软件定时器的核心思想</h2>
+<p>软件定时器的原理其实你已经见过——和第17章 <code>vTaskDelay</code> 的延时列表一模一样:<strong>维护一个按到期时间排序的定时器列表,每个 tick 检查有没有到期的,到期就调用它的回调函数。</strong></p>
+<pre><code>软件定时器 = 到期时间排序的列表 + tick驱动 + 回调
+
+  定时器列表(按到期时间排序):
+    ┌──────────────────────────────┐
+    │ Timer A → 到期tick=1050        │ ← 最早到期, 在头部
+    │ Timer B → 到期tick=1200        │
+    │ Timer C → 到期tick=2000        │
+    └──────────────────────────────┘
+  每个tick检查: 当前tick >= 头部到期时间? → 调用其回调, 从列表移除(或周期性重新插入)</code></pre>
+<p>创建/启动一个定时器,就是算出它的到期时间、插入这个有序列表。到期时,调用你注册的回调函数(<code>pxCallbackFunction</code>)。<strong>一个 SysTick 心跳,驱动所有软件定时器</strong>——这就是"用一个硬件资源模拟出无数个软定时器"的本质。</p>
+
+<h2 id="s3">23.3 守护任务：Timer Daemon</h2>
+<p>关键问题:这个"检查到期、调用回调"的活谁来干?不能在 SysTick 中断里干(回调可能耗时、还可能调用会阻塞的 API)。FreeRTOS 的做法:<strong>专门起一个任务——定时器守护任务(Timer Daemon Task,也叫 Timer Service Task)</strong>来管所有软件定时器。</p>
+<pre><code>vTaskStartScheduler() 时若开启软件定时器, 会自动创建:
+  → 守护任务 prvTimerTask (优先级 configTIMER_TASK_PRIORITY)
+
+守护任务的工作(简化):
+  for(;;) {
+    ① 算出"下一个定时器到期"还有多久
+    ② 阻塞等待: 要么等到那个到期时间, 要么等命令队列来消息(取较早者)
+    ③ 醒来后:
+       - 若是定时器到期 → 调用它的回调函数(在守护任务上下文!)
+       - 若是命令队列有消息 → 处理命令(启动/停止/复位定时器)
+  }</code></pre>
+<blockquote><p><strong>回调函数在守护任务的上下文里执行,不是在中断里!</strong>这是理解软件定时器的关键。所以回调的优先级 = 守护任务的优先级(<code>configTIMER_TASK_PRIORITY</code>)。这意味着:①如果守护任务优先级低,回调可能被高优先级任务延迟(定时不准);②回调里绝对不能做太久的事(会拖累所有其他定时器)。<strong>软件定时器的精度和及时性,取决于守护任务能否及时被调度</strong>——这是它"软"的代价,也是它和硬件定时器的本质区别。</p></blockquote>
+
+<h2 id="s4">23.4 命令队列：一切操作先入队</h2>
+<p>一个精妙设计:你调 <code>xTimerStart/Stop/Reset</code> 等 API,<strong>并不直接操作定时器列表,而是往一个"定时器命令队列"发一条消息,由守护任务去实际执行。</strong></p>
+<pre><code>你的任务调 xTimerStart(xTimer, ...):
+    │
+    ▼ 不直接启动! 而是:
+  往命令队列发一条消息 { 命令=START, 定时器=xTimer }
+    │
+    ▼
+  守护任务从命令队列收到消息 → 真正把定时器插入到期列表
+
+为什么要绕这一圈(命令队列)?
+  → 保证所有对定时器列表的操作【都在守护任务里串行进行】
+  → 不用加锁! 天然线程安全(只有守护任务碰这个列表)</code></pre>
+<p>这是<strong>用"单线程串行化"代替"加锁"</strong>的经典并发设计:所有对定时器列表的修改都汇集到守护任务一个地方顺序执行,就没有多任务同时改列表的竞态,连锁都省了。<strong>"把共享数据的操作集中到一个专门的任务/线程,用消息传递代替共享+加锁"是一种优雅的并发范式</strong>(actor 模型的雏形),你在很多高质量系统里会见到它。命令队列也解释了为什么这些 API 有 <code>xTicksToWait</code> 参数——命令队列可能满,发命令本身可能要等。</p>
+
+<h2 id="s5">23.5 数据结构与到期列表</h2>
+<p>定时器结构 <code>Timer_t</code>(<code>timers.c</code>,精简):</p>
+<pre><code>typedef struct tmrTimerControl
+{
+    const char       *pcTimerName;
+    ListItem_t        xTimerListItem;    /* 挂进到期列表的钩子 */
+    TickType_t        xTimerPeriodInTicks; /* 周期(多少tick到期一次) */
+    void             *pvTimerID;         /* 用户ID(区分定时器/传数据) */
+    TimerCallbackFunction_t pxCallbackFunction; /* ★到期回调函数 */
+    UBaseType_t       uxAutoReload;      /* 单次 还是 周期(auto-reload) */
+} Timer_t;</code></pre>
+<p>和 <code>vTaskDelay</code> 一样,FreeRTOS 用<strong>两个定时器列表 + 溢出处理</strong>(<code>pxCurrentTimerList</code> / <code>pxOverflowTimerList</code>),因为 tick 计数会回绕(第17章讲过完全相同的技巧)。到期列表按到期时间排序,守护任务只需看头部。<strong>你会发现整个第三卷反复出现同一套机制:有序列表 + tick 驱动 + 双列表处理溢出——延时任务、软件定时器都是它。</strong>看懂一处,处处贯通。</p>
+
+<h2 id="s6">23.6 单次 vs 周期</h2>
+<p>由 <code>uxAutoReload</code> 决定两种模式:</p>
+<table>
+<tr><th>模式</th><th>行为</th><th>用途</th></tr>
+<tr><td><strong>单次(One-shot)</strong></td><td>到期调一次回调,然后停止</td><td>超时检测、延迟执行一次(如"3秒后关背光")</td></tr>
+<tr><td><strong>周期(Auto-reload)</strong></td><td>到期调回调后,自动重新计时,循环往复</td><td>周期采样、周期上报、心跳(如"每100ms采一次")</td></tr>
+</table>
+<p>周期模式的实现:回调执行后,守护任务把它以<strong>(当前到期时间 + 周期)</strong>重新插回到期列表——注意是基于"上次到期时间"而非"当前时间"重新计算,这样能<strong>避免周期漂移</strong>(如果基于当前时间,回调本身的延迟会累积成误差)。这是个容易忽略但重要的精度细节。</p>
+
+<h2 id="s7">23.7 回调函数的禁忌</h2>
+<p>软件定时器回调有严格规则,违反会出严重问题:</p>
+<ul>
+  <li><strong>回调里绝不能阻塞!</strong>回调在守护任务上下文跑,如果它阻塞(如 take 一个拿不到的信号量、vTaskDelay),<strong>整个守护任务被卡住,所有其他软件定时器都停摆</strong>!这是最常见的坑。</li>
+  <li><strong>回调要短</strong>:回调期间守护任务不能处理其他到期定时器和命令,拖长会让其他定时器不准。</li>
+  <li>回调里可以调用非阻塞的 API(如 <code>xQueueSend</code> 超时设 0)。</li>
+</ul>
+<blockquote><p>这条禁忌和第七章"中断里不能阻塞"、第20章"信号量同步"是一脉相承的:<strong>某些执行上下文(中断、软件定时器回调)是"公共资源",一旦阻塞就会拖垮依赖它的所有东西。</strong>软件定时器回调虽然在任务上下文(不像中断那么严格),但因为是<strong>共享的守护任务</strong>,一个回调阻塞会连累所有定时器,所以同样要求"绝不阻塞、尽量短"。如果定时到期要做耗时/可能阻塞的事,正确做法是:<strong>回调里只发个信号量/消息,唤醒另一个专门的任务去做</strong>——又是"回调/中断只触发,重活交给任务"的一贯模式。</p></blockquote>
+
+<h2 id="s8">23.8 为什么不在中断里直接调回调</h2>
+<p>回顾:硬件定时器中断可以直接在 ISR 里做事,为什么软件定时器要绕守护任务?两个原因:</p>
+<ol>
+  <li><strong>回调可能耗时/想调用 FreeRTOS API</strong>:中断上下文限制多(第七章),不能阻塞、调 API 受限。放到任务上下文,回调能做的事更多、更从容。</li>
+  <li><strong>操作定时器列表需要串行化</strong>:如果在 SysTick 中断里改列表,又在任务里通过 API 改,会有竞态。集中到守护任务就没这问题(23.4)。</li>
+</ol>
+<p>代价就是 23.3 说的:<strong>精度和及时性依赖守护任务的调度</strong>。如果你需要高精度、硬实时的定时(如电机换相、精确 PWM),<strong>必须用硬件定时器</strong>,软件定时器达不到。<strong>软件定时器适合"低精度、要很多个、逻辑复杂"的场景;硬件定时器适合"高精度、硬实时、数量少"。</strong></p>
+
+<h2 id="s9">23.9 和硬件定时器怎么配合</h2>
+<p>实际工程里两者配合:</p>
+<table>
+<tr><th></th><th>软件定时器</th><th>硬件定时器</th></tr>
+<tr><td>精度</td><td>低(tick 级,依赖守护任务调度)</td><td>高(时钟周期级,确定)</td></tr>
+<tr><td>数量</td><td>任意多(只受内存限)</td><td>有限(几个)</td></tr>
+<tr><td>回调上下文</td><td>守护任务(可调 API,不能阻塞)</td><td>中断(严格受限)</td></tr>
+<tr><td>典型用途</td><td>超时、周期上报、慢闪、看门狗喂狗</td><td>PWM、电机换相、精确采样、编码器</td></tr>
+</table>
+<p><strong>经验法则:能用软件定时器就用(省硬件、好写);要精度/硬实时才用硬件定时器。</strong>甚至可以组合:硬件定时器中断里 give 信号量/发命令,由软件层处理——各取所长。飞控里,高频控制环用硬件定时器保证精度,而各种超时监控、状态上报用软件定时器,分工明确。</p>
+
+<h2 id="s10">23.10 面试常问问题</h2>
+<p><strong>Q1:软件定时器和硬件定时器的区别?</strong><br>软件定时器用一个守护任务+SysTick 心跳模拟,数量任意、精度低(依赖任务调度)、回调在任务上下文;硬件定时器精度高、数量有限、回调在中断。见 23.9。</p>
+<p><strong>Q2:软件定时器的回调在什么上下文执行?有什么限制?</strong><br>在定时器守护任务上下文,不是中断。绝不能阻塞(会卡住所有定时器),要短;要做耗时/阻塞的事应发信号唤醒别的任务。</p>
+<p><strong>Q3:为什么 xTimerStart 等 API 不直接操作定时器,而走命令队列?</strong><br>让所有对定时器列表的操作都在守护任务里串行执行,天然线程安全、免加锁。用消息传递代替共享+锁。</p>
+<p><strong>Q4:软件定时器精度为什么不高?</strong><br>回调由守护任务执行,若守护任务被更高优先级任务抢占或有回调拖长,到期处理会延迟;精度是 tick 级且不确定。要高精度用硬件定时器。</p>
+<p><strong>Q5:周期定时器如何避免漂移?</strong><br>基于"上次到期时间+周期"重新计算下次到期,而非基于当前时间,避免回调延迟累积成误差。</p>
+<p><strong>Q6:回调里能调用 vTaskDelay 吗?</strong><br>不能,会阻塞守护任务导致所有定时器停摆。回调只能用非阻塞操作。</p>
+
+<h2 id="s11">23.11 常见误区</h2>
+<ol>
+  <li><strong>"软件定时器回调在中断里执行"</strong>——在守护任务上下文,不是中断。</li>
+  <li><strong>"回调里可以阻塞/延时"</strong>——绝对不行,会卡住所有软件定时器。</li>
+  <li><strong>"软件定时器精度和硬件一样"</strong>——低得多,依赖守护任务调度,不适合硬实时。</li>
+  <li><strong>"xTimerStart 立即启动定时器"</strong>——是发命令给守护任务,略有延迟;命令队列满还可能失败。</li>
+  <li><strong>"周期定时器基于当前时间重算"</strong>——基于上次到期时间,避免漂移。</li>
+  <li><strong>"软件定时器不占任何资源"</strong>——占守护任务的栈和 CPU、命令队列内存,只是不占硬件 TIM。</li>
+</ol>
+
+<h2 id="s12">23.12 本章总结</h2>
+<ul>
+  <li>软件定时器用<strong>一个守护任务 + SysTick 心跳</strong>模拟任意多个"软"定时器,不占硬件 TIM。</li>
+  <li>原理=<strong>到期时间排序列表 + tick 驱动 + 回调</strong>(同 vTaskDelay 的延时列表,含双列表处理溢出)。</li>
+  <li><strong>守护任务(Timer Daemon)</strong>执行回调,回调在<strong>任务上下文</strong>(非中断),优先级=configTIMER_TASK_PRIORITY。</li>
+  <li><strong>命令队列</strong>:所有 xTimerStart/Stop 等操作先入队,由守护任务串行执行——免加锁的并发设计。</li>
+  <li>单次(one-shot)vs 周期(auto-reload);周期基于上次到期时间重算,<strong>避免漂移</strong>。</li>
+  <li><strong>回调绝不能阻塞</strong>(会卡住所有定时器),要短;耗时/阻塞的事发信号交给别的任务。</li>
+  <li>精度低、依赖守护任务调度;高精度/硬实时用硬件定时器。</li>
+  <li>配合:软件定时器管超时/周期上报/慢闪,硬件定时器管 PWM/换相/精确采样。</li>
+</ul>
+
+<h2 id="s13">23.13 思维导图 / 课后题</h2>
+<pre><code>SoftwareTimer 软件定时器
+├─ 一、硬件定时器局限:数量少+用起来重
+├─ 二、核心:到期列表+tick驱动+回调(同vTaskDelay)
+├─ 三、守护任务Timer Daemon(回调在任务上下文!)
+│  └─ 精度依赖守护任务调度
+├─ 四、★命令队列:操作先入队, 守护任务串行执行(免锁)
+├─ 五、数据结构+双到期列表(处理tick溢出)
+├─ 六、单次 vs 周期(周期基于上次到期时间, 防漂移)
+├─ 七、★回调禁忌:绝不能阻塞(卡住所有定时器)
+├─ 八、为何不在中断调:上下文限制+列表串行化
+└─ 九、配合硬件定时器:软(超时/周期/慢闪) vs 硬(PWM/换相/精确)</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>在 <code>timers.c</code> 找 Timer_t、prvTimerTask(守护任务)、命令队列 xTimerQueue、prvProcessExpiredTimer,对照本章读。</li>
+  <li>创建单次和周期两个软件定时器,回调里翻转不同 LED,观察行为差异。</li>
+  <li>故意在回调里加 vTaskDelay/长循环,观察其他软件定时器被拖延甚至停摆,亲历"回调不能阻塞"。</li>
+  <li>把 configTIMER_TASK_PRIORITY 设很低,同时跑高优先级忙任务,测量周期定时器的实际抖动,理解精度依赖调度。</li>
+  <li>对比:同样"每 1ms 做一次事",分别用软件定时器和硬件定时器中断实现,用逻辑分析仪比较精度/抖动。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>软件定时器和硬件定时器的区别与各自适用场景?</li>
+  <li>软件定时器回调在什么上下文?为什么不能阻塞?</li>
+  <li>为什么定时器 API 要通过命令队列?这解决了什么并发问题?</li>
+  <li>软件定时器精度为什么不高?依赖什么?</li>
+  <li>周期定时器如何避免累积漂移?</li>
+  <li>定时到期要做耗时操作,正确做法是什么?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第廿三章 完 · 下一章《第廿四章 Heap 内存管理》</p>
+<div class="nav">
+  <a href="第22章-FreeRTOS-EventGroup事件组.html">← 第廿二章</a>
+  <a href="index.html">目录</a>
+  <a href="第24章-FreeRTOS-Heap内存管理.html">第廿四章 →</a>
+</div>
+
+</div>
+</body>
+</html>

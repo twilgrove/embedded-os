@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第卅九章 驱动总览与字符设备</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第38章-Linux-RCU.html">← 第卅八章</a>
+  <a href="index.html">目录</a>
+  <a href="第40章-内核模块与PlatformDriver.html">第四十章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第六卷 · Linux 驱动</div>
+  <h1>第卅九章 驱动总览与字符设备</h1>
+  <div class="sub">操作系统怎么和五花八门的硬件打交道</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">驱动是什么、为什么要它</a></li>
+    <li><a href="#s2">生活例子:翻译官</a></li>
+    <li><a href="#s3">三大类设备</a></li>
+    <li><a href="#s4">设备号:主设备号与次设备号</a></li>
+    <li><a href="#s5">/dev 下的设备文件</a></li>
+    <li><a href="#s6">file_operations:驱动的核心</a></li>
+    <li><a href="#s7">一个最小字符驱动</a></li>
+    <li><a href="#s8">open/read 如何到达驱动</a></li>
+    <li><a href="#s9">用户空间与内核空间的数据搬运</a></li>
+    <li><a href="#s10">现代写法:cdev 与自动创建设备节点</a></li>
+    <li><a href="#s11">回扣 VFS 与 RT-Thread 设备框架</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:前五卷你理解了 CPU、ARM、RTOS、Linux 内核的"内功"。第六卷开始学"外功"——<strong>驱动开发</strong>,让操作系统能操控真实硬件(GPIO、串口、传感器、CAN)。这是嵌入式工程师的看家本领,也是车企岗位的核心考察点。<strong>本章从"驱动是什么"讲起,写出你的第一个字符设备驱动,并看清它如何接到第32章 VFS 的 read/write 上。</strong></p></blockquote>
+
+<h2 id="s1">39.1 驱动是什么、为什么要它</h2>
+<p>你的应用程序调 <code>read(fd, buf, n)</code> 想从一个温度传感器读数据。但传感器是个具体硬件——它挂在 I2C 总线上、有自己的寄存器、有特定的读取时序。<strong>应用程序不可能懂每一款硬件的细节</strong>(那样每换个传感器就要重写应用)。<strong>需要有人把"通用的 read 请求"翻译成"这款具体硬件的操作时序"。</strong>这个"翻译者"就是<strong>设备驱动(device driver)</strong>。</p>
+<p>驱动是<strong>内核里专门操控某类硬件的代码</strong>,它一头对接内核的通用接口(VFS 的 read/write 等,第32章),一头对接硬件的具体寄存器/时序。<strong>驱动的价值:向上给应用提供统一接口(应用不用管硬件细节),向下封装硬件差异。</strong>这又是全书那句话——<strong>加一层抽象</strong>。没有驱动,应用就得直接操作硬件寄存器,既不安全(第十二章特权级)也不通用。</p>
+
+<h2 id="s2">39.2 生活例子：翻译官</h2>
+<p>你(应用)想和一位只会说方言的老工匠(硬件)沟通。你只会说普通话(标准的 read/write)。<strong>中间需要一个翻译官(驱动)</strong>:你说"我要读数据"(普通话),翻译官把它翻成老工匠的方言和规矩("请按第 3 号阀门,等 2 秒,读刻度")。老工匠给出结果,翻译官再翻回普通话给你。</p>
+<p><strong>关键:你只需学会和翻译官说普通话(统一接口),不用懂每个工匠的方言(硬件细节);换个工匠,只要换个对应的翻译官(换驱动),你说话的方式不变。</strong>这就是驱动让"应用与硬件解耦"的意义——应用代码稳定,硬件可替换。换一款传感器,改的是驱动,上层算法基本不动。</p>
+
+<h2 id="s3">39.3 三大类设备</h2>
+<p>Linux 把设备分三大类,这决定了驱动的写法:</p>
+<table>
+<tr><th>类型</th><th>特点</th><th>访问方式</th><th>例子</th></tr>
+<tr><td><strong>字符设备</strong>(char)</td><td>像"字节流",按顺序一个个读写,通常不能随机寻址</td><td>read/write 顺序访问</td><td>串口、键盘、传感器、LED</td></tr>
+<tr><td><strong>块设备</strong>(block)</td><td>按"块"(如 512B)访问,可随机寻址,有缓冲</td><td>经文件系统/块层</td><td>硬盘、SD 卡、eMMC、Flash</td></tr>
+<tr><td><strong>网络设备</strong>(net)</td><td>收发数据包,不走 /dev,用 socket</td><td>socket(第34章)</td><td>网卡、WiFi</td></tr>
+</table>
+<blockquote><p><strong>本章聚焦字符设备</strong>——它是最基础、嵌入式最常见的类型。你接的绝大多数外设(GPIO、串口、I2C 传感器、SPI 屏、CAN)在驱动层面都是<strong>字符设备</strong>:数据像流一样一个个进出,用 read/write 操作。<strong>字符设备驱动是驱动开发的入门和主力,学透它,后面 GPIO/UART/I2C/SPI 驱动都是它的具体化。</strong>块设备(存储)和网络设备有各自更复杂的子系统(块层、网络协议栈第34章),但字符设备的模型是理解一切驱动的基础。</p></blockquote>
+
+<h2 id="s4">39.4 设备号：主设备号与次设备号</h2>
+<p>内核怎么把一个设备文件和对应的驱动关联起来?靠<strong>设备号</strong>。每个设备有一对号码:</p>
+<pre><code>设备号 = 主设备号(major) + 次设备号(minor)
+
+  主设备号 major: 标识"哪个驱动"       (类别)
+  次设备号 minor: 标识"这个驱动管的第几个设备" (个体)
+
+例: 一个串口驱动 major=4, 管理多个串口:
+     /dev/ttyS0  → major=4, minor=64
+     /dev/ttyS1  → major=4, minor=65
+     (同一个驱动 major相同, 用minor区分是哪一个)</code></pre>
+<p><strong>主设备号 = 找到哪个驱动;次设备号 = 驱动内部区分是它管的哪个具体设备。</strong>就像"某快递公司(major)的第 N 个网点(minor)"。内核维护一张"主设备号→驱动"的表,应用访问一个设备文件时,内核用它的主设备号找到驱动,把请求交给它;驱动再用次设备号知道操作的是哪个具体设备。<code>ls -l /dev</code> 能看到每个设备文件的主次号。</p>
+
+<h2 id="s5">39.5 /dev 下的设备文件</h2>
+<p>回到第32章"一切皆文件":设备在用户空间表现为 <code>/dev/</code> 下的<strong>设备文件</strong>(设备节点)。</p>
+<pre><code>$ ls -l /dev/ttyS0 /dev/null /dev/sda
+ crw-rw----  ... 4,  64  /dev/ttyS0   ← c=字符设备, major4 minor64
+ crw-rw-rw-  ... 1,   3  /dev/null    ← c=字符设备
+ brw-rw----  ... 8,   0  /dev/sda     ← b=块设备
+
+  第一个字母: c=字符设备, b=块设备
+  两个数字:   主设备号, 次设备号</code></pre>
+<p><strong>设备文件是"硬件在文件系统里的化身"。</strong>应用 <code>open("/dev/ttyS0")</code> 就像打开普通文件,但内核发现它是设备文件(带主次号),就把后续 read/write 转给对应驱动,而不是读写磁盘数据。<strong>这就是第32章说的"设备文件的 f_op 指向驱动的实现"——open 一个 /dev 文件,VFS 会把它的 file→f_op 挂成驱动提供的操作函数集。</strong>于是 <code>cat /dev/ttyS0</code> 就能读串口。</p>
+
+<h2 id="s6">39.6 file_operations：驱动的核心</h2>
+<p>写字符驱动,核心就是填一张表——<strong><code>struct file_operations</code></strong>。它是驱动和 VFS 之间的契约(第32章的 f_op 就是它):</p>
+<pre><code>struct file_operations {
+    struct module *owner;
+    ssize_t (*read)  (struct file *, char __user *, size_t, loff_t *);
+    ssize_t (*write) (struct file *, const char __user *, size_t, loff_t *);
+    int     (*open)  (struct inode *, struct file *);
+    int     (*release)(struct inode *, struct file *);  // close时调用
+    long    (*unlocked_ioctl)(struct file *, unsigned int, unsigned long);
+    // ... mmap, poll 等(后续章节)
+};</code></pre>
+<p><strong>你写驱动,本质就是实现这些函数,填进 file_operations,然后注册给内核。</strong>应用调 <code>read()</code>,内核经 VFS 最终调到你填的 <code>.read</code> 函数;应用 <code>ioctl()</code>,调到你的 <code>.unlocked_ioctl</code>(第48章)。<strong>这张函数指针表就是第32章 VFS 多态、第26章 RT-Thread rt_device_ops 的同款设计——驱动开发的一切,围绕填好这张表展开。</strong></p>
+
+<h2 id="s7">39.7 一个最小字符驱动</h2>
+<p>看一个能跑的最小字符驱动骨架(读它返回固定字符串):</p>
+<pre><code>#include &lt;linux/module.h&gt;
+#include &lt;linux/fs.h&gt;
+#include &lt;linux/uaccess.h&gt;
+
+static int major;
+static char msg[] = "hello from driver\n";
+
+static ssize_t my_read(struct file *f, char __user *buf,
+                       size_t len, loff_t *off) {
+    size_t n = sizeof(msg);
+    if (*off >= n) return 0;          // 读完了返回0(EOF)
+    if (len > n - *off) len = n - *off;
+    if (copy_to_user(buf, msg + *off, len))  // ★内核→用户拷贝
+        return -EFAULT;
+    *off += len;                      // 更新读位置(第32章f_pos)
+    return len;
+}
+static int my_open(struct inode *i, struct file *f){ return 0; }
+
+static struct file_operations fops = {   // ★填表
+    .owner = THIS_MODULE,
+    .open  = my_open,
+    .read  = my_read,
+};
+
+static int __init my_init(void){
+    major = register_chrdev(0, "mychar", &fops);  // ★注册, 0=自动分配major
+    printk("mychar loaded, major=%d\n", major);
+    return 0;
+}
+static void __exit my_exit(void){ unregister_chrdev(major, "mychar"); }
+
+module_init(my_init);
+module_exit(my_exit);
+MODULE_LICENSE("GPL");</code></pre>
+<p>三个要点:①实现 <code>my_read</code> 等函数;②填进 <code>fops</code>;③在 <code>my_init</code> 里 <code>register_chrdev</code> 注册(把驱动登记到内核,拿到主设备号)。<strong>加载后 <code>mknod /dev/mychar c &lt;major&gt; 0</code> 建设备节点,<code>cat /dev/mychar</code> 就会触发 <code>my_read</code> 打印字符串。</strong>这就是驱动最小闭环。(module_init/exit、__init 等内核模块机制,下一章第40章详解。)</p>
+
+<h2 id="s8">39.8 open/read 如何到达驱动</h2>
+<p>把应用的 read 一路追到驱动,这是理解驱动运行的关键(串起第32章):</p>
+<pre><code>cat /dev/mychar 发生了什么:
+  ① cat 调 open("/dev/mychar") → 系统调用进内核
+  ② VFS发现是字符设备文件, 取出它的【主设备号】
+  ③ 用major查"字符设备表" → 找到你注册的 file_operations
+  ④ 把 file->f_op 设成你的 fops → 调你的 .open
+  ⑤ cat 调 read(fd,...) → VFS → file->f_op->read → 【你的 my_read】★
+  ⑥ my_read 用 copy_to_user 把数据送到用户buf
+  ⑦ cat 收到数据打印; 再read返回0(EOF) → cat结束</code></pre>
+<blockquote><p><strong>整条链把第32章和本章焊在一起:</strong>应用的 read → VFS 的 <code>file->f_op->read</code> 多态分发(第32章)→ 落到你驱动填的 <code>my_read</code>。<strong>你写驱动,就是在这条链的最末端,提供那个"真正操作硬件"的函数。</strong>VFS 负责把请求送到你门口,你负责在函数里操作具体硬件(读寄存器、发时序)。理解这条链,你就明白了"应用一个简单 read,如何最终变成对硬件的操作"——这是嵌入式全栈的核心脉络,从应用一直贯通到硬件。</p></blockquote>
+
+<h2 id="s9">39.9 用户空间与内核空间的数据搬运</h2>
+<p>39.7 出现了 <code>copy_to_user</code>,这是驱动的一个<strong>安全要点</strong>,必须讲清:</p>
+<pre><code>为什么不能直接 memcpy(buf, msg, len)?
+
+  buf 是【用户空间】指针, 驱动运行在【内核空间】(第十二章特权级、第十章地址空间)
+  直接解引用用户指针危险:
+   ① 用户指针可能非法/恶意(指向不该访问的地址)→ 内核崩溃/被攻击
+   ② 用户页可能没在内存(被换出, 第十章)→ 要触发缺页处理
+
+  必须用专门函数:
+   copy_to_user(用户buf, 内核src, n)   内核→用户
+   copy_from_user(内核dst, 用户buf, n) 用户→内核
+   → 它们会【检查用户指针合法性】+ 【安全处理缺页】</code></pre>
+<p><strong>铁律:驱动里绝不能直接解引用用户空间指针,必须用 <code>copy_to_user</code>/<code>copy_from_user</code>。</strong>原因是内核和用户是<strong>两个地址空间、两个特权级</strong>(第十章、第十二章):用户传来的指针不可信(可能非法或恶意),直接用会让内核崩溃或被攻击(用户借内核之手读写任意内存)。这两个函数会校验指针合法性、安全处理缺页。<strong>这是驱动安全的第一课,也是面试常考点——"驱动里怎么和用户空间交换数据"。</strong></p>
+
+<h2 id="s10">39.10 现代写法：cdev 与自动创建设备节点</h2>
+<p>39.7 用的 <code>register_chrdev</code> 是老式简易接口。现代内核驱动用更规范的方式:</p>
+<pre><code>现代字符驱动的标准套路:
+  ① alloc_chrdev_region(&dev, 0, 1, "name");  // 申请设备号(major+minor)
+  ② cdev_init(&cdev, &fops);                   // 初始化cdev结构
+     cdev_add(&cdev, dev, 1);                   // 注册cdev到内核
+  ③ class_create() + device_create()           // ★让udev自动在/dev建节点
+     → 不用手动 mknod, 加载驱动后 /dev/xxx 自动出现
+
+  卸载时反向: device_destroy → class_destroy → cdev_del → unregister_chrdev_region</code></pre>
+<p>两点进步:①用 <strong><code>cdev</code></strong> 结构体规范地表示字符设备(更灵活);②用 <strong><code>class_create</code>+<code>device_create</code></strong> 让用户空间的 <code>udev</code> 守护进程<strong>自动创建 /dev 节点</strong>(不用手动 <code>mknod</code>)。<strong>这就是为什么你插上 U 盘、加载一个驱动后,<code>/dev</code> 下会自动冒出对应设备文件——是内核通知 udev 自动建的。</strong>实际工程中用这套标准写法,后面 GPIO/I2C 等驱动都基于它。</p>
+
+<h2 id="s11">39.11 回扣 VFS 与 RT-Thread 设备框架</h2>
+<p>字符驱动的模型,你其实见过两遍了:</p>
+<table>
+<tr><th>概念</th><th>Linux 字符驱动(本章)</th><th>RT-Thread 设备(第26章)</th><th>VFS(第32章)</th></tr>
+<tr><td>操作表</td><td>file_operations</td><td>rt_device_ops</td><td>f_op</td></tr>
+<tr><td>注册设备</td><td>register_chrdev/cdev_add</td><td>rt_device_register</td><td>-</td></tr>
+<tr><td>统一接口</td><td>read/write/open/ioctl</td><td>rt_device_read/write/control</td><td>read/write</td></tr>
+<tr><td>设备标识</td><td>主/次设备号</td><td>设备名</td><td>inode</td></tr>
+</table>
+<blockquote><p><strong>Linux 字符驱动 = 第32章 VFS 的"设备侧实现" = 第26章 RT-Thread 设备框架的放大版。</strong>你在第26章写 RT-Thread 驱动时填 <code>rt_device_ops</code>,现在写 Linux 驱动填 <code>file_operations</code>——<strong>同一个"填函数指针表 + 注册"的模式</strong>。区别在于 Linux 多了设备号、用户/内核空间隔离(copy_to_user)、udev 自动建节点等工程化细节,因为 Linux 面对更复杂的多用户、多设备、安全环境。<strong>但核心思想你早就掌握了:驱动就是实现一组标准操作函数,注册给内核,让上层通过统一接口调到你。</strong>带着这个认识,后面 GPIO、UART、I2C、SPI 各种驱动,你会发现它们都是这个骨架 + 具体硬件操作的填充。</p></blockquote>
+
+<h2 id="s12">39.12 面试常问问题</h2>
+<p><strong>Q1:设备驱动的作用是什么?</strong><br>内核里操控某类硬件的代码,向上给应用提供统一接口(read/write 等),向下封装硬件寄存器/时序细节,实现应用与硬件解耦(换硬件只换驱动)。</p>
+<p><strong>Q2:Linux 设备分哪三类?区别?</strong><br>字符设备(字节流,顺序 read/write,如串口/传感器)、块设备(按块随机访问,有缓冲,如磁盘)、网络设备(收发包,走 socket 不走 /dev)。</p>
+<p><strong>Q3:主设备号和次设备号的作用?</strong><br>主设备号标识哪个驱动(内核用它找驱动),次设备号标识该驱动管理的哪个具体设备。</p>
+<p><strong>Q4:写字符驱动的核心是什么?</strong><br>实现 file_operations 里的 read/write/open/ioctl 等函数,填表后注册给内核(register_chrdev 或 cdev_add)。应用 read 经 VFS 多态分发到你的函数。</p>
+<p><strong>Q5:驱动里怎么和用户空间交换数据?为什么不能直接 memcpy?</strong><br>用 copy_to_user/copy_from_user。因为用户指针在不同地址空间、不可信(可能非法/恶意),直接解引用会让内核崩溃或被攻击;这两个函数会校验合法性、安全处理缺页。</p>
+<p><strong>Q6:应用 read 一个 /dev 文件是怎么到达驱动的?</strong><br>open 时 VFS 用设备文件的主设备号查字符设备表找到驱动的 file_operations,挂到 file->f_op;read 时经 VFS file->f_op->read 分发到驱动的 read 函数。</p>
+<p><strong>Q7:/dev 下的设备节点怎么来的?</strong><br>现代用 class_create+device_create 通知用户空间 udev 自动创建;老式手动 mknod 指定主次号。</p>
+
+<h2 id="s13">39.13 常见误区</h2>
+<ol>
+  <li><strong>"应用能直接操作硬件寄存器"</strong>——用户态无权限(第十二章),必须经驱动(内核态)。</li>
+  <li><strong>"驱动里能直接用用户传的指针"</strong>——不能,必须 copy_to/from_user。</li>
+  <li><strong>"设备文件存了硬件数据"</strong>——设备文件只是入口(带主次号),数据 read 时由驱动实时从硬件取。</li>
+  <li><strong>"主设备号唯一标识一个设备"</strong>——主设备号标识驱动/类别,加次设备号才定位具体设备。</li>
+  <li><strong>"传感器/GPIO 是块设备"</strong>——它们是字符设备(字节流);块设备是磁盘那类。</li>
+  <li><strong>"写驱动很玄"</strong>——核心就是"填 file_operations + 注册",和 RT-Thread 填 rt_device_ops 同理。</li>
+</ol>
+
+<h2 id="s14">39.14 本章总结</h2>
+<ul>
+  <li><strong>驱动</strong>:内核里操控硬件的代码,向上提供统一接口(read/write)、向下封装硬件细节 → 应用与硬件解耦(<strong>加一层抽象</strong>)。</li>
+  <li>三类设备:<strong>字符</strong>(字节流,顺序,嵌入式主力)、<strong>块</strong>(按块随机,存储)、<strong>网络</strong>(走 socket)。</li>
+  <li><strong>设备号</strong>:主设备号=找哪个驱动,次设备号=驱动内定位哪个设备。<code>/dev</code> 下设备文件带主次号(c/b)。</li>
+  <li>核心是填 <strong><code>file_operations</code></strong>(read/write/open/ioctl…),注册给内核(register_chrdev / cdev_add)——同 VFS f_op、RT-Thread rt_device_ops。</li>
+  <li>调用链:应用 read → VFS <code>file->f_op->read</code> 多态 → <strong>你的驱动 read 函数</strong> → 操作硬件。</li>
+  <li>铁律:用户/内核不同地址空间,驱动交换数据必须用 <strong><code>copy_to_user</code>/<code>copy_from_user</code></strong>(校验+安全缺页),绝不直接解引用用户指针。</li>
+  <li>现代写法:<strong>cdev</strong> + <strong>class_create/device_create</strong>(udev 自动建 /dev 节点)。</li>
+</ul>
+
+<h2 id="s15">39.15 思维导图 / 课后题</h2>
+<pre><code>驱动总览与字符设备
+├─ 一、驱动=硬件翻译官:上给统一接口, 下封装硬件(加一层抽象)
+├─ 二、三类设备:★字符(字节流) / 块(随机) / 网络(socket)
+├─ 三、★设备号:主(找驱动) + 次(定位具体设备)
+├─ 四、/dev设备文件:c/b + 主次号 → 硬件在文件系统的化身
+├─ 五、★核心:填 file_operations(read/write/open/ioctl) + 注册
+├─ 六、最小驱动:实现my_read→填fops→register_chrdev
+├─ 七、★调用链:应用read→VFS f_op->read多态→你的驱动read→硬件
+├─ 八、★铁律:copy_to_user/copy_from_user(不能直接用用户指针)
+├─ 九、现代:cdev + class_create/device_create(udev自动建节点)
+└─ 十、回扣:= VFS(第32)设备侧 = RT-Thread设备框架(第26)放大版</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li><code>ls -l /dev</code> 观察各设备的 c/b 标志和主次号;<code>cat /proc/devices</code> 看主设备号→驱动名的对应表。</li>
+  <li>把 39.7 的最小驱动敲下来,编好 Makefile,<code>insmod</code> 加载,<code>mknod</code> 建节点,<code>cat</code> 读出字符串(需内核开发环境,下一章讲编译)。</li>
+  <li>给驱动加上 <code>write</code> 函数(用 copy_from_user 收数据存内核 buf),<code>echo hi > /dev/mychar</code> 再 <code>cat</code> 读回,体会双向。</li>
+  <li>故意在 read 里用 <code>memcpy(buf, msg, len)</code> 而非 copy_to_user,观察出错/风险,理解为什么要 copy_to_user。</li>
+  <li>把老式 register_chrdev 改成 cdev + class_create/device_create,观察 /dev 节点自动出现。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>驱动的作用?为什么应用不能直接操作硬件?</li>
+  <li>Linux 三类设备的区别?嵌入式外设多属哪类?</li>
+  <li>主设备号和次设备号分别标识什么?</li>
+  <li>写字符驱动的核心步骤?file_operations 是什么?</li>
+  <li>应用 read 一个设备文件如何到达驱动的 read 函数?</li>
+  <li>为什么驱动里不能直接用用户空间指针?该用什么?</li>
+  <li>把 Linux 字符驱动和 RT-Thread 设备框架做对比。</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第卅九章 完 · 下一章《第四十章 内核模块与 Platform Driver》</p>
+<div class="nav">
+  <a href="第38章-Linux-RCU.html">← 第卅八章</a>
+  <a href="index.html">目录</a>
+  <a href="第40章-内核模块与PlatformDriver.html">第四十章 →</a>
+</div>
+
+</div>
+</body>
+</html>

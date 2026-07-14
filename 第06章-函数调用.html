@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第六章 函数调用</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13.5px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第05章-Stack.html">← 第五章</a>
+  <a href="index.html">目录</a>
+  <a href="第07章-中断.html">第七章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第一卷 · 计算机组成原理</div>
+  <h1>第六章 函数调用</h1>
+  <div class="sub">参数怎么传、返回地址怎么记、栈帧怎么建——把寄存器和栈拧成一股绳</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么函数调用值得一章</a></li>
+    <li><a href="#s2">一次调用要解决的四个问题</a></li>
+    <li><a href="#s3">调用约定：一份君子协议</a></li>
+    <li><a href="#s4">参数怎么传</a></li>
+    <li><a href="#s5">返回地址与 LR</a></li>
+    <li><a href="#s6">栈帧的建立与拆除(序言/尾声)</a></li>
+    <li><a href="#s7">完整走一遍：嵌套调用全过程</a></li>
+    <li><a href="#s8">返回值怎么带回来</a></li>
+    <li><a href="#s9">递归的真相</a></li>
+    <li><a href="#s10">调用链与栈回溯(backtrace)</a></li>
+    <li><a href="#s11">内联、尾调用等优化</a></li>
+    <li><a href="#s12">回扣：函数调用 vs 上下文切换</a></li>
+    <li><a href="#s13">面试常问</a></li>
+    <li><a href="#s14">常见误区</a></li>
+    <li><a href="#s15">本章总结</a></li>
+    <li><a href="#s16">思维导图</a></li>
+    <li><a href="#s17">课后练习与面试题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第四章讲了寄存器、第五章讲了栈,这一章把它们拧成一股绳——因为函数调用正是"寄存器 + 栈"配合的经典范例。更重要的是,<strong>它和上下文切换只有一线之隔</strong>:搞懂函数调用怎么保存/恢复现场,你就理解了任务切换在做什么、又比它多做了什么。学完你要能读懂函数的汇编"序言/尾声",讲清参数传递和返回全过程。</p></blockquote>
+
+<h2 id="s1">6.1 为什么函数调用值得一章</h2>
+<p>函数调用你写了千百遍,但底层发生的事远比想象复杂。它要同时协调:寄存器(传参、返回值、返回地址)、栈(栈帧、局部变量、保存现场)、PC(跳过去、跳回来)。<strong>它是前几章所有概念的第一次"合奏"。</strong></p>
+<p>而且它是通往两个重要主题的桥:</p>
+<ul>
+  <li>往上:<strong>上下文切换</strong>(第三卷)= 函数调用式的现场保存 + 换栈换任务;</li>
+  <li>往下:<strong>ABI/调用约定</strong>是跨语言、跨库互操作的基础(为什么 C 能调汇编、Python 能调 C)。</li>
+</ul>
+
+<h2 id="s2">6.2 一次函数调用要解决的四个问题</h2>
+<p>A 调用 B,看似一句 <code>B()</code>,硬件层面必须解决四件事:</p>
+<ol>
+  <li><strong>传参</strong>:A 要把参数交给 B。放哪?(寄存器 or 栈)</li>
+  <li><strong>记路</strong>:B 干完要回到 A 的调用点。这个"返回地址"存哪?(LR/栈)</li>
+  <li><strong>保现场</strong>:B 会用寄存器,可能覆盖 A 正在用的值。谁负责备份?(调用约定 4.8)</li>
+  <li><strong>给结果</strong>:B 算完的返回值怎么交回 A?(寄存器)</li>
+</ol>
+<p>这四件事的具体做法,不是硬件写死的,而是一份大家约定好的"协议"——调用约定。</p>
+
+<h2 id="s3">6.3 调用约定：一份君子协议</h2>
+<p><strong>调用约定(Calling Convention)</strong>规定了上面四件事的具体规则。ARM 的这份协议叫 <strong>AAPCS</strong>(ARM 架构过程调用标准)。它是 ABI(应用二进制接口)的一部分。</p>
+<p>为什么需要它?打个比方:A 公司和 B 公司要合作,得先约定好"货放几号仓库、单据放哪、谁验货"。如果 A 用汇编写、B 用 C 写、甚至 B 是别人编译好的库,只要双方都遵守同一份约定,就能无缝对接。<strong>调用约定就是让不同来源的代码能互相调用的通用合同。</strong></p>
+<p>ARM(AAPCS)的核心规定(呼应第四章):</p>
+<table>
+<tr><th>寄存器</th><th>用途</th><th>谁保存</th></tr>
+<tr><td>R0~R3</td><td>传前 4 个参数;R0 兼放返回值</td><td>调用者(caller-saved)</td></tr>
+<tr><td>R4~R11</td><td>被调用函数的局部变量</td><td>被调用者(callee-saved)</td></tr>
+<tr><td>R12(IP)</td><td>临时/过程调用暂存</td><td>调用者</td></tr>
+<tr><td>R13(SP)</td><td>栈指针</td><td>特殊,始终维护</td></tr>
+<tr><td>R14(LR)</td><td>返回地址</td><td>被调用者(若还要调别人)</td></tr>
+<tr><td>R15(PC)</td><td>程序计数器</td><td>—</td></tr>
+</table>
+
+<h2 id="s4">6.4 参数怎么传</h2>
+<p>规则:<strong>能用寄存器就用寄存器(快),放不下才用栈。</strong></p>
+<ul>
+  <li>前 4 个整型/指针参数 → R0, R1, R2, R3(ARM64 是 X0~X7,前 8 个)。</li>
+  <li>第 5 个及以后的参数 → 压到栈上传递。</li>
+  <li>返回值 → R0(64 位或结构体有额外规则)。</li>
+</ul>
+<pre><code>C:  int foo(int a, int b, int c);   foo(10, 20, 30);
+
+汇编(传参):
+   MOV R0, #10    ; a → R0
+   MOV R1, #20    ; b → R1
+   MOV R2, #30    ; c → R2
+   BL  foo        ; 调用(下一节讲 BL)
+   ; 返回后 R0 里就是 foo 的返回值</code></pre>
+<p>这解释了一个性能经验:<strong>参数别太多</strong>。超过 4 个(ARM)就得走栈,多一次内存读写。也解释了为什么很多接口喜欢"传一个结构体指针"而不是十个参数——一个指针占一个寄存器就够。</p>
+
+<h2 id="s5">6.5 返回地址与 LR</h2>
+<p>第三章说过 <code>BL</code>(Branch with Link)是"带返回的跳转"。它比普通跳转 <code>B</code> 多做一件事:</p>
+<pre><code>BL foo  做两件事:
+   ① LR = 下一条指令的地址   ← 记住"我干完回这里"
+   ② PC = foo 的地址         ← 跳过去执行 foo
+
+foo 返回时:
+   BX LR   →  PC = LR  ← 跳回记住的地方,继续 A 的代码</code></pre>
+<p>妙在:<strong>叶子函数(自己不再调别的函数)的返回地址一直待在 LR 里,连栈都不用碰,返回极快。</strong>这是 RISC 用寄存器传返回地址的优势(CISC 的 x86 是直接压栈)。</p>
+<h4>但如果 B 还要调 C 呢?</h4>
+<p>问题来了:B 被调用时,LR 存着"返回 A 的地址"。可 B 里又执行 <code>BL C</code>,这会<strong>覆盖 LR</strong>(变成"返回 B 的地址")。等 C 回来,B 想返回 A 却发现 LR 已经被自己搞没了!</p>
+<p>解法:<strong>B 在调用 C 之前,先把 LR 压栈保存</strong>,等 C 回来、B 要返回时再从栈里弹出来。这正是下一节"栈帧序言"要做的事之一。<strong>"非叶子函数必须把 LR 存栈",这条规则你现在能自己推导出来了。</strong></p>
+
+<h2 id="s6">6.6 栈帧的建立与拆除(序言 / 尾声)</h2>
+<p>每个非平凡函数的汇编,开头有一段固定的"序言(Prologue)"建栈帧,结尾有"尾声(Epilogue)"拆栈帧。它俩就是第五章栈帧的施工队。</p>
+<pre><code>典型 ARM 函数结构:
+
+foo:
+  ; ===== 序言 Prologue(进门先安置) =====
+  PUSH {R4-R7, LR}   ① 保存要用的callee-saved寄存器 + 返回地址LR
+  SUB  SP, SP, #16   ② 在栈上给局部变量腾空间(下移SP)
+  ; (可能还会 MOV FP, SP 设置帧指针)
+
+  ; ===== 函数体 =====
+  ...  用 R4-R7 干活, 局部变量通过 [SP,#偏移] 访问
+  ...  可能 BL 调用别的函数(此时LR已被序言存好, 安全)
+
+  ; ===== 尾声 Epilogue(出门恢复原样) =====
+  ADD  SP, SP, #16   ③ 回收局部变量空间(上移SP)
+  POP  {R4-R7, PC}   ④ 恢复R4-R7, 并把返回地址直接弹进PC → 返回!</code></pre>
+<p>注意最后那个 <code>POP {..., PC}</code> 的骚操作:<strong>把当初压入的 LR 直接弹到 PC,一步完成"恢复寄存器 + 返回"。</strong>这是 ARM 常见的高效返回方式。</p>
+<blockquote><p>序言/尾声成对出现,像"有借有还"。序言压了什么,尾声就弹什么,SP 减了多少就加回多少——保证函数返回时栈恢复原状,调用者毫无察觉。如果这个平衡被破坏(比如汇编写错、栈溢出踩乱),就会返回到错误地址,程序跑飞。这是很多"莫名跑飞"bug 的根源。</p></blockquote>
+
+<h2 id="s7">6.7 完整走一遍：嵌套调用全过程</h2>
+<p>把前几节合起来,看 <code>main → A → B</code> 的完整栈和寄存器变化:</p>
+<pre><code>C:  main() { A(); }   A() { B(); }   B() { int x=1; }
+
+① main 执行 BL A
+     LR = "main里A之后那条"
+     PC → A                栈: [ main帧 ]
+
+② A 的序言: PUSH {LR}     ← 因为A还要调B,先保住"返回main的地址"
+     栈: [ main帧 | A帧(存了返回main的LR) ]
+
+③ A 执行 BL B
+     LR = "A里B之后那条"    ← LR被覆盖成返回A的地址(没关系,返回main的已在栈上)
+     PC → B                栈不变
+
+④ B 的序言: PUSH {LR} + 腾局部变量x的空间
+     栈: [ main帧 | A帧 | B帧(x, 返回A的LR) ]
+
+⑤ B 执行完, 尾声: 回收x空间, POP {PC}
+     从B帧弹出"返回A的地址"→PC   → 回到A     栈: [ main帧 | A帧 ]
+
+⑥ A 执行完, 尾声: POP {PC}
+     从A帧弹出"返回main的地址"→PC → 回到main  栈: [ main帧 ]</code></pre>
+<p>看,<strong>返回地址像面包屑一样一层层存在各自的栈帧里,返回时一层层弹出来,精确地原路返回。</strong>这就是为什么调用能任意嵌套、递归也不乱——每一层的"回家的路"都独立存在自己的栈帧。</p>
+
+<h2 id="s8">6.8 返回值怎么带回来</h2>
+<p>约定:<strong>返回值放 R0</strong>(ARM64 放 X0)。调用者在 <code>BL</code> 返回后直接从 R0 取。</p>
+<pre><code>int add(int a,int b){ return a+b; }
+
+add:
+   ADD R0, R0, R1   ; a(R0)+b(R1) → R0   (结果直接放R0)
+   BX  LR           ; 返回
+调用方:
+   BL add
+   ; 现在 R0 = 结果, 直接用</code></pre>
+<ul>
+  <li>返回值超过一个寄存器宽度(如 64 位在 32 位机、或返回结构体):用 R0+R1,或"调用者传一个隐藏指针,被调用者把结果写进去"(结构体返回的常见做法)。</li>
+  <li>这解释了为什么"返回大结构体"可能有性能开销——涉及内存拷贝,不如返回指针。</li>
+</ul>
+
+<h2 id="s9">6.9 递归的真相</h2>
+<p>递归为什么能工作?现在答案很清晰:<strong>每次递归调用,都在栈上新建一个独立的栈帧,拥有自己的局部变量和返回地址。</strong>所以 <code>factorial(3)</code> 调 <code>factorial(2)</code> 调 <code>factorial(1)</code>,栈上就有三层各自独立的帧,互不干扰,返回时逐层弹回。</p>
+<pre><code>factorial(3):  栈上三帧, 各有自己的 n
+  ┌────────────┐
+  │ f(3) n=3   │
+  ├────────────┤
+  │ f(2) n=2   │
+  ├────────────┤
+  │ f(1) n=1   │ ← 触底, 开始逐层返回相乘
+  └────────────┘</code></pre>
+<p>这也解释了递归的两个代价:<strong>①栈空间:每层一个帧,递归太深会栈溢出(第五章);②开销:每层都有序言/尾声的压栈弹栈。</strong>所以性能敏感或栈有限(嵌入式)的场景,常把递归改成循环。</p>
+
+<h2 id="s10">6.10 调用链与栈回溯(backtrace)</h2>
+<p>你在 gdb 里敲 <code>bt</code>,或程序崩溃时打印的那串"调用栈",是怎么来的?就是靠栈帧里存的返回地址。</p>
+<p>调试器从当前 SP/FP 出发,顺着"每个栈帧里保存的上一层返回地址和帧指针",一帧一帧往回走,就还原出了 <code>main → A → B → 崩溃点</code> 的完整链条。<strong>栈帧的链式结构 = 崩溃现场的"行车记录仪"。</strong></p>
+<blockquote><p>这就是为什么<strong>栈被踩坏后,backtrace 会显示乱码或断裂</strong>——面包屑被破坏了,追不回去。也是为什么调试嵌入式崩溃时,第一件事常是"看栈有没有溢出"。编译时加 <code>-fno-omit-frame-pointer</code> 保留帧指针,能让回溯更可靠。</p></blockquote>
+
+<h2 id="s11">6.11 内联、尾调用等优化</h2>
+<p>编译器会想尽办法减少调用开销:</p>
+<ul>
+  <li><strong>内联(inline)</strong>:把小函数的代码直接"贴"到调用处,<strong>彻底省掉调用的序言/尾声/传参</strong>。代价是代码变大。<code>inline</code> 关键字是建议,<code>-O2</code> 下编译器自主决定。</li>
+  <li><strong>尾调用优化(TCO)</strong>:如果函数最后一步是"调用另一个函数并直接返回它的结果",可以复用当前栈帧、用跳转代替调用,不增加栈深度。让某些递归不再栈溢出。</li>
+  <li><strong>叶子函数优化</strong>:不调别人的叶子函数,连 LR 压栈都省了(6.5)。</li>
+</ul>
+<p>理解这些,你就明白为什么"看汇编时源码的函数调用有时消失了"——被内联或优化掉了。也明白为什么 debug 版(-O0)和 release 版(-O2)行为看起来不同。</p>
+
+<h2 id="s12">6.12 回扣：函数调用 vs 上下文切换</h2>
+<p>本章最重要的升华。<strong>函数调用和上下文切换,做的事非常像,但有一个关键区别。</strong>对比:</p>
+<table>
+<tr><th></th><th>函数调用</th><th>上下文切换</th></tr>
+<tr><td>保存现场</td><td>只存 callee-saved(R4-R11)+LR</td><td>存<strong>全部</strong>寄存器(R0-R12,SP,LR,PC,xPSR)</td></tr>
+<tr><td>换栈吗</td><td>不换,同一个栈往下长</td><td><strong>换</strong>!切到另一个任务的栈</td></tr>
+<tr><td>谁触发</td><td>程序主动 BL</td><td>调度器(常由中断触发)</td></tr>
+<tr><td>返回到哪</td><td>回到调用点,继续同一执行流</td><td>跳到<strong>另一个</strong>执行流</td></tr>
+<tr><td>知情吗</td><td>双方代码都知道(有约定)</td><td>被切的任务<strong>毫不知情</strong></td></tr>
+</table>
+<h4>为什么切换要存"全部",调用只存"一半"?</h4>
+<p>因为函数调用是<strong>双方约定好的</strong>:调用者知道 R0-R3 会被弄脏,自己会提前处理,所以被调方不用管。而上下文切换是<strong>强行打断</strong>——任务正跑到半路被抢占,它没有任何"我要被切走了,先收拾一下"的机会。所以切换必须把它的<strong>完整现场</strong>(包括那些函数调用时不用存的 R0-R3、正在用的一切)全部保存,一个都不能漏,否则恢复后就错乱了。</p>
+<blockquote><p>这是本卷的一个高峰认识:<strong>上下文切换 = "非自愿的、完整的、跨栈的"函数调用式保存。</strong>因为不自愿(被中断打断),所以要存全部;因为跨栈,所以要换 SP。你把第四(寄存器)、五(栈)、六(调用)三章连起来,就完全看懂了第三卷 FreeRTOS 那段 PendSV 切换汇编——它无非就是"手动把完整现场压进 A 的栈、换 SP、从 B 的栈恢复完整现场"。第一卷到这里,操作系统的"心脏"已经在你眼前拆解完毕。</p></blockquote>
+
+<h2 id="s13">6.13 面试常问问题</h2>
+<p><strong>Q1:函数调用时参数、返回值、返回地址分别怎么传?</strong><br>ARM:前 4 参数走 R0-R3,多余走栈;返回值 R0;返回地址 BL 存入 LR,非叶子函数再压栈保存。</p>
+<p><strong>Q2:什么是调用约定/ABI?为什么需要?</strong><br>规定传参、返回、寄存器保存责任的合同,使不同语言/不同编译单元/汇编能互相调用。ARM 是 AAPCS。</p>
+<p><strong>Q3:叶子函数和非叶子函数返回地址处理有何不同?</strong><br>叶子函数返回地址常驻 LR,不压栈,返回快;非叶子函数因还要 BL 会覆盖 LR,必须先把 LR 压栈。</p>
+<p><strong>Q4:栈帧里有什么?序言/尾声做什么?</strong><br>返回地址、保存的 callee-saved 寄存器、局部变量、传出参数。序言建帧(压寄存器/LR、腾局部空间),尾声拆帧(恢复、返回)。</p>
+<p><strong>Q5:递归为什么可行?代价是什么?</strong><br>每层独立栈帧,互不干扰。代价:栈空间(深了溢出)、每层压栈弹栈开销。</p>
+<p><strong>Q6:函数调用和上下文切换的区别?</strong><br>见 6.12 表。核心:调用只存 callee-saved 不换栈、双方知情;切换存全部现场且换栈、被切者不知情——因为切换是强行打断。</p>
+
+<h2 id="s14">6.14 常见误区</h2>
+<ol>
+  <li><strong>"参数都是压栈传的"</strong>——ARM 优先用寄存器,超出才压栈;x86-64 也是寄存器优先。</li>
+  <li><strong>"返回地址一定在栈上"</strong>——ARM 先放 LR 寄存器,叶子函数可能根本不压栈。</li>
+  <li><strong>"inline 一定会内联"</strong>——只是建议,编译器可能忽略;-O0 常不内联。</li>
+  <li><strong>"递归比循环高级/高效"</strong>——递归有栈和调用开销,嵌入式常需改循环。</li>
+  <li><strong>"上下文切换就是个函数调用"</strong>——像但不同:切换存全部现场、换栈、被切者不知情。</li>
+  <li><strong>"返回结构体没成本"</strong>——大结构体返回涉及拷贝或隐藏指针,有开销。</li>
+</ol>
+
+<h2 id="s15">6.15 本章总结</h2>
+<ul>
+  <li>一次调用要解决四件事:传参、记返回地址、保现场、给返回值,靠<strong>调用约定(AAPCS/ABI)</strong>统一。</li>
+  <li>参数:寄存器优先(R0-R3),多余压栈;返回值放 R0。</li>
+  <li>返回地址:<code>BL</code> 存入 LR;<strong>非叶子函数必须把 LR 压栈</strong>(否则被下一次 BL 覆盖)。</li>
+  <li><strong>序言</strong>建栈帧(压 callee-saved+LR、腾局部空间),<strong>尾声</strong>拆栈帧并返回,成对平衡。</li>
+  <li>嵌套调用:返回地址像面包屑存在各层栈帧,逐层弹回,精确原路返回。</li>
+  <li>递归靠每层独立栈帧;代价是栈空间和调用开销。</li>
+  <li>backtrace 靠栈帧链;栈被踩坏则回溯失效。</li>
+  <li>优化:内联、尾调用、叶子函数优化减少开销。</li>
+  <li>升华:<strong>上下文切换 = 非自愿的、完整的、跨栈的函数调用式保存</strong>——存全部现场、换 SP、被切者不知情。第四五六章合流,操作系统心脏拆解完毕。</li>
+</ul>
+
+<h2 id="s16">6.16 思维导图</h2>
+<pre><code>函数调用
+├─ 一、四个问题:传参/记返回地址/保现场/给返回值
+├─ 二、调用约定AAPCS/ABI(互操作合同)
+├─ 三、传参:R0-R3优先,多余压栈;返回值R0
+├─ 四、返回地址:BL存LR
+│  ├─ 叶子函数:LR常驻不压栈,快
+│  └─ 非叶子:必须压栈保存LR
+├─ 五、栈帧序言/尾声
+│  ├─ 序言:PUSH callee-saved+LR, 腾局部空间
+│  └─ 尾声:回收空间, POP到PC返回(成对平衡)
+├─ 六、嵌套调用:返回地址逐层存栈帧,原路弹回
+├─ 七、返回值:R0;大结构体用隐藏指针(有开销)
+├─ 八、递归:每层独立栈帧;代价=栈空间+调用开销
+├─ 九、backtrace靠栈帧链;栈坏则失效
+├─ 十、优化:内联/尾调用/叶子函数
+└─ 十一、★调用 vs 上下文切换
+    ├─ 调用:存callee-saved,不换栈,双方知情
+    └─ 切换:存全部现场,换栈,被切者不知情(强行打断)</code></pre>
+
+<h2 id="s17">6.17 课后练习与面试题</h2>
+<h3>课后练习</h3>
+<ol>
+  <li>写一个有 3 个参数、调用另一个函数的 C 函数,<code>-S -O0</code> 生成汇编,标出:传参(R0-R3)、序言(PUSH)、调用(BL)、尾声(POP)、返回值(R0)。</li>
+  <li>写一个叶子函数和一个非叶子函数,对比汇编,验证"非叶子才把 LR 压栈"。</li>
+  <li>写一个 5 参数函数,看汇编里第 5 个参数怎么通过栈传递。</li>
+  <li>写递归 factorial,gdb 在最深处 <code>bt</code> 看到多层同名帧;再改成循环版对比。</li>
+  <li>同一函数分别 <code>-O0</code> 和 <code>-O2</code> 编译,观察内联/尾调用等优化如何改变(甚至消除)调用。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>ARM 下参数、返回值、返回地址各用什么传?超过 4 个参数怎么办?</li>
+  <li>为什么非叶子函数要把 LR 压栈?</li>
+  <li>函数序言和尾声各做什么?为什么必须平衡?</li>
+  <li>递归为什么可行?它的两个代价?</li>
+  <li>backtrace 是怎么实现的?为什么栈损坏后就不准了?</li>
+  <li>函数调用和上下文切换有什么异同?为什么切换要保存全部寄存器?</li>
+  <li>什么是 ABI/调用约定?它为什么让 C 能调用汇编或第三方库?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第六章 完 · 下一章《第七章 中断》</p>
+<div class="nav">
+  <a href="第05章-Stack.html">← 第五章</a>
+  <a href="index.html">目录</a>
+  <a href="第07章-中断.html">第七章 →</a>
+</div>
+
+</div>
+</body>
+</html>

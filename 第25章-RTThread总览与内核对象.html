@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第廿五章 RT-Thread 总览、内核对象与调度器</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第24章-FreeRTOS-Heap内存管理.html">← 第廿四章</a>
+  <a href="index.html">目录</a>
+  <a href="第26章-RTThread-IPC与设备框架.html">第廿六章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第四卷 · RT-Thread 源码</div>
+  <h1>第廿五章 RT-Thread 总览、内核对象与调度器</h1>
+  <div class="sub">一个用 C 写出"面向对象"的国产 RTOS</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么在 FreeRTOS 之后学 RT-Thread</a></li>
+    <li><a href="#s2">RT-Thread 的定位:RTOS 与 Linux 之间</a></li>
+    <li><a href="#s3">内核对象:用 C 实现面向对象</a></li>
+    <li><a href="#s4">对象基类 rt_object</a></li>
+    <li><a href="#s5">对象容器:统一管理所有内核对象</a></li>
+    <li><a href="#s6">线程 rt_thread vs FreeRTOS TCB</a></li>
+    <li><a href="#s7">调度器:位图 + 就绪表(和 FreeRTOS 一个套路)</a></li>
+    <li><a href="#s8">rt_schedule 与上下文切换</a></li>
+    <li><a href="#s9">线程状态机</a></li>
+    <li><a href="#s10">与 FreeRTOS 的对照总结</a></li>
+    <li><a href="#s11">面试常问</a></li>
+    <li><a href="#s12">常见误区</a></li>
+    <li><a href="#s13">本章总结</a></li>
+    <li><a href="#s14">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：你已经把 FreeRTOS 内核骨架看透了。RT-Thread 是国产开源 RTOS,内核骨架和 FreeRTOS 几乎一样(位图调度、就绪表、上下文切换),但它有一个 FreeRTOS 没有的<strong>更高级的设计:用 C 语言实现了一套"面向对象"的内核对象系统</strong>,让线程、信号量、设备等都继承自统一的基类。这一章带你看这个对象模型和它的调度器。<strong>因为骨架你已熟悉,重点放在"RT-Thread 有什么不同、为什么这么设计"。</strong></p></blockquote>
+
+<h2 id="s1">25.1 为什么在 FreeRTOS 之后学 RT-Thread</h2>
+<p>三个理由:</p>
+<ul>
+  <li><strong>它是国产主流 RTOS</strong>:大量国内产品用它,国内公司(包括做机器人、IoT 的)面试会问。你做过 RT-Thread(题目背景),正好深挖。</li>
+  <li><strong>它比 FreeRTOS 更"完整"</strong>:有设备驱动框架、文件系统、网络协议栈、FinSH 命令行、包管理器——更接近一个"小型操作系统",是通往 Linux 的过渡。</li>
+  <li><strong>它展示了"C 语言如何做面向对象设计"</strong>:这个技巧在 Linux 内核(第五卷)里无处不在(内核也是 C 写的"面向对象"),先在 RT-Thread 这个更清晰的地方学会它。</li>
+</ul>
+<blockquote><p>学习策略延续:<strong>FreeRTOS 让你看清"最精简的内核骨架",RT-Thread 让你看到"骨架上如何长出丰富组件、如何用 C 做优雅的抽象",Linux 则是这套思想的终极复杂版。</strong>三者递进。因为你已经懂了任务/调度/IPC 的原理,这一卷可以走得快些,聚焦 RT-Thread 的独特之处。</p></blockquote>
+
+<h2 id="s2">25.2 RT-Thread 的定位：RTOS 与 Linux 之间</h2>
+<p>RT-Thread 有两种形态,理解它的定位:</p>
+<table>
+<tr><th></th><th>RT-Thread Nano</th><th>RT-Thread 标准版</th></tr>
+<tr><td>规模</td><td>极小(几 KB),纯内核</td><td>较大,带组件</td></tr>
+<tr><td>类比</td><td>相当于 FreeRTOS</td><td>相当于"迷你 Linux"</td></tr>
+<tr><td>组件</td><td>只有调度/IPC/内存</td><td>+ 设备框架、文件系统、网络、FinSH、GUI...</td></tr>
+<tr><td>适用</td><td>资源紧张的 MCU</td><td>资源较宽裕、功能复杂的产品</td></tr>
+</table>
+<p>它的野心是<strong>"用 RTOS 的体量,提供接近 Linux 的开发体验"</strong>——有类似 Linux 的设备模型(<code>rt_device</code>)、类似 shell 的 FinSH 命令行、类似 POSIX 的 API。所以它常用在"比单片机复杂、又用不起 Linux(没 MMU 或资源不够)"的中间地带。<strong>这个定位决定了它比 FreeRTOS 多出的那些设计,核心是为了"可扩展、可管理大量组件"——而这正需要一套统一的对象抽象。</strong></p>
+
+<h2 id="s3">25.3 内核对象：用 C 实现面向对象</h2>
+<p>RT-Thread 最有特色的设计:<strong>把线程、信号量、互斥量、邮箱、消息队列、定时器、设备……全都抽象成"内核对象(kernel object)",让它们继承自一个统一的基类 <code>rt_object</code>。</strong>这是用 C 语言模拟"面向对象"的经典手法。</p>
+<p>为什么要这样?对比 FreeRTOS:FreeRTOS 里 TCB、Queue_t、Timer_t 是各自独立的结构,没有共同基类,管理它们的代码是分散的。而 RT-Thread 让它们<strong>共享一套"对象"的通用能力</strong>:每个对象都有名字、类型、能被统一地创建/删除/查找/遍历。这样:</p>
+<ul>
+  <li>可以用统一的方式管理所有对象(比如 FinSH 命令 <code>list_thread</code>、<code>list_sem</code> 遍历所有线程/信号量);</li>
+  <li>加新的对象类型时,复用基类的通用逻辑;</li>
+  <li>调试工具能统一地枚举、显示所有内核对象。</li>
+</ul>
+<blockquote><p>这就是<strong>"用 C 语言做面向对象"</strong>——C 没有 class/继承,但可以用"结构体嵌套 + 把基类放在派生类结构体的第一个成员"来模拟继承。<strong>这个技巧(基类做第一个成员)你在第16章 FreeRTOS 的 <code>pxTopOfStack</code> 放第一个成员时见过类似思想,在 Linux 内核里(<code>struct kobject</code>、<code>container_of</code> 宏)会大规模见到。RT-Thread 是学这个技巧的最佳中间站——比 FreeRTOS 更体系化,又比 Linux 更清晰。</strong></p></blockquote>
+
+<h2 id="s4">25.4 对象基类 rt_object</h2>
+<p>看基类定义(<code>rtdef.h</code>):</p>
+<pre><code>/* 所有内核对象的基类 */
+struct rt_object
+{
+    char       name[RT_NAME_MAX];  /* 对象名字(调试/查找用) */
+    rt_uint8_t type;               /* 对象类型(线程?信号量?设备?) */
+    rt_uint8_t flag;               /* 标志 */
+    rt_list_t  list;               /* 链表节点: 挂进对象容器 */
+};
+typedef struct rt_object *rt_object_t;
+
+/* 对象类型枚举 */
+enum rt_object_class_type
+{
+    RT_Object_Class_Thread = 0,   /* 线程 */
+    RT_Object_Class_Semaphore,    /* 信号量 */
+    RT_Object_Class_Mutex,        /* 互斥量 */
+    RT_Object_Class_Event,        /* 事件 */
+    RT_Object_Class_MailBox,      /* 邮箱 */
+    RT_Object_Class_MessageQueue, /* 消息队列 */
+    RT_Object_Class_Timer,        /* 定时器 */
+    RT_Object_Class_Device,       /* 设备 */
+    /* ... */
+};</code></pre>
+<p>然后<strong>每个具体对象,都把 <code>rt_object</code> 作为自己结构体的第一个成员</strong>——这就是 C 语言的"继承":</p>
+<pre><code>/* 线程 = 继承 rt_object */
+struct rt_thread
+{
+    struct rt_object parent;   /* ★第一个成员: 基类! 相当于"继承" */
+    /* ↑ 因为放第一个, rt_thread指针可以直接当rt_object指针用(地址相同) */
+
+    rt_list_t   tlist;         /* 线程链表节点 */
+    void       *sp;            /* 栈指针(相当于FreeRTOS的pxTopOfStack) */
+    void       *entry;         /* 线程入口函数 */
+    rt_uint8_t  current_priority; /* 当前优先级 */
+    rt_uint8_t  stat;          /* 线程状态 */
+    /* ... */
+};
+
+/* 信号量 = 继承 rt_object(通过rt_ipc_object中间层) */
+struct rt_semaphore
+{
+    struct rt_ipc_object parent;  /* parent里又含rt_object */
+    rt_uint16_t value;            /* 信号量值 */
+};</code></pre>
+<p>妙处:因为 <code>parent</code>(基类)是第一个成员,<strong>一个 <code>rt_thread*</code> 指针,强制转换成 <code>rt_object*</code> 就能当基类用(它们地址相同,偏移 0)</strong>——和第16章 <code>pxTopOfStack</code> 放第一个的道理一样。反过来,拿到一个 <code>rt_object*</code>,如果知道它其实是个线程,就能转回 <code>rt_thread*</code>。这就是 C 语言"向上/向下转型"的实现。</p>
+
+<h2 id="s5">25.5 对象容器：统一管理所有内核对象</h2>
+<p>有了统一基类,RT-Thread 用一个<strong>对象容器(object container)</strong>管理所有对象——每种类型一个链表:</p>
+<pre><code>对象容器(rt_object_container): 每种对象类型一个信息结构 + 链表
+
+  ┌──────────────────────────────────────┐
+  │ [Thread]    → 线程1 → 线程2 → 线程3     │  所有线程挂这
+  │ [Semaphore] → 信号量A → 信号量B         │  所有信号量挂这
+  │ [Mutex]     → 互斥量X                   │
+  │ [Timer]     → 定时器T                   │
+  │ [Device]    → uart0 → spi1 → i2c2       │  所有设备挂这
+  └──────────────────────────────────────┘
+
+  创建对象 rt_object_init/allocate: 挂进对应类型的链表
+  删除对象: 从链表摘除
+  查找/遍历: 按类型遍历链表(rt_object_find 按名字查找)</code></pre>
+<p>这带来 FreeRTOS 没有的能力:</p>
+<ul>
+  <li><strong>按名字查找对象</strong>:<code>rt_object_find("uart0", RT_Object_Class_Device)</code>——像 Linux 里按路径找设备。</li>
+  <li><strong>统一枚举</strong>:FinSH 里敲 <code>list_thread</code> 就遍历线程链表打印所有线程状态,<code>list_device</code> 列所有设备。调试极方便。</li>
+  <li><strong>生命周期统一</strong>:静态对象(<code>rt_object_init</code>)和动态对象(<code>rt_object_allocate</code>,从堆分配)用统一接口管理。</li>
+</ul>
+<blockquote><p>这套"基类 + 对象容器"的设计,是 RT-Thread 相比 FreeRTOS 最大的架构差异。<strong>它的价值在"可管理性和可扩展性"</strong>:当系统有几十个线程、信号量、设备时,统一的对象模型让管理、调试、扩展都变简单。代价是稍多的内存(每个对象带个 rt_object 头)和一点性能。<strong>这正是"RTOS 向操作系统演进"的体现——功能丰富了,就需要更强的抽象来组织。Linux 内核把这套思想发挥到极致(kobject、sysfs、设备模型),RT-Thread 是它的清晰预习版。</strong></p></blockquote>
+
+<h2 id="s6">25.6 线程 rt_thread vs FreeRTOS TCB</h2>
+<p>RT-Thread 的"线程"就是 FreeRTOS 的"任务"(叫法不同,概念相同)。对照它们的控制块:</p>
+<table>
+<tr><th>概念</th><th>FreeRTOS</th><th>RT-Thread</th></tr>
+<tr><td>控制块</td><td>TCB_t</td><td>struct rt_thread</td></tr>
+<tr><td>栈指针</td><td>pxTopOfStack(第一个成员)</td><td>sp</td></tr>
+<tr><td>优先级</td><td>uxPriority(数值大=高)</td><td>current_priority(数值<strong>小=高</strong>,和 FreeRTOS 相反!)</td></tr>
+<tr><td>是否有对象基类</td><td>无</td><td>有(parent=rt_object)</td></tr>
+<tr><td>创建</td><td>xTaskCreate</td><td>rt_thread_create(动态)/rt_thread_init(静态)</td></tr>
+<tr><td>入口函数返回</td><td>不允许(死循环)</td><td>允许(线程结束会被自动清理)</td></tr>
+</table>
+<p>两个关键差异要记住(面试易混):</p>
+<ul>
+  <li><strong>优先级方向相反</strong>:FreeRTOS 数值越大优先级越高;<strong>RT-Thread 数值越小优先级越高</strong>(0 最高,和 Linux、和 Cortex-M 中断优先级一致)。搞反了调度全乱。</li>
+  <li><strong>线程可以正常结束</strong>:FreeRTOS 任务函数必须死循环(第16章);RT-Thread 线程入口函数<strong>可以 return</strong>,返回后线程进入 close 状态被系统回收(有个"空闲线程钩子"负责清理)。设计更接近普通函数/Linux 线程。</li>
+</ul>
+
+<h2 id="s7">25.7 调度器：位图 + 就绪表（和 FreeRTOS 一个套路）</h2>
+<p>RT-Thread 的调度算法和 FreeRTOS 几乎一模一样——<strong>你已经会了</strong>。核心是优先级位图 + 就绪线程表:</p>
+<pre><code>/* 就绪线程优先级表: 每个优先级一个链表(和FreeRTOS pxReadyTasksLists一样) */
+rt_list_t rt_thread_priority_table[RT_THREAD_PRIORITY_MAX];
+
+/* 优先级位图: 哪些优先级有就绪线程(和FreeRTOS uxTopReadyPriority一样) */
+rt_uint32_t rt_thread_ready_priority_group;
+/* 若优先级>32, 用rt_uint8_t数组扩展 */
+
+选最高优先级线程:
+  用 __rt_ffs(rt_thread_ready_priority_group)  找最低的置1位
+  (__rt_ffs = find first set, 底层用CLZ类指令, O(1))
+  → 得到最高优先级(数值最小), 从对应链表取线程</code></pre>
+<p>看,和第17章 FreeRTOS 的 <code>taskSELECT_HIGHEST_PRIORITY_TASK</code> 完全是一个套路:<strong>位图记录哪些优先级有就绪线程,用硬件找位指令 O(1) 找出最高优先级,从对应链表取线程。</strong>唯一区别:FreeRTOS 用 CLZ 找最高位(因为数值大=高),RT-Thread 用 FFS(find first set)找最低位(因为数值小=高)——方向不同,原理相同。<strong>你在 FreeRTOS 学的位图调度,直接迁移过来。</strong></p>
+<blockquote><p>这印证了第三卷收束说的:<strong>不同 RTOS 的内核骨架是同一套。</strong>位图 + 就绪表 + O(1) 找位,是所有优先级抢占式 RTOS 的通用实现(甚至 Linux 老的 O(1) 调度器也是)。你把它在 FreeRTOS 学透了,看 RT-Thread、看任何 RTOS 的调度器都是"哦,又是这套"。<strong>这就是深入学一个的价值——获得的是可迁移的洞察,不是某个 API 的记忆。</strong></p></blockquote>
+
+<h2 id="s8">25.8 rt_schedule 与上下文切换</h2>
+<p>RT-Thread 的调度函数 <code>rt_schedule()</code> 对应 FreeRTOS 的 <code>vTaskSwitchContext</code> + 触发切换。逻辑同样熟悉:</p>
+<pre><code>void rt_schedule(void)
+{
+    /* 关中断 */
+    rt_base_t level = rt_hw_interrupt_disable();
+
+    /* ① 找到最高优先级的就绪线程 */
+    to_thread = 用位图选出最高优先级就绪线程;
+
+    /* ② 如果它不是当前线程, 才需要切换 */
+    if (to_thread != rt_current_thread)
+    {
+        from_thread = rt_current_thread;
+        rt_current_thread = to_thread;
+
+        /* ③ 触发上下文切换(架构相关的汇编, 和FreeRTOS PendSV一样) */
+        rt_hw_context_switch((rt_ubase_t)&from_thread->sp,
+                             (rt_ubase_t)&to_thread->sp);
+    }
+    rt_hw_interrupt_enable(level);
+}</code></pre>
+<p>底层 <code>rt_hw_context_switch</code> 在 Cortex-M 上的实现,<strong>和 FreeRTOS 的 PendSV 汇编几乎一样</strong>:也用 PendSV 做上下文切换(第18章讲的所有道理——为什么用 PendSV、双栈 MSP/PSP、硬件压 8 个+软件压 R4-R11——原样适用)。RT-Thread 的 <code>libcpu/arm/cortex-m4/context_rvds.S</code> 里那段 PendSV 汇编,你拿第18章的知识去读,一眼就懂。<strong>移植层的思想、上下文切换的机制,两个 RTOS 完全一致。</strong></p>
+
+<h2 id="s9">25.9 线程状态机</h2>
+<p>RT-Thread 线程状态和 FreeRTOS 对应(名字略不同):</p>
+<table>
+<tr><th>RT-Thread 状态</th><th>FreeRTOS 对应</th><th>含义</th></tr>
+<tr><td>RT_THREAD_INIT</td><td>(创建中)</td><td>刚创建,还没启动</td></tr>
+<tr><td>RT_THREAD_READY</td><td>Ready</td><td>就绪,等 CPU</td></tr>
+<tr><td>RT_THREAD_RUNNING</td><td>Running</td><td>正在运行</td></tr>
+<tr><td>RT_THREAD_SUSPEND</td><td>Blocked/Suspended</td><td>挂起(等 IPC/延时/被挂起)</td></tr>
+<tr><td>RT_THREAD_CLOSE</td><td>(Deleted)</td><td>结束,待回收</td></tr>
+</table>
+<p>状态转移逻辑和 FreeRTOS 一致:就绪的在就绪表,挂起的从就绪表摘除挂到 IPC 对象的等待队列/定时器链表。<strong>你在第16章学的"状态本质=线程挂在哪个链表",在 RT-Thread 一样成立。</strong>RT-Thread 把"阻塞"和"挂起"合并成一个 SUSPEND 状态(用不同的挂起原因区分),比 FreeRTOS 略简化。</p>
+
+<h2 id="s10">25.10 与 FreeRTOS 的对照总结</h2>
+<p>把两个 RTOS 的核心对照,这张表帮你快速迁移知识:</p>
+<table>
+<tr><th>维度</th><th>FreeRTOS</th><th>RT-Thread</th></tr>
+<tr><td>任务/线程</td><td>Task / TCB_t</td><td>Thread / rt_thread</td></tr>
+<tr><td>优先级方向</td><td>数值大=高</td><td>数值小=高</td></tr>
+<tr><td>对象模型</td><td>各结构独立</td><td>★统一 rt_object 基类 + 容器</td></tr>
+<tr><td>调度算法</td><td>位图+CLZ</td><td>位图+FFS(同套路)</td></tr>
+<tr><td>上下文切换</td><td>PendSV 汇编</td><td>PendSV 汇编(同)</td></tr>
+<tr><td>IPC 基础</td><td>一切基于队列</td><td>各 IPC 独立(基于 rt_ipc_object)</td></tr>
+<tr><td>组件丰富度</td><td>内核为主</td><td>★丰富(设备/文件系统/网络/FinSH)</td></tr>
+<tr><td>线程可 return?</td><td>否</td><td>是</td></tr>
+</table>
+<blockquote><p>核心结论:<strong>内核骨架(线程、调度、切换)两者本质相同,你的 FreeRTOS 知识直接迁移;RT-Thread 的独特价值在"统一对象模型"和"丰富组件"——它是从 RTOS 走向操作系统的中间形态。</strong>下一章看它的 IPC 和设备框架(设备框架是它最像 Linux 的部分),第27章看内存、FinSH、BSP。<strong>因为骨架你已懂,这一卷我们主要看"多出来的、更高级的东西"。</strong></p></blockquote>
+
+<h2 id="s11">25.11 面试常问问题</h2>
+<p><strong>Q1:RT-Thread 和 FreeRTOS 的主要区别?</strong><br>内核骨架(线程/调度/切换)本质相同;RT-Thread 有统一的内核对象模型(rt_object 基类+容器)、更丰富的组件(设备框架/文件系统/网络/FinSH),定位更接近小型操作系统。优先级方向相反(RT-Thread 小=高),线程可 return。</p>
+<p><strong>Q2:RT-Thread 的内核对象是什么?为什么这么设计?</strong><br>把线程/信号量/设备等抽象成继承 rt_object 基类的对象,用对象容器统一管理。好处:统一创建/删除/查找/枚举(如 list_thread),便于管理大量组件、可扩展。用 C 模拟面向对象。</p>
+<p><strong>Q3:C 语言怎么实现"继承"?</strong><br>把基类结构体作为派生类的第一个成员,这样派生类指针可直接当基类指针用(地址相同/偏移0)。RT-Thread 的 rt_thread.parent=rt_object 就是这样;Linux 内核 kobject/container_of 同理。</p>
+<p><strong>Q4:RT-Thread 的调度算法?和 FreeRTOS 一样吗?</strong><br>基本一样:优先级位图 + 就绪线程表,用找位指令(FFS)O(1) 选最高优先级。区别只是 FreeRTOS 数值大=高用 CLZ、RT-Thread 数值小=高用 FFS。</p>
+<p><strong>Q5:RT-Thread 的上下文切换和 FreeRTOS 有区别吗?</strong><br>没本质区别,Cortex-M 上都用 PendSV 做切换,第18章讲的道理(为何用 PendSV、双栈、寄存器分工)完全适用。</p>
+<p><strong>Q6:RT-Thread Nano 和标准版的区别?</strong><br>Nano 是纯内核(≈FreeRTOS),标准版带设备框架/文件系统/网络/FinSH 等组件(≈迷你 Linux)。</p>
+
+<h2 id="s12">25.12 常见误区</h2>
+<ol>
+  <li><strong>"RT-Thread 优先级数值越大越高"</strong>——相反,数值越小越高(和 FreeRTOS 相反)。</li>
+  <li><strong>"RT-Thread 线程也不能 return"</strong>——可以 return,返回后被系统回收。</li>
+  <li><strong>"内核对象模型只是花架子"</strong>——它带来统一管理/查找/枚举能力,是可扩展性的基础。</li>
+  <li><strong>"RT-Thread 调度和 FreeRTOS 完全不同"</strong>——骨架几乎一样,都是位图+就绪表+O(1)选择。</li>
+  <li><strong>"RT-Thread 就是国产 FreeRTOS"</strong>——内核像,但组件丰富度和对象模型是它的独特价值。</li>
+</ol>
+
+<h2 id="s13">25.13 本章总结</h2>
+<ul>
+  <li>RT-Thread 定位在 RTOS 与 Linux 之间:Nano≈FreeRTOS,标准版≈迷你 Linux(带丰富组件)。</li>
+  <li>核心特色:<strong>内核对象模型</strong>——线程/信号量/设备等都继承统一基类 <code>rt_object</code>,用<strong>对象容器</strong>统一管理。</li>
+  <li>C 实现"继承":<strong>基类作派生类第一个成员</strong>,指针可互转(同 Linux 内核套路)。</li>
+  <li>对象容器带来:按名查找、统一枚举(list_thread)、生命周期统一——可管理性/可扩展性。</li>
+  <li>线程 rt_thread ≈ FreeRTOS TCB;但<strong>优先级数值小=高</strong>(相反)、<strong>线程可 return</strong>。</li>
+  <li>调度器:<strong>位图 + 就绪表 + FFS 找位(O(1))</strong>,和 FreeRTOS 同套路。</li>
+  <li>上下文切换:Cortex-M 上同样用 <strong>PendSV</strong>,第18章知识完全适用。</li>
+  <li>内核骨架两者本质相同,FreeRTOS 知识可迁移;RT-Thread 独特价值在对象模型和组件。</li>
+</ul>
+
+<h2 id="s14">25.14 思维导图 / 课后题</h2>
+<pre><code>RT-Thread 总览/内核对象/调度器
+├─ 一、为何学:国产主流/更完整/学C面向对象
+├─ 二、定位:Nano(≈FreeRTOS) / 标准版(≈迷你Linux)
+├─ 三、★内核对象:线程/信号量/设备继承rt_object
+├─ 四、C实现继承:基类作第一个成员(指针可互转)
+├─ 五、对象容器:每类型一链表, 统一查找/枚举(list_thread)
+├─ 六、rt_thread vs TCB
+│  ├─ 优先级数值小=高(与FreeRTOS相反!)
+│  └─ 线程可return(返回后回收)
+├─ 七、调度器:位图+就绪表+FFS(O(1), 同FreeRTOS套路)
+├─ 八、rt_schedule + PendSV切换(第18章知识适用)
+├─ 九、线程状态机(SUSPEND合并阻塞/挂起)
+└─ 十、对照总结:骨架同, 对象模型+组件是独特价值</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>下载 RT-Thread 源码,找到 <code>struct rt_object</code>、<code>struct rt_thread</code>,确认 parent 是第一个成员;找到对象容器 <code>rt_object_container</code>。</li>
+  <li>在 <code>src/scheduler_up.c</code> 找 <code>rt_schedule</code> 和位图选择逻辑(<code>rt_thread_ready_priority_group</code> + <code>__rt_ffs</code>),对照第17章 FreeRTOS。</li>
+  <li>在 <code>libcpu/arm/cortex-m4/context_rvds.S</code> 找 PendSV_Handler,和第18章 FreeRTOS 的对照,找出相同和不同。</li>
+  <li>在 RT-Thread 上创建几个线程和信号量,用 FinSH 敲 <code>list_thread</code>、<code>list_sem</code>,观察对象容器的统一枚举能力。</li>
+  <li>写一个会 return 的 RT-Thread 线程,观察它返回后被回收(对比 FreeRTOS 不允许 return)。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>RT-Thread 和 FreeRTOS 的主要异同?</li>
+  <li>什么是内核对象?对象容器有什么用?</li>
+  <li>C 语言如何实现继承?举 rt_thread 的例子。</li>
+  <li>RT-Thread 调度算法?和 FreeRTOS 的位图调度比较。</li>
+  <li>两者优先级方向有何不同?线程能否 return?</li>
+  <li>RT-Thread 的上下文切换用什么机制?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第廿五章 完 · 下一章《第廿六章 RT-Thread IPC 与设备驱动框架》</p>
+<div class="nav">
+  <a href="第24章-FreeRTOS-Heap内存管理.html">← 第廿四章</a>
+  <a href="index.html">目录</a>
+  <a href="第26章-RTThread-IPC与设备框架.html">第廿六章 →</a>
+</div>
+
+</div>
+</body>
+</html>

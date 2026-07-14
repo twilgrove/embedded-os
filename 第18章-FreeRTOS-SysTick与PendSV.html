@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第十八章 SysTick 与 PendSV 上下文切换</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.6;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  .asm-comment{color:#7ee787;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第17章-FreeRTOS-调度器.html">← 第十七章</a>
+  <a href="index.html">目录</a>
+  <a href="第19章-FreeRTOS-Queue队列.html">第十九章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第三卷 · FreeRTOS 源码</div>
+  <h1>第十八章 SysTick 与 PendSV 上下文切换</h1>
+  <div class="sub">整本书的高潮：逐行读懂那段真正"换任务"的汇编</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">这一章的分量</a></li>
+    <li><a href="#s2">SysTick：系统的心跳</a></li>
+    <li><a href="#s3">SysTick_Handler 源码</a></li>
+    <li><a href="#s4">为什么切换要用 PendSV 而不直接在 SysTick 里做</a></li>
+    <li><a href="#s5">PendSV：最低优先级异常的妙用</a></li>
+    <li><a href="#s6">双栈指针 MSP/PSP 再回顾</a></li>
+    <li><a href="#s7">一次切换的完整寄存器流转图</a></li>
+    <li><a href="#s8">PendSV_Handler 汇编逐行剖析</a></li>
+    <li><a href="#s9">硬件压栈 + 软件压栈的分工</a></li>
+    <li><a href="#s10">带 FPU 的情况：惰性压栈</a></li>
+    <li><a href="#s11">第一次启动:prvStartFirstTask</a></li>
+    <li><a href="#s12">SVC 的角色</a></li>
+    <li><a href="#s13">全流程贯通：从 tick 到新任务</a></li>
+    <li><a href="#s14">回扣第一卷:三支柱闭环</a></li>
+    <li><a href="#s15">面试常问</a></li>
+    <li><a href="#s16">常见误区</a></li>
+    <li><a href="#s17">本章总结</a></li>
+    <li><a href="#s18">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：这是第一卷到第三卷所有铺垫的收敛点。第一卷讲"上下文切换=保存恢复寄存器",第16章看了栈怎么伪造,第17章看了怎么"决定切给谁"。这一章看<strong>怎么真正切过去</strong>——那段几十行的 PendSV 汇编。它是整个 FreeRTOS 的心脏,也是嵌入式面试的终极考点。<strong>读懂它,你就真正理解了"多任务"是怎么在硅片上实现的。</strong>请务必配合第一卷 1.11、第四(寄存器)、五(栈)、七(中断)章一起看。</p></blockquote>
+
+<h2 id="s1">18.1 这一章的分量</h2>
+<p>前面十七章,所有关于"上下文切换"的话——保存现场、恢复现场、换栈、伪造初始栈——都指向<strong>这一段汇编代码</strong>。它是所有抽象的终点、所有原理的落地。</p>
+<p>如果你能逐行讲清这段汇编,你就掌握了:寄存器(第4章)、栈(第5章)、函数调用约定(第6章)、中断压栈(第7章)、Cortex-M 双栈(第4/11章)、内存屏障(第14章)、TCB 与伪造栈(第16章)、调度决策(第17章)——<strong>这一段代码是整个知识体系的收束点。</strong>所以慢慢读,值得。</p>
+
+<h2 id="s2">18.2 SysTick：系统的心跳</h2>
+<p>SysTick 是 Cortex-M 内核自带的一个 24 位递减定时器(第4/7章提过)。它被配置成周期性中断,每次中断就是系统的"一个 tick"——RTOS 的时间基准。配置在 <code>xPortStartScheduler</code> 里:</p>
+<pre><code>/* port.c: 配置 SysTick 每 (1/configTICK_RATE_HZ) 秒中断一次 */
+void vPortSetupTimerInterrupt( void )
+{
+    /* 重装载值 = CPU频率 / tick频率 - 1 */
+    portNVIC_SYSTICK_LOAD_REG = ( configSYSTICK_CLOCK_HZ / configTICK_RATE_HZ ) - 1UL;
+    /* 使能SysTick, 使能其中断, 选时钟源 */
+    portNVIC_SYSTICK_CTRL_REG = ( portNVIC_SYSTICK_CLK_BIT
+                                | portNVIC_SYSTICK_INT_BIT
+                                | portNVIC_SYSTICK_ENABLE_BIT );
+}</code></pre>
+<p>比如 CPU 168MHz、<code>configTICK_RATE_HZ=1000</code>,则重装载值 = 168000-1,SysTick 每 1ms 中断一次,系统 tick = 1ms。<strong>这个 1ms 的"心跳"驱动整个调度:每一跳都可能触发抢占、唤醒延时任务、轮转时间片(第17章 xTaskIncrementTick)。</strong>这就是第一卷说的"时钟中断=抢占引擎"的物理来源。</p>
+
+<h2 id="s3">18.3 SysTick_Handler 源码</h2>
+<p>每次 SysTick 中断,进入这个处理函数。它出乎意料地短:</p>
+<pre><code>void xPortSysTickHandler( void )
+{
+    /* 进临界区(关中断到阈值), 保护tick处理 */
+    portDISABLE_INTERRUPTS();
+    {
+        /* ★ 调用第17章的 xTaskIncrementTick: 计数+1, 唤醒到期任务, 判断是否要切换 */
+        if( xTaskIncrementTick() != pdFALSE )
+        {
+            /* 需要切换! 但不在这里切, 只是"挂起PendSV" */
+            portNVIC_INT_CTRL_REG = portNVIC_PENDSVSET_BIT;
+        }
+    }
+    portENABLE_INTERRUPTS();
+}</code></pre>
+<p>注意关键:<strong>SysTick 中断本身不做上下文切换!它只做两件事——调 <code>xTaskIncrementTick</code> 更新时间/唤醒任务,如果需要切换,就"挂起 PendSV"(往 ICSR 的 PENDSVSET 位写 1),然后就返回了。</strong>真正的切换留给 PendSV。为什么这样绕一下?这是下一节的核心问题,也是 Cortex-M 上 RTOS 设计的精髓。</p>
+
+<h2 id="s4">18.4 为什么切换要用 PendSV 而不直接在 SysTick 里做</h2>
+<p>这是本章最重要的"为什么",面试高频且区分度极高。假设我们头铁,直接在 SysTick 中断里做上下文切换,会出什么问题?</p>
+<h4>问题:中断嵌套时切换会"卡住"更高优先级的中断</h4>
+<p>设想场景:一个高优先级中断(比如串口)正在执行,执行到一半被 SysTick 打断(如果 SysTick 优先级更高)。如果 SysTick 里直接切换任务、切走了,那么<strong>那个被打断的串口中断就悬在半空,迟迟回不去</strong>——因为 CPU 跑到别的任务去了。中断的一条铁律是"先进的中断要后出"(嵌套要按栈的顺序返回),中途切换任务会破坏这个顺序,导致中断无法正确返回,系统崩溃。</p>
+<pre><code>错误做法(直接在SysTick里切换):
+  串口中断执行中...
+    → SysTick打断它
+      → SysTick里直接切换到TaskB, 跑走了
+        → 串口中断悬空! 永远回不去 → 崩溃
+
+问题本质: 中断处理程序还没执行完(还在异常栈帧里),
+         就切换了上下文, 破坏了中断的嵌套返回顺序。</code></pre>
+<h4>解法:PendSV——推迟到"所有中断都处理完"再切</h4>
+<p>正确做法:<strong>把上下文切换放在一个优先级最低的异常 PendSV 里。</strong>SysTick(或任何中断)只是"挂起 PendSV"(标记一下),然后正常返回。由于 PendSV 优先级最低,它会<strong>一直等到所有其他中断(包括嵌套的)都处理完、系统真正要返回线程模式时,才执行。</strong>这时切换任务就安全了——因为已经没有别的中断悬在栈上。</p>
+<pre><code>正确做法(PendSV延迟切换):
+  串口中断执行中...
+    → SysTick打断它 → xTaskIncrementTick → 需要切换 → 挂起PendSV → SysTick返回
+      → 串口中断继续执行完 → 串口中断返回
+        → 现在没有别的中断了, 系统要回线程 → PendSV终于执行 → 安全切换到TaskB ✓</code></pre>
+<blockquote><p><strong>PendSV(Pendable Service Call,可挂起的服务调用)是 Cortex-M 专门为 RTOS 上下文切换设计的异常。</strong>它的精髓是:<strong>可以被"挂起"(标记待处理),并在优先级最低、所有中断都清空后才执行。</strong>这保证了上下文切换永远发生在"中断的最外层",不会破坏中断嵌套。这是 ARM 为 RTOS 量身定做的硬件特性——第17章说的"三条触发路径殊途同归到 PendSV",根本原因就在这里:<strong>PendSV 是唯一安全做切换的地方。</strong>能把这个"为什么用 PendSV"讲清楚,面试直接加分。</p></blockquote>
+
+<h2 id="s5">18.5 PendSV：最低优先级异常的妙用</h2>
+<p>配置上,FreeRTOS 把 PendSV 设为<strong>最低优先级</strong>:</p>
+<pre><code>/* xPortStartScheduler 里: 把 PendSV 和 SysTick 设为最低优先级 */
+portNVIC_SHPR3_REG |= portNVIC_PENDSV_PRI;   /* PendSV = 最低优先级 */
+portNVIC_SHPR3_REG |= portNVIC_SYSTICK_PRI;  /* SysTick 也设较低 */</code></pre>
+<p>为什么最低?正因为 18.4 说的——它要"垫底",等所有正经中断都处理完才轮到它。任何中断都能抢占 PendSV,所以即使正在切换任务的中途来了个紧急中断,也能立刻响应,切换完再回来继续。<strong>这保证了上下文切换本身不会阻塞中断响应,实时性不受损。</strong></p>
+<p>触发方式(第17章见过):往中断控制状态寄存器 <code>ICSR</code> 的 <code>PENDSVSET</code> 位写 1,PendSV 就进入"挂起"状态,等时机执行。三条调度路径都用这一招。</p>
+
+<h2 id="s6">18.6 双栈指针 MSP/PSP 再回顾</h2>
+<p>理解切换汇编前,必须牢记 Cortex-M 的双栈(第4/5章):</p>
+<table>
+<tr><th>栈指针</th><th>谁用</th><th>切换中的角色</th></tr>
+<tr><td><strong>PSP</strong>(进程栈指针)</td><td>任务(线程模式)</td><td>每个任务有自己的栈,任务运行时 SP=PSP;切换就是换 PSP</td></tr>
+<tr><td><strong>MSP</strong>(主栈指针)</td><td>中断/异常处理(含 PendSV)</td><td>PendSV 汇编自己运行在 MSP 上,不污染任务栈</td></tr>
+</table>
+<p>关键分工:<strong>任务用 PSP,中断/PendSV 用 MSP。</strong>所以 PendSV 里保存/恢复任务现场,操作的是 <strong>PSP 指向的任务栈</strong>;而 PendSV 自己临时用的东西压在 MSP 上。这个分离让"切换代码本身的栈使用"和"被切任务的栈"互不干扰。第7章讲的"中断用独立栈"、第4章的 MSP/PSP,在这里是理解汇编的前提。</p>
+
+<h2 id="s7">18.7 一次切换的完整寄存器流转图</h2>
+<p>在看汇编前,先建立完整的图景。假设从任务 A 切到任务 B:</p>
+<pre><code>切换前: 任务A在跑(SP=PSP指向A的栈), 发生了要切换的事件, PendSV被触发
+
+┌─ 硬件自动做(进入PendSV异常时) ────────────────────┐
+│  CPU 自动把 A 的 xPSR,PC,LR,R12,R3,R2,R1,R0        │
+│  压入 A 的栈(PSP), 然后进入PendSV, SP切成MSP         │  ← 第7章硬件压栈
+└──────────────────────────────────────────────────┘
+                    │
+┌─ PendSV汇编做(软件) ──────────────────────────────┐
+│  ① 取A的PSP                                        │
+│  ② 手动把 A 的 R4-R11 也压入 A 的栈(PSP)            │  ← 补齐现场
+│  ③ 把A更新后的PSP存进 A的TCB->pxTopOfStack          │  ← 记住A栈顶
+│  ④ 调 vTaskSwitchContext() → pxCurrentTCB从A变B     │  ← 第17章决策
+│  ⑤ 从 B的TCB->pxTopOfStack 取出B的栈顶              │
+│  ⑥ 从B的栈手动弹出 R4-R11 到CPU                     │  ← 恢复B的一半现场
+│  ⑦ 把B的栈顶设为PSP                                 │
+│  ⑧ bx lr 返回                                       │
+└──────────────────────────────────────────────────┘
+                    │
+┌─ 硬件自动做(退出PendSV异常时) ────────────────────┐
+│  CPU 自动从 B 的栈(PSP)弹出 xPSR,PC,LR,R12,R3-R0    │  ← 第7章硬件出栈
+│  PC被弹成B上次的位置 → B从被切走处继续运行!          │
+└──────────────────────────────────────────────────┘</code></pre>
+<p><strong>核心分工:硬件负责 R0-R3,R12,LR,PC,xPSR(8个),软件(PendSV)负责 R4-R11(8个),合起来正好是完整的 16 个核心寄存器现场。</strong>这个"硬件一半、软件一半"的分工,正是第一卷 1.11 那张图、第4章 4.8/4.10 讲的 caller-saved/callee-saved 划分的最终体现——<strong>硬件自动压的正好是 caller-saved 那批,软件压的正好是 callee-saved 那批。</strong></p>
+
+<h2 id="s8">18.8 PendSV_Handler 汇编逐行剖析</h2>
+<p>现在,主角登场。这是 Cortex-M3/M4(无 FPU)的 <code>xPortPendSVHandler</code> 汇编,来自 <code>port.c</code>。我逐行注释,请对照上面的流转图:</p>
+<pre><code>xPortPendSVHandler:
+    <span class="asm-comment">/* ── 保存当前任务(A)的现场 ── */</span>
+    mrs   r0, psp              <span class="asm-comment">; ① r0 = PSP(任务A的栈顶, 此时硬件已压好8个寄存器)</span>
+    isb                       <span class="asm-comment">; 指令同步屏障, 确保psp读取完成</span>
+
+    ldr   r3, =pxCurrentTCB    <span class="asm-comment">; ② r3 = &pxCurrentTCB(全局指针的地址)</span>
+    ldr   r2, [r3]            <span class="asm-comment">;    r2 = pxCurrentTCB(当前是A的TCB)</span>
+
+    stmdb r0!, {r4-r11}       <span class="asm-comment">; ③★ 把R4-R11压入A的栈(stmdb=先减地址再存, 向下压)</span>
+                              <span class="asm-comment">;    r0!表示压完更新r0为新栈顶</span>
+    str   r0, [r2]           <span class="asm-comment">; ④★ 把新栈顶r0存进 r2指的地方=TCB->pxTopOfStack</span>
+                              <span class="asm-comment">;    (pxTopOfStack是TCB第一个成员, 偏移0! 第16章的设计)</span>
+
+    <span class="asm-comment">/* ── 调C函数决定切给谁 ── */</span>
+    stmdb sp!, {r3, r14}      <span class="asm-comment">; ⑤ 把r3和lr(r14)压入MSP(保护, 因为下面要调C函数会破坏它们)</span>
+    mov   r0, #configMAX_SYSCALL_INTERRUPT_PRIORITY
+    msr   basepri, r0        <span class="asm-comment">; ⑥ 关中断(只关低于阈值的, 第17章的BASEPRI)</span>
+    dsb                       <span class="asm-comment">;    数据同步屏障(第14章)</span>
+    isb
+    bl    vTaskSwitchContext  <span class="asm-comment">; ⑦★ 调C函数! 内部选最高优先级任务, 更新pxCurrentTCB(A→B)</span>
+    mov   r0, #0
+    msr   basepri, r0        <span class="asm-comment">; ⑧ 开中断</span>
+    ldmia sp!, {r3, r14}      <span class="asm-comment">; ⑨ 从MSP恢复r3和lr</span>
+
+    <span class="asm-comment">/* ── 恢复新任务(B)的现场 ── */</span>
+    ldr   r1, [r3]           <span class="asm-comment">; ⑩ r1 = 新的pxCurrentTCB(现在是B的TCB)</span>
+    ldr   r0, [r1]           <span class="asm-comment">;    r0 = B的TCB->pxTopOfStack(B的栈顶)</span>
+    ldmia r0!, {r4-r11}       <span class="asm-comment">; ⑪★ 从B的栈弹出R4-R11到CPU(ldmia=加载后增地址, 向上弹)</span>
+    msr   psp, r0            <span class="asm-comment">; ⑫★ 把B的新栈顶设为PSP</span>
+    isb
+    bx    r14                 <span class="asm-comment">; ⑬ 返回! r14是特殊的EXC_RETURN值</span>
+                              <span class="asm-comment">;    硬件据此从PSP(B的栈)自动弹出剩下8个寄存器, B恢复运行</span></code></pre>
+<h4>关键指令解释</h4>
+<ul>
+  <li><strong><code>mrs r0, psp</code> / <code>msr psp, r0</code></strong>:读/写 PSP 特殊寄存器(<code>mrs/msr</code> 是访问特殊寄存器的指令,普通 <code>ldr/str</code> 不行)。</li>
+  <li><strong><code>stmdb r0!, {r4-r11}</code></strong>:Store Multiple Decrement Before——把 R4~R11 依次压栈,<code>db</code>=每存一个前先减地址(因为栈向下增长,第5章),<code>!</code>=更新 r0 为最终栈顶。<strong>一条指令压 8 个寄存器!</strong></li>
+  <li><strong><code>ldmia r0!, {r4-r11}</code></strong>:Load Multiple Increment After——对称地弹出,<code>ia</code>=每加载一个后增地址。</li>
+  <li><strong><code>str r0, [r2]</code></strong>:因为 <code>pxTopOfStack</code> 是 TCB 第一个成员(偏移 0),<code>r2</code>(=TCB 地址)直接就是 <code>pxTopOfStack</code> 的地址——<strong>不用算偏移,这就是第16章"放第一个"的回报。</strong></li>
+  <li><strong><code>bx r14</code></strong>:r14(LR)进异常时被硬件设成一个特殊的 <code>EXC_RETURN</code> 值,它告诉 CPU"这是异常返回,且返回后用 PSP、线程模式"。<code>bx r14</code> 触发硬件自动出栈那 8 个寄存器。</li>
+</ul>
+<blockquote><p>整段就 20 来行,却是整个 RTOS 的心脏。<strong>它做的事,一句话概括:把 A 的 R4-R11 压进 A 的栈、记住 A 的栈顶、让 C 代码把 pxCurrentTCB 改成 B、从 B 的栈恢复 R4-R11、把 SP 换成 B 的栈——剩下的 8 个寄存器进出由硬件自动完成。</strong>你把第一卷 1.11 的时序图和这段汇编并排看,会发现它们完全对应——一个是"图",一个是"实现图的代码"。<strong>读到这里,你对"操作系统如何用一个 CPU 跑多个任务"这件事,已经从原理到源码彻底打通了。</strong></p></blockquote>
+
+<h2 id="s9">18.9 硬件压栈 + 软件压栈的分工</h2>
+<p>把这个贯穿全书的分工做最后总结。一次完整的现场保存,16 个核心寄存器,由硬件和软件分工完成:</p>
+<table>
+<tr><th></th><th>谁做</th><th>哪些寄存器</th><th>对应调用约定</th><th>什么时候</th></tr>
+<tr><td>硬件自动压栈</td><td>CPU 硬件</td><td>xPSR, PC, LR, R12, R3, R2, R1, R0</td><td>caller-saved(第4章)</td><td>进入异常瞬间</td></tr>
+<tr><td>软件手动压栈</td><td>PendSV 汇编</td><td>R11, R10, R9, R8, R7, R6, R5, R4</td><td>callee-saved(第4章)</td><td>PendSV 里 stmdb</td></tr>
+</table>
+<p>为什么硬件只压 caller-saved 那 8 个?因为硬件遵循 AAPCS 调用约定(第6章):进入一个"类似函数调用"的异常时,caller-saved 寄存器本就该由"调用方"保存。硬件替你压了这一半。而 callee-saved(R4-R11)按约定该由"被调用方"保存,所以留给软件(PendSV)。<strong>Cortex-M 的硬件自动压栈,是严格按照调用约定设计的——这不是巧合,是 ARM 有意为之,让 ISR 和切换代码能用 C/最少的汇编写。</strong>第4章 4.10 埋的伏笔,在这里彻底揭晓。</p>
+
+<h2 id="s10">18.10 带 FPU 的情况：惰性压栈</h2>
+<p>如果是 Cortex-M4F/M7(带浮点单元 FPU),还有 32 个浮点寄存器 S0-S31 要考虑。全压的话现场从 16 个变几十个,切换变慢。ARM 的优化:<strong>惰性压栈(Lazy Stacking)</strong>。</p>
+<ul>
+  <li>进异常时,硬件<strong>不立即</strong>压浮点寄存器,只在栈上<strong>预留空间</strong>并标记。</li>
+  <li>只有当异常处理程序<strong>真的用到了浮点指令</strong>时,才真正把浮点寄存器压栈。</li>
+  <li>如果 ISR/切换根本没碰浮点(大多数情况),就<strong>省下了压 32 个浮点寄存器的开销</strong>。</li>
+</ul>
+<p>PendSV 里对应地,如果任务用了 FPU,要额外用 <code>vstmdb</code>/<code>vldmia</code> 保存/恢复 S16-S31(S0-S15 属于硬件自动那批)。移植层里有 <code>#if configUSE_FPU</code> 之类的处理。<strong>惰性压栈是"能省则省"的又一例——只在必要时才付出代价,和第十章虚拟内存的按需分页异曲同工。</strong>FreeRTOS 的 M4F port 里能看到这段浮点处理。</p>
+
+<h2 id="s11">18.11 第一次启动：prvStartFirstTask</h2>
+<p>还有个问题:系统刚启动时,还没有"当前任务"可保存,怎么跑起第一个任务?<code>vTaskStartScheduler</code>(第16章)最终调 <code>prvStartFirstTask</code>,它用一段特殊汇编"无中生有"地启动第一个任务:</p>
+<pre><code>prvStartFirstTask:
+    ldr r0, =0xE000ED08   <span class="asm-comment">; 取向量表偏移寄存器VTOR地址</span>
+    ldr r0, [r0]
+    ldr r0, [r0]          <span class="asm-comment">; 取出初始MSP值(向量表第0项)</span>
+    msr msp, r0           <span class="asm-comment">; 重置MSP到初始值(丢弃启动时的栈)</span>
+    cpsie i               <span class="asm-comment">; 开中断</span>
+    cpsie f
+    dsb
+    isb
+    svc 0                 <span class="asm-comment">; ★触发SVC异常, 在SVC处理里启动第一个任务</span></code></pre>
+<p>它重置 MSP,然后触发 <strong>SVC 异常</strong>(第3/12章的系统调用指令),在 SVC 处理程序 <code>vPortSVCHandler</code> 里,把第一个任务(<code>pxCurrentTCB</code> 指向的最高优先级任务)的伪造栈(第16章)"恢复现场",于是跳进第一个任务函数。</p>
+<blockquote><p>妙处再现:<strong>第一次启动,复用的还是"恢复现场"的逻辑</strong>——因为第16章 <code>pxPortInitialiseStack</code> 已经把第一个任务的栈伪造得"仿佛它被切走过"。<code>vPortSVCHandler</code> 从这个伪造的栈恢复,PC 就弹成了任务函数地址。<strong>启动第一个任务、恢复任意任务、创建新任务后第一次运行——三者共用同一套"从栈恢复现场"的机制。</strong>这种极致的统一,是 FreeRTOS 设计之美的巅峰。用 SVC 而非直接跳,是为了"干净地从异常返回进入线程模式、切到 PSP"。</p></blockquote>
+
+<h2 id="s12">18.12 SVC 的角色</h2>
+<p>梳理一下 Cortex-M 上三个关键异常的分工,别混淆:</p>
+<table>
+<tr><th>异常</th><th>优先级</th><th>作用</th></tr>
+<tr><td><strong>SysTick</strong></td><td>较低</td><td>周期心跳,调 xTaskIncrementTick,需要时挂起 PendSV</td></tr>
+<tr><td><strong>PendSV</strong></td><td>最低</td><td>真正做上下文切换(等所有中断清空后)</td></tr>
+<tr><td><strong>SVC</strong></td><td>可配</td><td>启动第一个任务;也可用于系统调用(FreeRTOS 主要用于启动)</td></tr>
+</table>
+<p>分工清晰:<strong>SysTick 管"何时",PendSV 管"切换动作",SVC 管"第一次启动"。</strong>三者配合,构成 Cortex-M 上 FreeRTOS 调度的完整机制。它们都是内核异常,都在向量表里(第7章),RTOS 移植时接管这三个向量。</p>
+
+<h2 id="s13">18.13 全流程贯通：从 tick 到新任务</h2>
+<p>把整章、乃至整个第三卷前三章串成一条完整的线。一次由时钟触发的任务切换,从头到尾:</p>
+<pre><code>① SysTick定时器到点 → 触发SysTick异常
+     [硬件自动压 xPSR,PC,LR,R12,R3-R0 到当前任务A的栈]
+        │
+② xPortSysTickHandler → xTaskIncrementTick()  (第17章)
+     - xTickCount++
+     - 唤醒到期的延时任务(移回就绪列表)
+     - 判断: 有更高优先级就绪 或 时间片到? → 返回pdTRUE
+        │
+③ 需要切换 → 挂起PendSV(往ICSR写PENDSVSET位) → SysTick返回
+     [若有嵌套中断, 继续处理完它们]
+        │
+④ 所有中断处理完, 系统要回线程 → PendSV执行(最低优先级)
+     - 保存A的R4-R11到A栈, A栈顶存入A的TCB
+     - bl vTaskSwitchContext → taskSELECT_HIGHEST_PRIORITY_TASK
+       → 位图+CLZ选出B, pxCurrentTCB = B  (第17章)
+     - 从B栈恢复R4-R11, PSP=B栈顶
+     - bx lr
+        │
+⑤ [硬件自动从B栈弹出 xPSR,PC,LR,R12,R3-R0]
+     PC = B上次被切走的位置
+        │
+⑥ 任务B从它上次被打断处继续运行, 毫无察觉 ✓</code></pre>
+<p><strong>这条线,就是第一卷第一章那句"用一个 CPU 快速切换、营造多任务假象"的完整、精确、可验证的实现。</strong>从定时器硬件,到 C 调度逻辑,到汇编寄存器操作,到硬件自动出入栈——每一环你现在都能指着源码讲清楚。</p>
+
+<h2 id="s14">18.14 回扣第一卷：三支柱闭环</h2>
+<p>第一卷说操作系统的心脏是三支柱。走到这里,三支柱在 FreeRTOS 源码里全部找到了归宿:</p>
+<table>
+<tr><th>第一卷三支柱</th><th>FreeRTOS 源码归宿</th></tr>
+<tr><td>① 上下文切换(存/恢复现场)</td><td>PendSV 汇编(本章)+ 硬件自动压栈 + 伪造初始栈(第16章)</td></tr>
+<tr><td>② 调度器(决定选谁)</td><td>vTaskSwitchContext + 位图/CLZ(第17章)</td></tr>
+<tr><td>③ 时钟中断(抢占引擎)</td><td>SysTick + xTaskIncrementTick(本章+第17章)</td></tr>
+</table>
+<blockquote><p><strong>从第一卷第一章"厨师与订单"的比喻,到这一章 20 行 PendSV 汇编,你完成了一次从抽象到硅片的完整穿越。</strong>操作系统"多任务"这件看似神奇的事,拆到底,就是:一个定时器周期性打断 CPU(时钟中断),一段 C 代码用位图选出下一个任务(调度器),一段汇编把寄存器在栈之间倒腾(上下文切换)。<strong>没有魔法,全是你已经理解的机制的精密配合。</strong>接下来第19章起,我们转向任务之间怎么"通信和同步"(队列、信号量、互斥量)——那是在这个调度地基之上盖的楼。</p></blockquote>
+
+<h2 id="s15">18.15 面试常问问题</h2>
+<p><strong>Q1:为什么 FreeRTOS 用 PendSV 做上下文切换,而不直接在 SysTick 里切?</strong><br>直接在中断里切会破坏中断嵌套的返回顺序(被打断的中断悬空回不去)。PendSV 优先级最低,推迟到所有中断处理完、要返回线程时才切,保证切换发生在中断最外层,安全。这是 ARM 为 RTOS 专门设计的异常。</p>
+<p><strong>Q2:一次上下文切换保存/恢复了哪些寄存器?谁做的?</strong><br>共16个:硬件自动压/弹 xPSR,PC,LR,R12,R3-R0(caller-saved);PendSV 汇编压/弹 R4-R11(callee-saved)。硬件那批正好按调用约定划分。带 FPU 还有浮点寄存器(惰性压栈优化)。</p>
+<p><strong>Q3:MSP 和 PSP 在切换中各起什么作用?</strong><br>任务用 PSP(各自的栈),中断/PendSV 用 MSP。切换就是保存/恢复 PSP 指向的任务栈并更换 PSP;PendSV 自身运行在 MSP,不污染任务栈。</p>
+<p><strong>Q4:pxTopOfStack 为什么是 TCB 第一个成员?在汇编里怎么体现?</strong><br>偏移为0,汇编拿到 TCB 指针后 str/ldr 直接就是访问 pxTopOfStack,不用算偏移。见 18.8 的 <code>str r0,[r2]</code>。</p>
+<p><strong>Q5:新任务/第一个任务从没运行过,怎么切进去?</strong><br>创建时伪造栈(第16章 pxPortInitialiseStack),PC 位填任务函数、R0 位填参数。切换/启动时的"恢复现场"弹出伪造的 PC 就进了任务函数。启动、恢复、首次运行共用同一机制。</p>
+<p><strong>Q6:SysTick、PendSV、SVC 三个异常各干什么?</strong><br>SysTick 周期心跳(计数/唤醒/判断切换);PendSV 真正做切换(最低优先级);SVC 启动第一个任务(也可做系统调用)。</p>
+<p><strong>Q7:汇编里的 dsb/isb 为什么需要?</strong><br>内存/指令同步屏障(第14章),确保对 PSP、BASEPRI、PendSV 挂起位等的操作真正生效、流水线重新取指,避免因乱序/流水线导致切换时序错乱。</p>
+
+<h2 id="s16">18.16 常见误区</h2>
+<ol>
+  <li><strong>"SysTick 中断里直接做上下文切换"</strong>——不,只挂起 PendSV;切换在 PendSV 里,以免破坏中断嵌套。</li>
+  <li><strong>"上下文切换全靠软件保存所有寄存器"</strong>——硬件自动压 8 个,软件只压 R4-R11。</li>
+  <li><strong>"PendSV 优先级应该设高一点好尽快切换"</strong>——恰恰相反,必须最低,要等所有中断处理完。</li>
+  <li><strong>"任务和中断用同一个栈"</strong>——任务用 PSP,中断/PendSV 用 MSP。</li>
+  <li><strong>"切换时 PC 是软件手动恢复的"</strong>——PC 由硬件在异常返回时自动从栈弹出。</li>
+  <li><strong>"带 FPU 每次都压全部浮点寄存器"</strong>——惰性压栈,只在真用了浮点时才压。</li>
+  <li><strong>"第一个任务需要特殊启动逻辑"</strong>——靠伪造栈复用恢复现场机制,不需要特殊逻辑。</li>
+</ol>
+
+<h2 id="s17">18.17 本章总结</h2>
+<ul>
+  <li><strong>SysTick</strong> 是系统心跳,每 tick 调 xTaskIncrementTick;需要切换时只<strong>挂起 PendSV</strong>,不直接切。</li>
+  <li><strong>为什么用 PendSV</strong>:它优先级最低,推迟到所有中断清空、要返回线程时才切,避免破坏中断嵌套返回顺序——ARM 为 RTOS 专设。</li>
+  <li>三条调度路径都<strong>殊途同归到 PendSV</strong>(第17章),因为它是唯一安全切换的地方。</li>
+  <li>双栈:<strong>任务用 PSP,中断/PendSV 用 MSP</strong>。</li>
+  <li>一次切换 16 个核心寄存器:<strong>硬件自动 8 个(caller-saved),PendSV 汇编 8 个(callee-saved,R4-R11)</strong>,划分严格按调用约定。</li>
+  <li>PendSV 汇编核心:存 A 的 R4-R11 → A 栈顶入 TCB → <code>bl vTaskSwitchContext</code> 改 pxCurrentTCB → 从 B 栈恢复 R4-R11 → PSP=B 栈顶 → <code>bx lr</code> 硬件自动出栈。</li>
+  <li><code>pxTopOfStack</code> 首成员使汇编免算偏移;<code>stmdb/ldmia</code> 一条指令进出 8 个寄存器;<code>bx r14</code> 靠 EXC_RETURN 触发硬件出栈。</li>
+  <li>带 FPU 用<strong>惰性压栈</strong>省浮点寄存器开销。</li>
+  <li>第一个任务靠 <strong>SVC + 伪造栈</strong>启动,复用恢复现场机制。</li>
+  <li><strong>第一卷三支柱(上下文切换/调度器/时钟中断)在此全部闭环</strong>——从"厨师比喻"到 20 行汇编,完整穿越。</li>
+</ul>
+
+<h2 id="s18">18.18 思维导图 / 课后题</h2>
+<pre><code>SysTick 与 PendSV 上下文切换
+├─ 一、SysTick:系统心跳(重装载值=CPU频率/tick频率-1)
+├─ 二、SysTick_Handler:调xTaskIncrementTick, 需切换则挂起PendSV
+├─ 三、★为何用PendSV不直接切
+│  └─ 直接切破坏中断嵌套返回;PendSV最低优先级等中断清空才切
+├─ 四、PendSV设最低优先级(垫底);挂起=写ICSR PENDSVSET
+├─ 五、双栈:任务PSP / 中断PendSV用MSP
+├─ 六、寄存器分工:硬件8个(caller-saved) + 软件R4-R11(callee-saved)
+├─ 七、★PendSV汇编逐行
+│  ├─ mrs r0,psp → stmdb压R4-R11 → str存TCB栈顶
+│  ├─ bl vTaskSwitchContext(改pxCurrentTCB)
+│  └─ ldmia恢复R4-R11 → msr psp → bx r14(硬件出栈)
+├─ 八、pxTopOfStack首成员免算偏移;stmdb/ldmia批量;EXC_RETURN
+├─ 九、FPU:惰性压栈(用了才压浮点)
+├─ 十、第一个任务:SVC+伪造栈, 复用恢复现场
+├─ 十一、三异常分工:SysTick(何时)/PendSV(切换)/SVC(首启)
+├─ 十二、全流程:tick→增tick→挂PendSV→中断清空→PendSV切→新任务续
+└─ 十三、★三支柱闭环:从厨师比喻到20行汇编</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>打开你 MCU 的 <code>port.c</code>,找到 <code>xPortPendSVHandler</code>,逐行对照 18.8 注释;找到 <code>xPortSysTickHandler</code> 和 <code>vPortSVCHandler</code>。</li>
+  <li>在 PendSV 汇编入口下断点,单步执行,观察 PSP、R4-R11、pxCurrentTCB 在切换前后的变化,亲眼看到"换栈"。</li>
+  <li>dump 一个任务栈,找出硬件压栈的 8 个 + 软件压栈的 8 个寄存器,验证 18.9 的分工。</li>
+  <li>把 <code>configTICK_RATE_HZ</code> 从 1000 改成 100,用示波器测量 SysTick 中断周期变化,理解心跳频率。</li>
+  <li>(带 FPU 的板子)在任务里用浮点运算,观察切换时是否多保存了浮点寄存器,研究惰性压栈。</li>
+  <li>研究 <code>prvStartFirstTask</code> 和 <code>vPortSVCHandler</code>,理解第一个任务如何被"无中生有"地启动。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>为什么上下文切换要放在 PendSV 而不是 SysTick 或其他中断里?</li>
+  <li>详述一次上下文切换中,16 个寄存器由谁、在何时保存和恢复。</li>
+  <li>MSP 和 PSP 的分工?为什么要两个栈指针?</li>
+  <li>逐行解释 PendSV 汇编的核心步骤。</li>
+  <li>pxTopOfStack 放 TCB 第一个成员的意义,在汇编里如何体现?</li>
+  <li>第一个任务是如何启动的?为什么能复用恢复现场的机制?</li>
+  <li>惰性压栈是什么?解决什么问题?</li>
+  <li>把 SysTick、PendSV、SVC、xTaskIncrementTick、vTaskSwitchContext 串成一次完整切换讲一遍。</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第十八章 完 · FreeRTOS 内核心脏(任务/调度/切换)已通 · 下一章《第十九章 Queue 队列》</p>
+<div class="nav">
+  <a href="第17章-FreeRTOS-调度器.html">← 第十七章</a>
+  <a href="index.html">目录</a>
+  <a href="第19章-FreeRTOS-Queue队列.html">第十九章 →</a>
+</div>
+
+</div>
+</body>
+</html>

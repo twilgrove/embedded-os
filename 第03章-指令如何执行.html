@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第三章 指令如何执行</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13.5px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第02章-CPU到底是什么.html">← 第二章</a>
+  <a href="index.html">目录</a>
+  <a href="第04章-寄存器.html">第四章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第一卷 · 计算机组成原理</div>
+  <h1>第三章 指令如何执行</h1>
+  <div class="sub">一条指令在硅片里走完的每一步，以及"程序流程"到底是怎么被控制的</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么要单独讲"指令怎么执行"</a></li>
+    <li><a href="#s2">一条指令长什么样：机器码的编码</a></li>
+    <li><a href="#s3">操作码与操作数</a></li>
+    <li><a href="#s4">寻址方式：怎么"找到"要操作的数</a></li>
+    <li><a href="#s5">取指-译码-执行的硬件细节</a></li>
+    <li><a href="#s6">状态标志与条件执行</a></li>
+    <li><a href="#s7">分支跳转：程序为什么能拐弯</a></li>
+    <li><a href="#s8">PC 相对寻址与位置无关代码</a></li>
+    <li><a href="#s9">立即数：为什么大常数放不进指令</a></li>
+    <li><a href="#s10">从 C 到指令：一个完整例子</a></li>
+    <li><a href="#s11">特权指令与陷入内核</a></li>
+    <li><a href="#s12">回扣：指令流与上下文</a></li>
+    <li><a href="#s13">面试常问</a></li>
+    <li><a href="#s14">常见误区</a></li>
+    <li><a href="#s15">本章总结</a></li>
+    <li><a href="#s16">思维导图</a></li>
+    <li><a href="#s17">课后练习与面试题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第二章你知道了 CPU 靠"取指-译码-执行"循环干活，也见到了 LDR/ADD 这些指令。这一章我们钻进一条指令内部——它的二进制到底怎么编码？CPU 怎么"看懂"它？程序为什么能有 <code>if</code>、<code>for</code>、函数调用这些"拐弯"？学完你要能读懂一小段 ARM 汇编，并理解每条指令在硬件里的确切动作。</p></blockquote>
+
+<h2 id="s1">3.1 为什么要单独讲"指令怎么执行"</h2>
+<p>你可能觉得第二章讲过取指译码执行了，够了。但有几个绕不开的问题，第二章只是点到：</p>
+<ul>
+  <li>一条指令是一串二进制，CPU 凭什么从这串 0/1 里知道"这是加法、用 R0 和 R1"？——<strong>编码规则</strong>。</li>
+  <li>程序为什么能 <code>if/else</code> 走不同的路、能 <code>for</code> 循环、能调函数再回来？——<strong>分支与 PC 的操纵</strong>。</li>
+  <li>你写 <code>read()</code> 时那句"陷入内核"，在指令层面到底是哪条指令？——<strong>特权/系统指令</strong>。</li>
+</ul>
+<p>这些是理解调度、中断、系统调用的<strong>硬件地基</strong>。不啃下来，后面讲"中断返回改 PC"、"上下文里保存 PC"你都只能背。</p>
+
+<h2 id="s2">3.2 一条指令长什么样：机器码的编码</h2>
+<p>回到厨师类比：菜谱上的一行字，比如"把 2 号碗和 3 号碗的东西相加，放进 5 号碗"。这行字对厨师(CPU)来说不是中文，而是一串固定格式的二进制。<strong>指令的本质就是一串有固定"字段布局"的二进制。</strong></p>
+<p>以 ARM 的 32 位定长指令为例(RISC 定长的好处上一章说过)，一条 <code>ADD</code> 指令的 32 个 bit 被切成若干"字段"，每个字段管一件事：</p>
+<pre><code>ARM 经典 32 位 ADD 指令编码(简化示意):
+
+ 31    28 27  25 24 21 20 19  16 15  12 11        0
+┌────────┬──────┬──────┬──┬──────┬──────┬───────────┐
+│ 条件码  │ 类型  │操作码 │S │ Rn   │ Rd   │  操作数2   │
+│ cond   │ 000  │ 0100 │0 │ 源1  │ 目标 │  源2/立即数 │
+└────────┴──────┴──────┴──┴──────┴──────┴───────────┘
+   4位     3位    4位   1  4位     4位      12位
+
+含义: "满足cond条件时, 把 Rn 和 操作数2 相加, 结果写入 Rd"</code></pre>
+<p>你不需要背这个布局，但要抓住三个洞察：</p>
+<ol>
+  <li><strong>指令 = 若干定宽字段的拼接。</strong>CPU 的译码器就是一堆逻辑门，按位切开这些字段，各送到对应部件。这就是"译码"的物理含义——把 32 个 bit 分派到该去的地方。</li>
+  <li><strong>寄存器编号只需 4 位</strong>(2⁴=16，正好 R0~R15)。还记得第二章说"寄存器少是因为指令里编号位数有限"吗？这里就是证据——字段就这么宽，多了塞不下。</li>
+  <li><strong>指令里能塞进去的"立即数"位数有限</strong>(这里 12 位)。这引出 3.9 节一个经典问题:大常数怎么办。</li>
+</ol>
+
+<h2 id="s3">3.3 操作码与操作数</h2>
+<p>把上面的字段归纳，任何指令都由两部分组成，跟自然语言的"动词+宾语"一样：</p>
+<table>
+<tr><th>部分</th><th>回答什么</th><th>菜谱类比</th><th>例子</th></tr>
+<tr><td><strong>操作码 opcode</strong></td><td>干什么动作</td><td>动词:"相加""搬运"</td><td>ADD / LDR / B</td></tr>
+<tr><td><strong>操作数 operand</strong></td><td>对谁干、结果放哪</td><td>宾语:哪几个碗</td><td>R0, R1, R2</td></tr>
+</table>
+<p>操作数可以是三种来源，这个分类非常重要(对应下一节的寻址方式)：</p>
+<ul>
+  <li><strong>寄存器</strong>：操作数就在某个小碗里，如 <code>ADD R2, R0, R1</code>。最快。</li>
+  <li><strong>立即数</strong>：操作数是个写死在指令里的常数，如 <code>ADD R0, R0, #1</code>(加 1)。<code>#</code> 表示立即数。</li>
+  <li><strong>内存地址</strong>：操作数在内存里，得先算出地址去取，如 <code>LDR R0, [R1]</code>。最慢。</li>
+</ul>
+
+<h2 id="s4">3.4 寻址方式：怎么"找到"要操作的数</h2>
+<p>"寻址方式(Addressing Mode)"就是回答一个问题：<strong>指令里怎么描述"我要的那个数在哪儿"？</strong>厨师要拿食材，可以说"就用你手里那个"(寄存器)、"用编号写死的 5 号货架那袋"(直接)、"用你记的那个货架号去拿"(间接)。CPU 也有这几种"指路方式"：</p>
+<table>
+<tr><th>寻址方式</th><th>含义</th><th>ARM 例子</th><th>生活类比</th></tr>
+<tr><td>立即数寻址</td><td>数就写在指令里</td><td><code>MOV R0, #5</code></td><td>"直接用 5 这个数"</td></tr>
+<tr><td>寄存器寻址</td><td>数在某个寄存器</td><td><code>MOV R0, R1</code></td><td>"用你手上那碗"</td></tr>
+<tr><td>寄存器间接</td><td>寄存器里存的是<em>地址</em>，去那个地址取</td><td><code>LDR R0, [R1]</code></td><td>"按你记的货架号去拿货"</td></tr>
+<tr><td>基址+偏移</td><td>地址 = 寄存器 + 一个偏移量</td><td><code>LDR R0, [R1, #4]</code></td><td>"你记的货架号往后数第 4 格"</td></tr>
+<tr><td>PC 相对</td><td>地址 = 当前 PC + 偏移</td><td><code>LDR R0, [PC, #8]</code></td><td>"从我现在站的位置往前 8 步"</td></tr>
+</table>
+<blockquote><p><strong>"基址+偏移"是重中之重</strong>，因为它是访问数组、结构体成员、栈变量的底层机制。<code>arr[i]</code> 就是"数组首地址(基址) + i×元素大小(偏移)"；结构体 <code>p->field</code> 就是"结构体地址 + 字段偏移"。你写的所有 <code>.</code>、<code>-></code>、<code>[]</code>，编译后都是这条寻址方式。第五、六章讲栈和函数调用时会反复用到。</p></blockquote>
+
+<h2 id="s5">3.5 取指-译码-执行的硬件细节</h2>
+<p>第二章给了三步的框架，这里补上"每一步硬件到底做了什么"，因为后面讲中断和流水线要用。</p>
+<pre><code>① 取指 Fetch
+   PC 的值 → 送上"地址总线" → 内存把该地址的 32 位指令
+   → 经"数据总线"送回 → 存入"指令寄存器 IR"
+   同时: PC += 4 (ARM 一条指令 4 字节, 自动指向下一条)
+
+② 译码 Decode
+   译码器(逻辑门)切开 IR 的各字段:
+   - opcode → 决定 ALU 做什么 / 是不是访存 / 是不是跳转
+   - 寄存器编号 → 从寄存器堆读出对应的值
+   - 立即数 → 提取并按规则扩展
+
+③ 执行 Execute (+ 访存 + 写回)
+   - 运算类: 值送 ALU → 算 → 结果写回目标寄存器
+   - 访存类: ALU 先算出地址 → 读/写内存 → (读的话)写回寄存器
+   - 跳转类: 把新地址写进 PC (下一次取指就从新处开始!)</code></pre>
+<p>注意最后一句：<strong>"跳转"的物理本质，就是往 PC 里写一个新值。</strong>PC 一变，下一轮取指就从新地方开始——程序就"拐弯"了。整个控制流(if/for/函数/中断)全靠这一个动作。记住它，这是本章的灵魂。</p>
+
+<h2 id="s6">3.6 状态标志与条件执行</h2>
+<p>程序要能判断"如果 a > b 就……"。CPU 怎么"判断"？它不会思考，它靠<strong>标志位(Flags)</strong>。</p>
+<h4>标志位从哪来</h4>
+<p>ALU 每做一次运算(尤其是比较/减法)，除了算出结果，还会顺手记下几个"副产品"到一个特殊寄存器(ARM 里在 <code>CPSR/xPSR</code> 状态寄存器里)：</p>
+<table>
+<tr><th>标志</th><th>名字</th><th>什么时候置 1</th></tr>
+<tr><td>Z</td><td>Zero 零标志</td><td>运算结果为 0(常用于判断"相等")</td></tr>
+<tr><td>N</td><td>Negative 负标志</td><td>结果最高位为 1(负数)</td></tr>
+<tr><td>C</td><td>Carry 进位</td><td>无符号运算发生进位/借位</td></tr>
+<tr><td>V</td><td>oVerflow 溢出</td><td>有符号运算溢出</td></tr>
+</table>
+<h4>比较的真相：其实是做减法</h4>
+<p><code>CMP R0, R1</code>(比较 R0 和 R1)在硬件里做的是 <code>R0 - R1</code>，但<strong>只更新标志位、不保存差值</strong>。然后：</p>
+<ul>
+  <li>若 R0 == R1，差为 0 → Z=1。</li>
+  <li>若 R0 &lt; R1，会借位 → 通过 N、C 的组合能判断出来。</li>
+</ul>
+<p>所以 C 语言里 <code>if (a == b)</code> 编译成:<code>CMP</code> 做减法置标志 → 后面的跳转指令<strong>看 Z 标志</strong>决定跳不跳。<strong>CPU 的"判断"从来不是思考，而是"做个减法看标志位"。</strong></p>
+
+<h2 id="s7">3.7 分支跳转：程序为什么能拐弯</h2>
+<p>有了标志位，就能实现"有条件地改 PC"——这就是分支(Branch)。</p>
+<pre><code>C 代码:
+  if (a > b)
+      x = 1;
+  else
+      x = 2;
+
+编译成指令(示意):
+      CMP   R0, R1        ; 比较 a(R0) 和 b(R1), 置标志位
+      BLE   .else         ; Branch if Less or Equal: 若 a<=b 就跳到 else
+      MOV   R2, #1        ; (a>b 这条路) x=1
+      B     .end          ; 无条件跳过 else
+  .else:
+      MOV   R2, #2        ; x=2
+  .end:
+      ...</code></pre>
+<p>看懂这段,你就理解了所有控制流:</p>
+<ul>
+  <li><strong>有条件跳转</strong>(<code>BLE/BEQ/BNE</code>...):看标志位,满足才把目标地址写进 PC。这是 <code>if/while/for</code> 的核心。</li>
+  <li><strong>无条件跳转</strong>(<code>B</code>):直接改 PC。用于 <code>else</code> 跳过、循环回头、<code>goto</code>。</li>
+  <li><strong>带返回的跳转</strong>(<code>BL</code>, Branch with Link):跳过去之前,<strong>先把"返回地址"存进 LR 寄存器</strong>——这是函数调用的关键,第六章详讲。</li>
+</ul>
+<blockquote><p>循环怎么实现?就是"跳转回头"。<code>for(i=0;i&lt;10;i++)</code> 编译后:循环体结尾有一条 <code>CMP i,#10</code> + <code>BLT 循环开头</code>,只要没到 10 就把 PC 改回循环体开头。<strong>循环 = 反复把 PC 往回改。</strong></p></blockquote>
+
+<h2 id="s8">3.8 PC 相对寻址与位置无关代码(PIC)</h2>
+<p>一个进阶但很实用的点。跳转目标地址怎么写在指令里?两种思路:</p>
+<ul>
+  <li><strong>绝对地址</strong>:"跳到内存 0x8004 处"。问题:如果这段程序被加载到内存的另一个位置,地址就全错了。</li>
+  <li><strong>相对地址</strong>(PC 相对):"从我现在这条指令往后跳 20 字节"。好处:<strong>不管程序被放到内存哪里,相对偏移永远正确。</strong></li>
+</ul>
+<p>ARM 的分支指令用的正是 PC 相对。由此产生一个重要概念:<strong>位置无关代码(Position Independent Code, PIC)</strong>——代码不写死绝对地址,可以被加载到任意位置运行。</p>
+<blockquote><p>为什么你要关心?① Linux 的<strong>共享库(.so)</strong>必须是 PIC,因为同一个库会被不同进程加载到各自不同的地址;② 内核、bootloader 的重定位也依赖它;③ 面试问"为什么 .so 要编译成 -fPIC"就是考这个。相对寻址是 PIC 的硬件基础。</p></blockquote>
+
+<h2 id="s9">3.9 立即数：为什么大常数放不进指令</h2>
+<p>3.2 节说过,ARM 32 位指令里留给立即数的字段只有 12 位左右。问题来了:<strong>我要 <code>x = 0x12345678</code> 这么大的常数,12 位根本装不下,怎么办?</strong></p>
+<p>这是 RISC 定长指令的一个"甜蜜的烦恼"。CISC 可以用不定长指令直接跟一个大常数,RISC 不行。ARM 的解法有几种:</p>
+<ol>
+  <li><strong>拆成几条指令拼</strong>:先 <code>MOV</code> 低 16 位,再 <code>MOVT</code> 填高 16 位,两条指令拼出 32 位大数。</li>
+  <li><strong>放进"文字池"(literal pool),用 PC 相对 LDR 取</strong>:把大常数存在代码附近的一小块数据区,用 <code>LDR R0, [PC, #offset]</code> 加载。你反汇编时常看到函数末尾一堆 <code>.word 0x12345678</code>,就是文字池。</li>
+</ol>
+<blockquote><p>这解释了一个新手困惑:<strong>为什么反汇编里一个"赋值大常数"会变成两三条指令?</strong>因为立即数字段装不下,只能拼或去内存捞。这也是 RISC 相比 CISC 在"代码密度"上的一个代价。</p></blockquote>
+
+<h2 id="s10">3.10 从 C 到指令：一个完整例子</h2>
+<p>把本章串起来。看一个带循环、判断、数组访问的函数,理解它每一句对应什么:</p>
+<pre><code>C 代码: 求数组前 n 个元素的和
+  int sum(int *arr, int n) {
+      int s = 0;
+      for (int i = 0; i < n; i++)
+          s += arr[i];
+      return s;
+  }
+
+编译成 ARM 指令(示意, 参数: arr在R0, n在R1):
+      MOV   R2, #0          ; s = 0        (R2 当 s)
+      MOV   R3, #0          ; i = 0        (R3 当 i)
+  .loop:
+      CMP   R3, R1          ; 比较 i 和 n              ← 3.6 标志位
+      BGE   .done           ; if i>=n 跳出循环          ← 3.7 条件分支
+      LDR   R12, [R0, R3, LSL #2] ; R12 = arr[i]
+                            ; 地址=arr + i*4(int占4字节) ← 3.4 基址+偏移
+      ADD   R2, R2, R12     ; s += arr[i]               ← ALU 运算
+      ADD   R3, R3, #1      ; i++                        ← 3.3 立即数操作
+      B     .loop           ; 回到循环开头                ← 3.7 无条件跳转(改PC)
+  .done:
+      MOV   R0, R2          ; 返回值放 R0(约定)
+      BX    LR              ; 返回调用者(跳到 LR 存的地址) ← 第六章预告</code></pre>
+<p>逐行都能对上本章知识点。<strong>这就是"高级语言最终变成搬、算、跳"的实证。</strong>你以后调试卡在没有源码、只有汇编的地方时(内核 panic、RTOS 崩溃),就靠读这种代码定位问题。</p>
+
+<h2 id="s11">3.11 特权指令与陷入内核</h2>
+<p>第一章说过用户态不能直接碰硬件,要"喊话"给内核。这个"喊话"在指令层面是什么?</p>
+<h4>普通指令 vs 特权指令</h4>
+<p>ARM 把指令分两类:普通指令(算术、搬运、跳转)人人能用;<strong>特权指令</strong>(改中断开关、改 MMU 配置、访问某些系统寄存器)只有内核态(EL1)能用。用户态(EL0)执行特权指令会直接触发异常——硬件层面的"越权保护"。</p>
+<h4>系统调用指令:SVC</h4>
+<p>用户程序想请求内核服务(读文件、分配内存),用一条专门的指令主动"敲门":ARM 上是 <code>SVC</code>(Supervisor Call,老名字 SWI)。执行 <code>SVC</code> 会:</p>
+<pre><code>用户态执行 SVC 指令
+     │
+     ▼  CPU 硬件自动:
+  ① 切换到内核态(EL0 → EL1)
+  ② 保存返回地址
+  ③ 跳到内核预先设好的"异常入口地址"
+     │
+     ▼
+  内核的系统调用处理程序接管, 看你要什么服务, 代你办
+     │
+     ▼  办完执行返回指令
+  切回用户态(EL1 → EL0), 回到 SVC 的下一条继续</code></pre>
+<p>所以你在 Linux 里调 <code>read()</code>,C 库最终会执行一条 <code>SVC</code>(x86 上是 <code>syscall</code> 指令),这就是"陷入内核"的确切时刻。<strong>用户态和内核态的切换,是由这一条硬件指令 + CPU 的自动动作完成的,不是软件魔法。</strong>这条线索会在第一卷第七章(中断)、第二卷(异常/EL)、第五卷(系统调用)反复出现。</p>
+
+<h2 id="s12">3.12 回扣：指令流与上下文</h2>
+<p>现在可以把"上下文"理解得更深了。一个任务在运行,本质是 <strong>CPU 沿着这个任务的指令流,一条条取指-执行,PC 不断前进/跳转</strong>。任务此刻的"现场"包括:</p>
+<ul>
+  <li><strong>PC</strong>:指令流走到哪一条了(下一条取哪);</li>
+  <li><strong>通用寄存器</strong>:算到一半的中间值;</li>
+  <li><strong>状态寄存器(标志位)</strong>:最近一次比较的结果——如果切换时不保存它,恢复后那个 <code>if</code> 就判断错了!</li>
+  <li><strong>SP</strong>:栈用到哪了(第五章)。</li>
+</ul>
+<blockquote><p>很多人保存上下文时只记得存通用寄存器和 PC,忘了<strong>状态寄存器(标志位)</strong>。而恰恰是它记录着"上次比较的结果",不存的话,恢复任务后紧接着的条件跳转会走错路。这是上下文切换代码里一个真实的坑,也是面试进阶考点。你学完本章 3.6 才能真正理解为什么它必须被保存。</p></blockquote>
+
+<h2 id="s13">3.13 面试常问问题</h2>
+<p><strong>Q1:一条指令由哪些部分组成?CPU 怎么"看懂"它?</strong><br>操作码(干什么)+ 操作数(对谁干)。译码器按固定字段布局切开二进制,分派到 ALU、寄存器堆等部件。</p>
+<p><strong>Q2:程序的分支/循环在硬件上如何实现?</strong><br>比较指令(CMP=做减法)更新标志位,条件跳转指令看标志位决定是否把目标地址写入 PC。循环就是把 PC 往回改。控制流的本质是"改 PC"。</p>
+<p><strong>Q3:CPU 怎么做"判断"(a>b)?</strong><br>不会思考,靠 ALU 做减法产生的 Z/N/C/V 标志位,条件分支据此走不同路。</p>
+<p><strong>Q4:什么是位置无关代码?为什么 .so 要 -fPIC?</strong><br>用 PC 相对寻址、不写死绝对地址的代码,可被加载到任意地址运行。共享库会被不同进程映射到不同地址,必须 PIC 才能共享同一份物理代码。</p>
+<p><strong>Q5:用户态怎么进内核态?哪条指令?</strong><br>主动:执行 SVC(ARM)/syscall(x86)系统调用指令,CPU 自动切态并跳到内核异常入口。被动:中断/异常。</p>
+<p><strong>Q6:上下文切换为什么要保存状态寄存器(标志位)?</strong><br>它记录最近比较结果,不保存则恢复后的条件跳转会判断错误。</p>
+
+<h2 id="s14">3.14 常见误区</h2>
+<ol>
+  <li><strong>"CPU 能理解 if 的逻辑"</strong>——不能。它只会"减法置标志 + 看标志跳转"。逻辑是编译器翻译出来的。</li>
+  <li><strong>"跳转是个神秘操作"</strong>——不神秘,就是往 PC 写个新值而已。</li>
+  <li><strong>"立即数想多大写多大"</strong>——RISC 指令里立即数字段有限,大常数要拆指令或用文字池。</li>
+  <li><strong>"CMP 会算出差值存起来"</strong>——不存,只更新标志位。</li>
+  <li><strong>"用户态和内核态是软件概念"</strong>——是 CPU 硬件的状态,由特定指令和异常机制切换。</li>
+  <li><strong>"上下文只有通用寄存器和 PC"</strong>——还必须包括状态寄存器(标志位)和 SP。</li>
+</ol>
+
+<h2 id="s15">3.15 本章总结</h2>
+<ul>
+  <li>指令 = 定宽字段拼成的二进制;译码就是逻辑门按字段切开分派。寄存器编号、立即数的位数都受字段宽度限制。</li>
+  <li>指令 = 操作码(动词) + 操作数(宾语);操作数来自寄存器/立即数/内存。</li>
+  <li><strong>寻址方式</strong>回答"数在哪";其中"基址+偏移"是数组、结构体、栈变量的底层机制。</li>
+  <li>执行阶段里,<strong>跳转的本质就是往 PC 写新值</strong>——所有控制流的根。</li>
+  <li>CPU 靠 ALU 产生的 <strong>Z/N/C/V 标志位</strong>做"判断";CMP 其实是做减法只置标志;条件分支看标志改 PC。</li>
+  <li><strong>PC 相对寻址</strong>→ 位置无关代码(PIC)→ 共享库/-fPIC。</li>
+  <li>大立即数放不进指令,要拆指令或用文字池。</li>
+  <li>特权指令只有内核态能用;<strong>SVC/syscall</strong> 是用户态陷入内核的确切指令。</li>
+  <li>回扣:任务现场 = PC + 通用寄存器 + 状态寄存器(标志位!) + SP,切换时一个都不能漏。</li>
+</ul>
+
+<h2 id="s16">3.16 思维导图</h2>
+<pre><code>指令如何执行
+├─ 一、机器码编码:定宽字段拼接
+│  ├─ 译码=逻辑门按字段切开分派
+│  ├─ 寄存器编号位数有限→寄存器少
+│  └─ 立即数字段有限→大常数放不下
+├─ 二、操作码(动词)+操作数(宾语)
+│  └─ 操作数三源:寄存器/立即数/内存
+├─ 三、寻址方式(数在哪)
+│  ├─ 立即/寄存器/寄存器间接
+│  └─ ★基址+偏移=数组/结构体/栈变量
+├─ 四、取指译码执行硬件细节
+│  └─ ★跳转=往PC写新值(控制流之根)
+├─ 五、标志位 Z/N/C/V
+│  ├─ ALU运算的副产品
+│  ├─ CMP=做减法只置标志
+│  └─ CPU"判断"=减法+看标志
+├─ 六、分支跳转
+│  ├─ 有条件(if/while)/无条件(else/循环)
+│  ├─ BL 存返回地址到LR(函数调用预告)
+│  └─ 循环=把PC往回改
+├─ 七、PC相对寻址→位置无关代码(PIC)
+│  └─ .so 需 -fPIC
+├─ 八、大立即数:拆指令/文字池
+├─ 九、特权指令 & 陷入内核
+│  └─ SVC/syscall:用户态进内核的指令
+└─ 十、回扣:上下文=PC+通用寄存器+标志位+SP</code></pre>
+
+<h2 id="s17">3.17 课后练习与面试题</h2>
+<h3>课后练习</h3>
+<ol>
+  <li>写含 <code>if/for/数组访问</code> 的小函数,用 <code>arm-none-eabi-gcc -S -O0</code> 生成汇编,逐行对照本章 3.10。</li>
+  <li>找出汇编里的 <code>CMP</code> 和紧随的条件分支(<code>B**</code>),说明它对应源码哪个判断、看的是哪个标志。</li>
+  <li>把一个大常数赋值(<code>int x=0x12345678;</code>)编译,观察它变成几条指令或是否用了文字池(<code>.word</code>)。</li>
+  <li>用 <code>-fPIC</code> 和不加,分别编译一个函数,对比生成的跳转/取地址方式差异。</li>
+  <li>用 <code>strace</code> 跑一个调用 <code>read/write</code> 的程序,确认系统调用发生;有条件的话用 gdb 单步到 <code>svc</code>/<code>syscall</code> 指令。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>一条指令内部有哪些字段?为什么寄存器数量受它限制?</li>
+  <li>"基址+偏移"寻址对应 C 里的什么语法?举例说明地址怎么算。</li>
+  <li>控制流(if/循环/函数)在硬件上统一归结为什么操作?</li>
+  <li>CPU 如何实现"比较大小"?标志位有哪些?</li>
+  <li>什么是 PIC?为什么共享库必须是 PIC?</li>
+  <li>RISC 里大立即数怎么处理?为什么会这样?</li>
+  <li>用户态陷入内核的指令是什么?CPU 自动做了哪些事?</li>
+  <li>上下文里为什么必须保存状态寄存器?不保存会怎样?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第三章 完 · 下一章《第四章 寄存器》</p>
+<div class="nav">
+  <a href="第02章-CPU到底是什么.html">← 第二章</a>
+  <a href="index.html">目录</a>
+  <a href="第04章-寄存器.html">第四章 →</a>
+</div>
+
+</div>
+</body>
+</html>

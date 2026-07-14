@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第廿六章 RT-Thread IPC 与设备驱动框架</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第25章-RTThread总览与内核对象.html">← 第廿五章</a>
+  <a href="index.html">目录</a>
+  <a href="第27章-RTThread-内存FinSH与BSP.html">第廿七章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第四卷 · RT-Thread 源码</div>
+  <h1>第廿六章 RT-Thread IPC 与设备驱动框架</h1>
+  <div class="sub">最像 Linux 的部分：统一的设备模型</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">IPC 对象:基于 rt_ipc_object</a></li>
+    <li><a href="#s2">信号量/互斥量:和 FreeRTOS 对照</a></li>
+    <li><a href="#s3">邮箱与消息队列</a></li>
+    <li><a href="#s4">挂起线程的排队方式:FIFO vs 优先级</a></li>
+    <li><a href="#s5">为什么需要设备驱动框架</a></li>
+    <li><a href="#s6">rt_device:统一的设备抽象</a></li>
+    <li><a href="#s7">五个统一操作:open/read/write/control/close</a></li>
+    <li><a href="#s8">注册与查找设备</a></li>
+    <li><a href="#s9">分层:应用—设备框架—驱动—硬件</a></li>
+    <li><a href="#s10">对比 Linux 设备模型</a></li>
+    <li><a href="#s11">面试常问</a></li>
+    <li><a href="#s12">常见误区</a></li>
+    <li><a href="#s13">本章总结</a></li>
+    <li><a href="#s14">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：RT-Thread 的 IPC(信号量/互斥量/邮箱/消息队列)和 FreeRTOS 概念相同,你已经会了,这里快速对照即可。重点是 RT-Thread 独有的<strong>设备驱动框架(Device Driver Framework)</strong>——它用统一的 <code>rt_device</code> 抽象所有外设,让应用用 open/read/write 就能操作任何设备,不用管底层。<strong>这是 RT-Thread 最像 Linux 的部分,也是理解第五卷 Linux 设备模型、第六卷驱动的绝佳预习。</strong></p></blockquote>
+
+<h2 id="s1">26.1 IPC 对象：基于 rt_ipc_object</h2>
+<p>接第25章的对象模型:RT-Thread 的所有 IPC(信号量、互斥量、事件、邮箱、消息队列)都继承自一个中间基类 <code>rt_ipc_object</code>,它又继承自 <code>rt_object</code>:</p>
+<pre><code>继承链: rt_object → rt_ipc_object → 具体IPC
+
+struct rt_ipc_object
+{
+    struct rt_object parent;         /* 继承对象基类 */
+    rt_list_t suspend_thread;        /* ★挂起在此IPC上的线程列表(等待队列) */
+};
+
+struct rt_semaphore {
+    struct rt_ipc_object parent;     /* 继承IPC基类 */
+    rt_uint16_t value;               /* 信号量值 */
+};
+
+struct rt_mutex {
+    struct rt_ipc_object parent;
+    rt_uint8_t  value;               /* 锁值 */
+    rt_uint8_t  original_priority;   /* 持有者原始优先级(优先级继承用, 第21章!) */
+    rt_uint8_t  hold;                /* 递归持有计数 */
+    struct rt_thread *owner;         /* 持有者(所有权, 第21章!) */
+};</code></pre>
+<p>关键:<code>rt_ipc_object</code> 里那个 <code>suspend_thread</code> 链表,就是<strong>"等这个 IPC 的线程排队的地方"</strong>——对应第19章 FreeRTOS 队列的 <code>xTasksWaitingToReceive/Send</code>。<strong>所有 IPC 共享这个"等待线程列表",复用统一的挂起/唤醒逻辑</strong>——这是对象模型带来的代码复用,比 FreeRTOS 每种 IPC 各自管理更统一。看 <code>rt_mutex</code> 里的 <code>owner</code> 和 <code>original_priority</code>,就是第21章讲的所有权和优先级继承,RT-Thread 也有(概念完全一样)。</p>
+
+<h2 id="s2">26.2 信号量/互斥量：和 FreeRTOS 对照</h2>
+<p>直接对照,你会发现概念一一对应(第20、21章的知识全部适用):</p>
+<table>
+<tr><th>概念</th><th>FreeRTOS</th><th>RT-Thread</th></tr>
+<tr><td>信号量</td><td>xSemaphoreTake/Give</td><td>rt_sem_take / rt_sem_release</td></tr>
+<tr><td>互斥量</td><td>xSemaphoreTake(mutex)</td><td>rt_mutex_take / rt_mutex_release</td></tr>
+<tr><td>优先级继承</td><td>有</td><td>有(同样机制)</td></tr>
+<tr><td>底层实现</td><td>都是队列的特例</td><td>各 IPC 独立结构,但共享 rt_ipc_object</td></tr>
+</table>
+<p>一个设计差异:<strong>FreeRTOS 把信号量做成"队列的特例"(第19章),RT-Thread 则让每种 IPC 有独立结构但共享 rt_ipc_object 基类。</strong>两种复用思路——FreeRTOS 是"用一个具体类型(队列)模拟其他",RT-Thread 是"用一个抽象基类统一其他"。后者更面向对象、更清晰,前者更省代码。<strong>殊途同归:都在避免重复实现"挂起/唤醒/等待队列"这套逻辑。</strong>rt_mutex 的优先级继承实现(rt_mutex_take 里提升 owner 优先级、release 里恢复)和第21章 FreeRTOS 的 vTaskPriorityInherit 逻辑一致,你直接能读懂。</p>
+
+<h2 id="s3">26.3 邮箱与消息队列</h2>
+<p>RT-Thread 有两个 FreeRTOS 里对应"队列"的东西,区分它们:</p>
+<table>
+<tr><th></th><th>邮箱 Mailbox(rt_mailbox)</th><th>消息队列 Message Queue(rt_messagequeue)</th></tr>
+<tr><td>传什么</td><td>固定 4 字节(一个指针或整数)</td><td>任意大小的数据块</td></tr>
+<tr><td>效率</td><td>高(只传 4 字节,常传指针)</td><td>稍低(拷贝整个数据)</td></tr>
+<tr><td>类比 FreeRTOS</td><td>传指针的队列</td><td>普通队列(拷贝数据)</td></tr>
+<tr><td>用途</td><td>传一个指针/句柄(大数据传地址)</td><td>传小数据本身</td></tr>
+</table>
+<p>邮箱专门优化了"传 4 字节"(通常是传一个指向大数据的指针,呼应第19章"大数据传指针"),效率高;消息队列则像 FreeRTOS 队列一样拷贝任意大小数据。<strong>本质都是第19章讲的队列思想(缓冲+阻塞+等待队列),只是邮箱针对"传指针"场景做了轻量化。</strong>你理解了 FreeRTOS 队列,这两个一看就懂。</p>
+
+<h2 id="s4">26.4 挂起线程的排队方式：FIFO vs 优先级</h2>
+<p>一个 RT-Thread 特有的、面试可能问的细节。多个线程等同一个 IPC,唤醒时按什么顺序?RT-Thread 创建 IPC 时可指定 <code>flag</code>:</p>
+<ul>
+  <li><strong>RT_IPC_FLAG_FIFO</strong>:等待线程按<strong>先来后到</strong>排队(先等的先被唤醒)。公平,但可能让高优先级线程等在低优先级后面。</li>
+  <li><strong>RT_IPC_FLAG_PRIO</strong>:等待线程按<strong>优先级</strong>排队(高优先级先被唤醒)。符合实时性。</li>
+</ul>
+<blockquote><p>FreeRTOS 的队列等待列表总是按优先级排序(第19章),而 RT-Thread <strong>让你选</strong>:要实时性用 PRIO,要公平/避免饿死用 FIFO。<strong>为什么给选择?</strong>因为 PRIO 虽然实时,但可能让低优先级线程永远等不到(饿死);FIFO 保证每个线程终会被服务。这是"实时性 vs 公平性"的又一次权衡(第一卷主题),RT-Thread 把选择权交给开发者。<strong>注意:如果用互斥量做优先级继承,应该用 PRIO 模式</strong>——否则继承逻辑和 FIFO 排队会冲突(高优先级等待者不在队首,继承的意义打折)。这是个容易踩的坑。</p></blockquote>
+
+<h2 id="s5">26.5 为什么需要设备驱动框架</h2>
+<p>现在进入本章重点。设想没有设备框架时,你的应用要用一个 UART:</p>
+<pre><code>没有设备框架(裸操作):
+  应用直接调 STM32 HAL: HAL_UART_Transmit(&huart1, buf, len, timeout);
+  → 应用代码和具体芯片的HAL库死死绑定
+  → 换个芯片(比如从STM32换到GD32), 所有应用代码都要改!
+  → 应用要懂UART寄存器/DMA/中断细节, 耦合严重</code></pre>
+<p>问题:<strong>应用代码和具体硬件驱动强耦合。</strong>换芯片、换外设,应用全得改。而且每个外设的操作方式都不同(UART、SPI、I2C 各有各的 API),应用要学一大堆。</p>
+<p>解决思路(又是"加一层抽象",第九、十章的哲学):<strong>在应用和硬件驱动之间加一个统一的"设备框架"层。它规定所有设备都用同一套接口(open/read/write/control/close),应用只面对这套统一接口,不管底层是什么设备、什么芯片。</strong>换硬件时,只改底层驱动,应用一行不动。</p>
+
+<h2 id="s6">26.6 rt_device：统一的设备抽象</h2>
+<p>核心是 <code>rt_device</code> 结构——所有设备的统一抽象(当然,它也继承 <code>rt_object</code>,第25章):</p>
+<pre><code>struct rt_device
+{
+    struct rt_object parent;          /* 继承对象基类(所以设备也在对象容器里) */
+    enum rt_device_class_type type;   /* 设备类型(字符/块/网络/...) */
+
+    /* ★ 统一的操作函数指针(每个具体驱动填自己的实现) */
+    rt_err_t  (*init)   (rt_device_t dev);
+    rt_err_t  (*open)   (rt_device_t dev, rt_uint16_t oflag);
+    rt_err_t  (*close)  (rt_device_t dev);
+    rt_size_t (*read)   (rt_device_t dev, rt_off_t pos, void *buffer, rt_size_t size);
+    rt_size_t (*write)  (rt_device_t dev, rt_off_t pos, const void *buffer, rt_size_t size);
+    rt_err_t  (*control)(rt_device_t dev, int cmd, void *args);
+
+    void *user_data;                  /* 驱动私有数据 */
+};</code></pre>
+<p>精髓在那<strong>一组函数指针</strong>(<code>read</code>/<code>write</code>/<code>control</code>...):<strong>它们定义了"一个设备应该能做什么",但具体怎么做,由每个驱动自己填。</strong>这就是 C 语言的"多态/虚函数"——同样调用 <code>device->read(...)</code>,如果 device 是 UART 就执行 UART 的读、是 SPI 就执行 SPI 的读。<strong>函数指针 = C 语言的虚函数表。</strong>这个技巧在 Linux 内核里叫 <code>file_operations</code>,无处不在(第五、六卷)。</p>
+
+<h2 id="s7">26.7 五个统一操作：open/read/write/control/close</h2>
+<p>应用用统一的 <code>rt_device_*</code> API 操作任何设备:</p>
+<pre><code>/* 应用代码 —— 操作任何设备都是这套, 不管是UART还是SPI还是传感器 */
+rt_device_t dev = rt_device_find("uart1");     /* 按名字找设备(对象容器!) */
+rt_device_open(dev, RT_DEVICE_FLAG_RDWR);      /* 打开 */
+rt_device_write(dev, 0, "hello", 5);           /* 写 */
+rt_device_read(dev, 0, buf, sizeof(buf));      /* 读 */
+rt_device_control(dev, cmd, &arg);             /* 控制(设波特率等特殊操作) */
+rt_device_close(dev);                          /* 关闭 */</code></pre>
+<p><code>rt_device_write</code> 内部就是调 <code>dev->write(...)</code>——把统一调用<strong>转发</strong>给具体驱动填的那个函数。这五个操作覆盖了几乎所有设备的需求:</p>
+<ul>
+  <li><strong>open/close</strong>:打开/关闭设备(初始化/释放)。</li>
+  <li><strong>read/write</strong>:数据的读写(串口收发、传感器读值)。</li>
+  <li><strong>control</strong>:那些不属于读写的"特殊操作"(设波特率、设分辨率、清缓冲)——通过 cmd 命令码区分,像个"杂项万能接口"。<strong>这对应 Linux 的 ioctl(第六卷)。</strong></li>
+</ul>
+<blockquote><p>为什么"read/write/control"这五个操作能覆盖几乎所有设备?因为设备的本质无非是"数据的进出(read/write)+ 参数的配置(control)+ 生命周期(open/close)"。<strong>这个"一切设备皆文件(用统一的读写接口)"的抽象,是 Unix/Linux 的核心哲学("Everything is a file"),RT-Thread 借鉴了它。</strong>你在 Linux 应用开发里用 <code>open/read/write/ioctl/close</code> 操作 <code>/dev/</code> 下的设备,和这里一模一样——RT-Thread 让你在 RTOS 上提前体验了这套。第五卷讲 VFS、第六卷讲字符设备驱动时,你会看到 Linux 把这套做得更完整(file_operations),但思想同源。</p></blockquote>
+
+<h2 id="s8">26.8 注册与查找设备</h2>
+<p>驱动怎么让自己"被应用找到"?<strong>注册(register)</strong>——把设备对象登记到系统:</p>
+<pre><code>/* 驱动初始化时: 填好操作函数, 注册设备 */
+static struct rt_device uart_device;
+
+int uart_init(void)
+{
+    uart_device.type  = RT_Device_Class_Char;
+    uart_device.read  = uart_read;    /* 填自己的实现 */
+    uart_device.write = uart_write;
+    uart_device.control = uart_control;
+    /* 注册, 起名"uart1" */
+    rt_device_register(&uart_device, "uart1", RT_DEVICE_FLAG_RDWR);
+    return 0;
+}
+INIT_BOARD_EXPORT(uart_init);   /* 自动初始化机制, 开机自动调用(26.9) */</code></pre>
+<p><code>rt_device_register</code> 就是把设备对象挂进<strong>对象容器</strong>(第25章)的 Device 链表。之后应用用 <code>rt_device_find("uart1")</code> 按名字在容器里查找——<strong>这就是第25章对象容器"按名查找"能力的实际应用!</strong>对象模型和设备框架在这里完美配合:设备是对象,注册就是加入容器,查找就是遍历容器。<strong>你看,第25章的对象模型不是花架子,它是设备框架的地基。</strong></p>
+
+<h2 id="s9">26.9 分层：应用—设备框架—驱动—硬件</h2>
+<p>把整个设备框架的分层画出来,这是理解一切驱动架构的通用图景:</p>
+<pre><code>┌─────────────────────────────────────┐
+│  应用层                               │  rt_device_read/write/control
+│  (只认统一接口, 不管硬件)              │  只需知道设备名"uart1"
+├─────────────────────────────────────┤
+│  设备框架层 (rt_device)               │  统一接口 → 转发给具体驱动
+│  (定义"设备该有哪些操作")              │  dev->read(...)
+├─────────────────────────────────────┤
+│  驱动层 (具体驱动)                     │  uart_read/uart_write...
+│  (实现操作, 操作寄存器/DMA/中断)        │  填 rt_device 的函数指针
+├─────────────────────────────────────┤
+│  硬件层 (UART/SPI/I2C 外设)            │  真实的寄存器
+└─────────────────────────────────────┘
+
+好处:
+  ① 应用与硬件解耦: 换芯片只改驱动层, 应用不动
+  ② 统一体验: 所有设备都用open/read/write/control
+  ③ 可复用: 上层组件(如文件系统、shell)能操作任何设备</code></pre>
+<p>还有个配套的<strong>自动初始化机制</strong>(<code>INIT_BOARD_EXPORT</code> 等宏):驱动用这些宏把自己的初始化函数"注册"到特定的段,系统启动时自动按顺序调用它们——<strong>不用在 main 里手动一个个初始化。</strong>这用了链接脚本把函数指针收集到一个段、启动时遍历调用的技巧(Linux 的 <code>initcall</code> 机制一模一样,第五卷讲)。<strong>这让添加新驱动"即插即用"——写好驱动加个宏,开机自动初始化,零侵入。</strong></p>
+
+<h2 id="s10">26.10 对比 Linux 设备模型</h2>
+<p>RT-Thread 设备框架就是 Linux 设备模型的"简化预习版",提前对照:</p>
+<table>
+<tr><th>概念</th><th>RT-Thread</th><th>Linux(第五、六卷)</th></tr>
+<tr><td>设备抽象</td><td>rt_device + 函数指针</td><td>struct device + file_operations</td></tr>
+<tr><td>统一接口</td><td>open/read/write/control</td><td>open/read/write/ioctl(系统调用)</td></tr>
+<tr><td>设备命名/查找</td><td>rt_device_find("uart1")</td><td>/dev/ttyS0 路径 + VFS</td></tr>
+<tr><td>控制杂项</td><td>control(cmd, args)</td><td>ioctl(fd, cmd, args)</td></tr>
+<tr><td>自动初始化</td><td>INIT_*_EXPORT</td><td>module_init / initcall</td></tr>
+<tr><td>设备分类</td><td>字符/块/网络...</td><td>字符设备/块设备/网络设备</td></tr>
+</table>
+<blockquote><p>看这张表,<strong>RT-Thread 设备框架几乎是 Linux 设备模型的等比例缩小版</strong>——概念一一对应,只是 Linux 更复杂(有 VFS、sysfs、设备树、总线-设备-驱动模型等)。<strong>你在 RT-Thread 这个清晰的小模型里理解了"统一设备抽象 + 函数指针多态 + 注册查找 + 自动初始化",到第六卷读 Linux 字符设备驱动时,就会有强烈的"这不就是 RT-Thread 那套吗"的熟悉感。</strong>这正是我们安排"FreeRTOS→RT-Thread→Linux"递进路线的用意:每一步都为下一步铺路,让最复杂的 Linux 变得可理解。</p></blockquote>
+
+<h2 id="s11">26.11 面试常问问题</h2>
+<p><strong>Q1:RT-Thread 的设备驱动框架解决什么问题?</strong><br>让应用与硬件解耦:所有设备用统一接口(open/read/write/control),应用只认设备名不管底层;换芯片只改驱动层,应用不动。</p>
+<p><strong>Q2:rt_device 如何实现"同一接口操作不同设备"?</strong><br>rt_device 里有一组函数指针(read/write/control...),每个驱动填自己的实现;应用调 rt_device_read 内部转发到 dev->read。函数指针=C 的虚函数/多态。</p>
+<p><strong>Q3:control(ioctl)是干什么的?</strong><br>处理不属于读写的杂项操作(设波特率、分辨率、清缓冲等),用 cmd 命令码区分。对应 Linux 的 ioctl。</p>
+<p><strong>Q4:设备怎么被应用找到?</strong><br>驱动 rt_device_register 把设备对象注册进对象容器;应用 rt_device_find(名字) 在容器里查找。对象模型(第25章)是设备框架的基础。</p>
+<p><strong>Q5:RT-Thread 设备框架和 Linux 设备模型的关系?</strong><br>RT-Thread 是 Linux 的简化版:rt_device≈file_operations,control≈ioctl,INIT_EXPORT≈initcall。概念一一对应,思想同源(一切皆文件)。</p>
+<p><strong>Q6:邮箱和消息队列的区别?</strong><br>邮箱传固定 4 字节(常传指针,高效),消息队列传任意大小数据块(拷贝)。都是队列思想的变体。</p>
+<p><strong>Q7:IPC 等待线程 FIFO 和 PRIO 排队的区别?</strong><br>FIFO 先来先唤醒(公平,防饿死);PRIO 高优先级先唤醒(实时)。用互斥量优先级继承时应选 PRIO。</p>
+
+<h2 id="s12">26.12 常见误区</h2>
+<ol>
+  <li><strong>"设备框架只是包了一层没用"</strong>——它实现应用与硬件解耦、统一接口、可复用,是可维护性的关键。</li>
+  <li><strong>"应用要懂具体外设的寄存器"</strong>——设备框架下应用只用统一接口,寄存器细节在驱动层。</li>
+  <li><strong>"control 就是读写"</strong>——control 处理读写之外的杂项配置操作。</li>
+  <li><strong>"RT-Thread 设备框架和 Linux 无关"</strong>——是 Linux 设备模型的简化版,概念对应。</li>
+  <li><strong>"邮箱能传大数据"</strong>——邮箱只传 4 字节(传指针);大数据用消息队列或传指针。</li>
+  <li><strong>"IPC 等待总按优先级"</strong>——RT-Thread 可选 FIFO 或 PRIO。</li>
+</ol>
+
+<h2 id="s13">26.13 本章总结</h2>
+<ul>
+  <li>IPC 继承链 <code>rt_object → rt_ipc_object → 具体IPC</code>;<code>rt_ipc_object</code> 的 <code>suspend_thread</code> 是统一的等待线程列表。</li>
+  <li>信号量/互斥量/邮箱/消息队列概念同 FreeRTOS;互斥量同样有<strong>所有权+优先级继承</strong>(owner/original_priority)。</li>
+  <li>邮箱(4字节,传指针,高效)vs 消息队列(任意大小,拷贝);IPC 等待可选 <strong>FIFO(公平)/PRIO(实时)</strong>。</li>
+  <li>★<strong>设备驱动框架</strong>:用统一的 <code>rt_device</code> + 一组<strong>函数指针</strong>抽象所有设备,应用用 open/read/write/control/close 操作任何设备,与硬件解耦。</li>
+  <li>函数指针 = C 的多态/虚函数;<strong>control ≈ Linux ioctl</strong>(处理杂项)。</li>
+  <li><code>rt_device_register</code> 把设备注册进对象容器,<code>rt_device_find</code> 按名查找——对象模型是设备框架的地基。</li>
+  <li>分层:应用—设备框架—驱动—硬件;<strong>INIT_*_EXPORT 自动初始化</strong>(≈Linux initcall)让驱动即插即用。</li>
+  <li>RT-Thread 设备框架是 <strong>Linux 设备模型的简化预习版</strong>,概念一一对应,为第五、六卷铺路。</li>
+</ul>
+
+<h2 id="s14">26.14 思维导图 / 课后题</h2>
+<pre><code>RT-Thread IPC 与设备框架
+├─ 一、IPC继承链: rt_object→rt_ipc_object→具体IPC
+│  └─ suspend_thread统一等待列表
+├─ 二、信号量/互斥量(同FreeRTOS, 有所有权+优先级继承)
+├─ 三、邮箱(4字节传指针) vs 消息队列(任意大小拷贝)
+├─ 四、等待排队: FIFO(公平) / PRIO(实时)
+├─ 五、为何要设备框架: 应用与硬件解耦
+├─ 六、★rt_device + 函数指针(C的多态/虚函数)
+├─ 七、五操作: open/read/write/control/close
+│  └─ control≈Linux ioctl(杂项配置)
+├─ 八、注册register→对象容器; find按名查找
+├─ 九、分层: 应用-框架-驱动-硬件; INIT_EXPORT自动初始化
+└─ 十、★是Linux设备模型的简化预习版(file_operations/ioctl/initcall)</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>在 RT-Thread 源码 <code>include/rtdef.h</code> 找 rt_device、rt_ipc_object、rt_mutex 定义,确认继承关系和函数指针。</li>
+  <li>找一个具体驱动(如 <code>drivers/serial.c</code>),看它如何填 rt_device 的 read/write/control 并 rt_device_register。</li>
+  <li>写应用用 rt_device_find + open/write 操作串口设备,体会"不碰寄存器就能用外设"。</li>
+  <li>用 FinSH 的 <code>list_device</code> 列出所有已注册设备,对照对象容器概念。</li>
+  <li>找一处 INIT_BOARD_EXPORT/INIT_APP_EXPORT,理解自动初始化如何工作(查链接脚本里的段收集),对比 Linux initcall。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>设备驱动框架解决什么问题?带来哪些好处?</li>
+  <li>rt_device 如何用一套接口操作不同设备?(函数指针/多态)</li>
+  <li>control/ioctl 的作用?举例。</li>
+  <li>设备如何注册和被查找?和对象模型什么关系?</li>
+  <li>RT-Thread 设备框架和 Linux 设备模型如何对应?</li>
+  <li>邮箱和消息队列的区别?IPC 等待 FIFO/PRIO 的取舍?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第廿六章 完 · 下一章《第廿七章 RT-Thread 内存管理、FinSH 与 BSP》</p>
+<div class="nav">
+  <a href="第25章-RTThread总览与内核对象.html">← 第廿五章</a>
+  <a href="index.html">目录</a>
+  <a href="第27章-RTThread-内存FinSH与BSP.html">第廿七章 →</a>
+</div>
+
+</div>
+</body>
+</html>

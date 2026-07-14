@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第十四章 Cache 一致性 (MESI)</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13.5px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第13章-GIC中断控制器.html">← 第十三章</a>
+  <a href="index.html">目录</a>
+  <a href="第15章-TrustZone.html">第十五章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第二卷 · ARM 架构</div>
+  <h1>第十四章 Cache 一致性 (MESI)</h1>
+  <div class="sub">多个核各有 Cache，怎么保证它们看到的内存是"一致"的</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">问题重述：多核 Cache 会各说各话</a></li>
+    <li><a href="#s2">一致性到底要保证什么</a></li>
+    <li><a href="#s3">生活类比：共享文档的多人编辑</a></li>
+    <li><a href="#s4">嗅探(Snooping):互相监听总线</a></li>
+    <li><a href="#s5">MESI 四个状态</a></li>
+    <li><a href="#s6">MESI 状态机：读写如何驱动转移</a></li>
+    <li><a href="#s7">一个完整的多核读写例子</a></li>
+    <li><a href="#s8">MESI 的变体：MOESI / MESIF</a></li>
+    <li><a href="#s9">一致性 ≠ 内存序：更深的坑</a></li>
+    <li><a href="#s10">Store Buffer 与 Invalidate Queue</a></li>
+    <li><a href="#s11">弱内存模型与内存屏障</a></li>
+    <li><a href="#s12">Acquire/Release 语义</a></li>
+    <li><a href="#s13">连接到锁、原子操作、RCU</a></li>
+    <li><a href="#s14">面试常问</a></li>
+    <li><a href="#s15">常见误区</a></li>
+    <li><a href="#s16">本章总结</a></li>
+    <li><a href="#s17">思维导图</a></li>
+    <li><a href="#s18">课后练习与面试题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第八章埋了两个雷:多核各有 L1、以及"Cache 里新内存里旧"。这一章引爆它们——讲清多核之间怎么靠 <strong>MESI 协议</strong>保持 Cache 一致,然后揭示一个更深的事实:<strong>硬件保证了"一致性"却不保证"内存序"</strong>,这就是为什么多核编程必须用<strong>内存屏障</strong>。这是无锁编程、Linux 内核同步、C++/Rust 原子操作的共同地基,也是嵌入式/系统岗位区分"会用锁"和"懂锁"的分水岭。这一章较硬,请慢读。</p></blockquote>
+
+<h2 id="s1">14.1 问题重述：多核 Cache 会各说各话</h2>
+<p>回顾第八章的场景,现在正式面对它。RK3588 有 8 个核,每个核有自己私有的 L1 Cache。假设内存里有个变量 <code>x = 0</code>:</p>
+<pre><code>初始: 内存 x=0
+
+核0 执行 x = 1:
+  → 写进核0的L1 Cache (写回策略, 还没写回内存)
+  → 核0的Cache: x=1    内存: x=0    核1的Cache: x=0(如果它之前读过)
+
+核1 执行 读 x:
+  → 命中核1自己的L1 → 读到 x=0  ✗ 错! 核0明明改成1了</code></pre>
+<p>这就是<strong>Cache 不一致</strong>:同一个地址 <code>x</code>,在核 0 的 Cache、核 1 的 Cache、内存里,值居然不一样。如果放任不管,多核程序会彻底崩溃——你在一个核上改了变量,别的核看不到。<strong>必须有一套机制,让所有核对同一个地址"看到的值"保持一致。</strong>这套机制就是 <strong>Cache 一致性协议(Cache Coherence Protocol)</strong>,MESI 是其中最经典的。</p>
+<blockquote><p>先厘清一个易混的术语,面试爱考:<strong>一致性(Coherence)</strong> vs <strong>一致性(Consistency)</strong>——中文都叫一致性,但英文不同、含义不同。</p>
+<p><strong>Coherence(缓存一致性)</strong>:针对<strong>单个地址</strong>,保证所有核对它看到的值最终一致、写入有个全局顺序。这是 MESI 管的。</p>
+<p><strong>Consistency(内存一致性/内存序)</strong>:针对<strong>多个地址之间</strong>的读写<strong>顺序</strong>,不同核看到的操作先后是否一致。这是内存屏障管的(14.9 起)。</p>
+<p>这一章前半讲 Coherence(MESI),后半讲 Consistency(内存序)。它们是两个不同层次的问题,搞混就全乱了。</p></blockquote>
+
+<h2 id="s2">14.2 一致性到底要保证什么</h2>
+<p>严格说,Cache 一致性协议要保证两点:</p>
+<ol>
+  <li><strong>写传播(Write Propagation)</strong>:一个核对某地址的写,最终要能被其他核看到。(核 0 改了 x,核 1 迟早得看到新值。)</li>
+  <li><strong>写串行化(Write Serialization)</strong>:所有核看到的"对同一地址的多次写"的顺序是一致的。(如果核 0 先把 x 写成 1、核 2 后写成 2,那么所有核都得看到"先 1 后 2",不能有的核看到"先 2 后 1"。)</li>
+</ol>
+<p>做到这两点,就叫"这个系统对该地址是一致的"。<strong>注意:一致性只管"单个地址"的这两件事,不管"不同地址之间的顺序"</strong>——这个关键限制是 14.9 节所有问题的根源,先记住。</p>
+
+<h2 id="s3">14.3 生活类比：共享文档的多人编辑</h2>
+<p>把每个核想象成一个员工,每人手里有一份共享文档(内存)的<strong>本地复印件</strong>(Cache)。为了不让复印件各说各话,团队定了规矩:</p>
+<ul>
+  <li><strong>谁想改文档,必须先吼一声"我要改 X 页了!",让所有其他人把手里这一页的复印件作废(撕掉)。</strong>然后只有他手里有这页的有效版本(独占),他改。</li>
+  <li>别人要读这页时,发现自己手里没有(撕掉了),就去问"谁有 X 页最新的?",从有的人那里拿一份复印件(共享)。</li>
+  <li>如果只是大家都读、没人改,那可以每人都持有一份只读复印件(共享),相安无事。</li>
+</ul>
+<p>这套"改之前先让别人作废、读之前先获取最新"的规矩,就是一致性协议的核心思想。MESI 用四个状态,把每份复印件"现在是什么身份"精确地标记出来。</p>
+
+<h2 id="s4">14.4 嗅探(Snooping):互相监听总线</h2>
+<p>上面的"吼一声"在硬件上怎么实现?靠<strong>嗅探(Snooping,也叫总线监听)</strong>。</p>
+<p>所有核的 Cache 都连在一个共享的互联(总线或片上网络)上。每个 Cache 控制器<strong>时刻监听</strong>这个互联上其他核发出的内存操作。当核 0 要写 x,它在总线上广播一个消息(如"我要独占 x 这个 Cache Line"),所有其他核的 Cache 监听到,就检查"我有没有 x 这行?有的话把它作废"。</p>
+<pre><code>          共享互联/总线(所有核都监听它)
+   ┌──────────┬──────────┬──────────┐
+ 核0 Cache   核1 Cache  核2 Cache  ...
+   │          │          │
+ 核0要写x → 广播"invalidate x" → 核1、核2监听到 → 各自作废x行</code></pre>
+<p>这就是嗅探式一致性。<strong>缺点:所有核都要监听所有广播,核多了总线成为瓶颈。</strong>所以大规模系统(几十上百核)用<strong>基于目录(Directory-based)</strong>的一致性:有个"目录"记录每个 Cache Line 被哪些核缓存了,只通知相关的核,不用全广播。RK3588 这种规模的片上一致性由互联硬件(如 ARM CCI/CMN 一致性互联)实现,逻辑上仍是 MESI 类协议。本章以嗅探式 MESI 讲原理,它最直观。</p>
+
+<h2 id="s5">14.5 MESI 四个状态</h2>
+<p>MESI 是四个状态的首字母。<strong>每个 Cache Line(不是每个变量!以行为单位,呼应第八章)在每个核的 Cache 里,都处于这四个状态之一:</strong></p>
+<table>
+<tr><th>状态</th><th>全称</th><th>含义</th><th>文档类比</th></tr>
+<tr><td><strong>M</strong></td><td>Modified 已修改</td><td>我改过这行,只有我有最新版,内存里是旧的(我"脏"了)。别人都没有。</td><td>我独占且已在复印件上改了字,还没交回原件</td></tr>
+<tr><td><strong>E</strong></td><td>Exclusive 独占</td><td>只有我缓存了这行,和内存一致(没改),别人没有。</td><td>只有我复印了这页,内容和原件相同</td></tr>
+<tr><td><strong>S</strong></td><td>Shared 共享</td><td>我有这行,别的核可能也有,大家都和内存一致(都是只读的干净副本)。</td><td>好几个人各有一份相同的只读复印件</td></tr>
+<tr><td><strong>I</strong></td><td>Invalid 无效</td><td>我这行是废的(被作废了或从没加载),不能用,要用得重新获取。</td><td>我把这页撕了/从没复印过</td></tr>
+</table>
+<p>理解四个状态的关键维度是两个问题:<strong>①这行别人有没有?(独占 E/M vs 共享 S)②我改过没有?(干净 E/S vs 脏 M)</strong></p>
+<pre><code>            别人也有?
+          否(独占)    是(共享)
+      ┌──────────┬──────────┐
+ 干净 │    E     │    S     │
+      ├──────────┼──────────┤
+ 脏   │    M     │  (不存在) │  ← 脏了就必须独占, 不能共享
+      └──────────┴──────────┘
+   (I = 无效, 不在上表, 是"没有有效副本")</code></pre>
+<p>为什么"脏且共享"不存在?因为如果我改了(脏),就必须保证别人没有旧副本在用——所以改之前一定先把别人的作废,让自己独占。<strong>M 状态天然是独占的。</strong>这个约束是一致性的核心。</p>
+<blockquote><p><strong>E(Exclusive)状态存在的意义</strong>是个好问题。为什么不只用 M/S/I 三态(MSI 协议)?因为 E 是个优化:如果我独占且干净(E),我想改它时,<strong>不需要通知任何人</strong>(反正别人都没有),直接 E→M 改掉即可,省一次总线广播。而如果是 S 状态想改,必须先广播作废别人。E 状态让"读了一个别人没读的变量,然后改它"这个常见模式免去一次广播——这在实践中很频繁,收益显著。</p></blockquote>
+
+<h2 id="s6">14.6 MESI 状态机：读写如何驱动转移</h2>
+<p>状态在两类事件下转移:<strong>本核的读写</strong>、<strong>嗅探到其他核的读写</strong>。核心规则(不必死记,理解逻辑):</p>
+<h4>本核读(Local Read)</h4>
+<ul>
+  <li>命中(M/E/S):直接读,状态不变。</li>
+  <li>未命中(I):去获取。如果别的核有 → 大家变 S(共享读);如果没别人有 → 我拿到后是 E(独占)。</li>
+</ul>
+<h4>本核写(Local Write)</h4>
+<ul>
+  <li>M 状态:直接写,还是 M。</li>
+  <li>E 状态:直接写,变 M(不用通知别人,E 的好处)。</li>
+  <li>S 状态:必须先广播"invalidate",让所有其他核的这行变 I,然后我变 M 再写。</li>
+  <li>I 状态:先获取(带独占意图,叫 Read-For-Ownership),让别人全作废,我拿到后变 M 写。</li>
+</ul>
+<h4>嗅探到其他核的操作(Remote)</h4>
+<ul>
+  <li>嗅探到别人要<strong>读</strong>我持有的行:如果我是 M(脏),我得先把最新数据提供出去(写回内存或直接转发),然后我从 M/E 降为 S(现在两家都有了)。</li>
+  <li>嗅探到别人要<strong>写</strong>(要独占)我持有的行:我必须把这行作废,变 I(别人要改了,我的副本没用了)。</li>
+</ul>
+<pre><code>关键转移一览(简化):
+  I --本核读, 无人有--→ E
+  I --本核读, 有人有--→ S
+  I --本核写--→ M (先让别人全变I)
+  E --本核写--→ M (静默, 不广播! E的优势)
+  E --嗅探别人读--→ S
+  E --嗅探别人写--→ I
+  S --本核写--→ M (广播invalidate, 别人变I)
+  S --嗅探别人写--→ I
+  M --嗅探别人读--→ S (先提供最新数据)
+  M --嗅探别人写--→ I (先提供最新数据)</code></pre>
+
+<h2 id="s7">14.7 一个完整的多核读写例子</h2>
+<p>用一个具体序列走一遍,把状态机跑活。变量 x 初始在内存 =0,两个核操作:</p>
+<pre><code>事件序列(x 所在的 Cache Line):
+
+初始:  核0=I    核1=I    内存 x=0
+
+① 核0 读 x (miss, 无人持有)
+   → 核0 获取, 无人有 → 核0=E    核1=I    (x=0)
+
+② 核1 读 x (miss, 核0持有E)
+   → 嗅探到核1读, 核0 E→S; 核1 拿到副本=S
+   → 核0=S    核1=S    (两家都有只读副本, x=0)
+
+③ 核0 写 x=1
+   → 核0是S, 要写: 广播invalidate → 核1 S→I
+   → 核0 S→M, 写入 x=1
+   → 核0=M(x=1脏)   核1=I   内存仍=0
+
+④ 核1 读 x
+   → 核1是I(被作废了), miss, 广播读请求
+   → 核0是M, 嗅探到, 先把最新x=1提供出去(转发/写回), 核0 M→S
+   → 核1 拿到 x=1 = S
+   → 核0=S   核1=S   x=1  ✓ 核1 正确读到了核0写的新值!</code></pre>
+<p>看第④步——<strong>核 1 之所以能读到核 0 写的新值,不是因为它去读了内存(内存里可能还是旧的 0),而是因为一致性协议强制核 0 把它 M 状态里的最新值提供出来。</strong>这就是"写传播"的实现。整个过程对软件透明:你在核 0 写 x、在核 1 读 x,硬件自动保证读到新值,你根本不用管 MESI。</p>
+<blockquote><p>所以第八章说的"多核靠 MESI 协议保证一致",这一章你看到了它怎么保证的:<strong>通过状态标记 + 嗅探广播 + 强制脏数据提供,让每个核对单个地址的读总能拿到最新值,且写有全局顺序。</strong>到这里,"缓存一致性(Coherence)"这个问题解决了。<strong>但请注意:MESI 只解决了"单个地址"。多个地址之间的顺序,它管不着——这就引出下半章更烧脑的部分。</strong></p></blockquote>
+
+<h2 id="s8">14.8 MESI 的变体：MOESI / MESIF</h2>
+<p>面试可能问"你知道 MESI 的变体吗",简单了解:</p>
+<table>
+<tr><th>协议</th><th>加了什么状态</th><th>解决什么</th><th>用在</th></tr>
+<tr><td><strong>MOESI</strong></td><td>O(Owned)</td><td>允许"脏且共享":一个核持有脏数据(O)并直接把它共享给别的核,<strong>不必先写回内存</strong>,减少内存写</td><td>AMD、部分 ARM</td></tr>
+<tr><td><strong>MESIF</strong></td><td>F(Forward)</td><td>多个核共享时,指定一个核(F)负责应答别人的读请求,避免多核同时应答的混乱</td><td>Intel</td></tr>
+</table>
+<p>核心思想都一样,是对 MESI 在"减少内存访问、优化共享转发"上的改进。你理解了 MESI,这些变体一点就通。ARM 的一致性互联(CCI/CMN)实现的是 MOESI 类协议。</p>
+
+<h2 id="s9">14.9 一致性 ≠ 内存序：更深的坑</h2>
+<p>现在进入本章最重要、最反直觉的部分。<strong>MESI 保证了每个地址一致,但它不保证"不同地址的读写顺序"在所有核看来一样。</strong>看这个经典例子(著名的 "Dekker/Store Buffer" 问题):</p>
+<pre><code>初始: x=0, y=0  (两个不同的变量)
+
+核0:              核1:
+  x = 1;            y = 1;
+  r1 = y;          r2 = x;
+
+问: 可能出现 r1==0 且 r2==0 吗?</code></pre>
+<p>直觉:不可能。因为如果核 0 先执行 <code>x=1</code> 再读 y,核 1 先执行 <code>y=1</code> 再读 x,总该有一个先写了、另一个能读到。可是——<strong>在 ARM 这样的弱内存模型上,r1==0 && r2==0 真的会发生!</strong></p>
+<h4>为什么?因为 CPU 会重排</h4>
+<p>核 0 的两条指令 <code>x=1</code> 和 <code>r1=y</code> 操作<strong>不同地址</strong>,没有依赖关系。为了性能(第十一章的乱序执行 + 下节的 store buffer),CPU 或编译器可能<strong>把读 y 提到写 x 之前</strong>执行,或者写 x 还堵在 store buffer 里没对别人可见时就先读了 y。于是:</p>
+<pre><code>实际可能的执行(核0视角被重排):
+  核0: 先读 y(此时y还是0) → r1=0; 之后才让 x=1 对外可见
+  核1: 先读 x(此时x还是0) → r2=0; 之后才让 y=1 对外可见
+  → r1==0 && r2==0  发生了!</code></pre>
+<blockquote><p>震撼结论:<strong>单看每个核,它的代码"看起来"是顺序执行的(单核语义不变);但从别的核的角度看,它的内存操作顺序可能被打乱。</strong>MESI 保证了 x 一致、y 一致(单地址),但没规定"核 0 的写 x 和读 y 谁先对全局可见"(跨地址顺序)。这就是 <strong>Coherence 管单地址、Consistency(内存序)管跨地址</strong> 的区别活生生的例子。<strong>这也是为什么"多核编程比想象的难一万倍"</strong>——你以为的顺序,硬件不保证。</p></blockquote>
+
+<h2 id="s10">14.10 Store Buffer 与 Invalidate Queue</h2>
+<p>为什么硬件要允许这种重排?因为两个性能结构。理解它们,你就理解了内存序问题的物理根源。</p>
+<h4>Store Buffer(写缓冲):写不必等</h4>
+<p>核 0 写 x=1 时,如果 x 这行不在自己 Cache(或是 S 状态要广播 invalidate),按 MESI 得等别的核都作废确认——这要等好多周期。为了不让 CPU 干等,加了个 <strong>Store Buffer</strong>:<strong>写操作先塞进 store buffer 立刻返回,CPU 继续执行后面的指令,写在后台慢慢生效。</strong></p>
+<pre><code>核0 执行 x=1:
+  → 塞进核0的 store buffer, CPU立刻继续下一条(读y)
+  → 此时 x=1 还在store buffer里, 对其他核还不可见!
+  → 但核0自己读x能读到store buffer里的新值(store forwarding)
+     → 所以核0自己不觉得有问题, 别的核却看不到这个写</code></pre>
+<p>这就是重排的来源之一:<strong>写被 store buffer 延迟了对外可见的时机,而后面的读却先执行了。</strong></p>
+<h4>Invalidate Queue(作废队列):作废不必立刻处理</h4>
+<p>对称的另一边:核 1 收到"invalidate x"的嗅探消息时,如果立刻处理(作废自己的行)要花时间。为了快速应答,它<strong>把 invalidate 消息塞进 Invalidate Queue 就先回复"收到",实际作废延后做。</strong>后果:核 1 可能在还没真正作废旧 x 时,又读了 x,读到了旧值。</p>
+<blockquote><p>Store Buffer 和 Invalidate Queue 是一对"为了性能而牺牲即时可见性"的结构。<strong>它们让 MESI 的"写传播"不再是即时的,而是有延迟的——这个延迟窗口,就是各种诡异多核 bug 的温床。</strong>硬件设计者的选择是:不追求"每个写立刻全局可见"(那太慢),而是提供<strong>屏障指令</strong>,让程序员在"确实需要顺序保证"的地方显式地要求。这是"默认快、按需强一致"的工程哲学。</p></blockquote>
+
+<h2 id="s11">14.11 弱内存模型与内存屏障</h2>
+<p>不同 CPU 架构对"允许多大程度的重排"有不同规定,叫<strong>内存模型(Memory Model)</strong>:</p>
+<table>
+<tr><th>模型</th><th>重排程度</th><th>架构</th></tr>
+<tr><td>强内存序(TSO 近似)</td><td>重排少(基本只允许 store-load 重排)</td><td>x86</td></tr>
+<tr><td><strong>弱内存序(Weak)</strong></td><td>重排多(几乎任意读写都可能重排)</td><td><strong>ARM</strong>、POWER、RISC-V</td></tr>
+</table>
+<p><strong>ARM 是弱内存模型</strong>——这对你太重要了。意味着在 ARM(你的 RK3588、手机)上,多核重排问题比 x86 严重得多。<strong>很多在 x86 上"碰巧能跑"的多线程代码,搬到 ARM 上就出诡异 bug</strong>,就是因为 ARM 允许更多重排。这是地平线这类 ARM 平台公司特别看重内存序的原因。</p>
+<h4>内存屏障(Memory Barrier / Fence)</h4>
+<p>屏障是一条特殊指令,强制"屏障前的内存操作必须先完成(对别人可见),才能执行屏障后的"。它把 store buffer 排空、把 invalidate queue 处理掉,重新建立顺序。ARM 有三条:</p>
+<table>
+<tr><th>指令</th><th>全称</th><th>作用</th></tr>
+<tr><td><strong>DMB</strong></td><td>Data Memory Barrier</td><td>保证屏障前后的<strong>内存访问</strong>顺序(最常用)。前面的读写都完成,后面的才开始。</td></tr>
+<tr><td><strong>DSB</strong></td><td>Data Synchronization Barrier</td><td>更强:等屏障前所有内存访问<strong>真正完成</strong>(不只是排序),才继续。用于确保如"关了 MMU 才能继续"这类。</td></tr>
+<tr><td><strong>ISB</strong></td><td>Instruction Synchronization Barrier</td><td>刷新流水线,保证后面的指令重新取指(用于改了系统寄存器、自修改代码后)。</td></tr>
+</table>
+<p>回到 14.9 的例子:只要在两条指令间插入 <code>DMB</code>,就强制 <code>x=1</code> 先对外可见,再读 y,r1==0 && r2==0 就不会发生了。<strong>屏障是程序员对硬件说"这里我需要真正的顺序,别给我重排"的唯一手段。</strong></p>
+
+<h2 id="s12">14.12 Acquire / Release 语义</h2>
+<p>全屏障(DMB)太重(它挡住所有方向的重排)。很多场景只需要"单方向"的顺序保证,于是有了更精细的 <strong>Acquire/Release 语义</strong>(ARMv8 有专门的 <code>LDAR</code>/<code>STLR</code> 指令直接支持):</p>
+<ul>
+  <li><strong>Acquire(获取,用于读)</strong>:这个读之后的所有操作,不能被重排到它前面。像"进门"——进门之后的动作都在进门之后。用于<strong>加锁、读标志位</strong>。</li>
+  <li><strong>Release(释放,用于写)</strong>:这个写之前的所有操作,不能被重排到它后面。像"出门"——出门前的动作都在出门前完成。用于<strong>解锁、发布数据</strong>。</li>
+</ul>
+<pre><code>经典的"发布-订阅"模式(生产者发布数据, 消费者读取):
+
+生产者(核0):                消费者(核1):
+  data = 42;                  while (ready.load(acquire) == 0);  // 等标志
+  ready.store(1, release);    r = data;   // 读数据
+
+release 保证: data=42 一定在 ready=1 之前对外可见
+acquire 保证: 读到 ready=1 后, 才读 data(不会提前)
+→ 消费者看到 ready=1 时, data 一定已是 42  ✓ 无锁, 正确!</code></pre>
+<blockquote><p>Acquire/Release 是现代无锁编程的核心工具,C++11/Rust 的 <code>std::atomic</code> memory_order 直接暴露它们(<code>memory_order_acquire</code>/<code>release</code>)。<strong>它比全屏障高效</strong>:只挡一个方向,让编译器/CPU 在允许的方向上仍能优化。ARMv8 用 <code>LDAR</code>(load-acquire)/<code>STLR</code>(store-release)硬件指令实现,比"普通 load/store + DMB"更省。理解 acquire/release,是从"会用锁"迈向"能写无锁数据结构"的关键一步。第五卷的 Linux <code>smp_load_acquire</code>/<code>smp_store_release</code>、seqlock、RCU 都建立在此。</p></blockquote>
+
+<h2 id="s13">14.13 连接到锁、原子操作、RCU</h2>
+<p>把这一章接到你天天用(但可能没深究)的东西上,你会发现它们全靠本章的机制:</p>
+<ul>
+  <li><strong>自旋锁(spinlock)</strong>:加锁=用原子指令拿到锁 + acquire 屏障;解锁=release 屏障 + 写。屏障保证"临界区里的操作不会重排到锁外"。没有屏障,临界区的读写会泄漏到锁外面,保护就失效了。</li>
+  <li><strong>原子操作(atomic)</strong>:ARM 用 <code>LDXR/STXR</code>(独占加载/存储,LL/SC 模式)实现原子性——独占加载标记一个地址,独占存储时如果这期间没别人动过就成功、否则失败重试。它本身就依赖 MESI 的独占状态。<code>atomic_add</code>、CAS(比较交换)都基于它。</li>
+  <li><strong>无锁队列 / RCU</strong>:完全不用锁,靠精心安排的 acquire/release 屏障保证发布的数据对读者可见的顺序。RCU(第五卷重点)是 Linux 内核里读多写少场景的神器,其正确性深度依赖内存序。</li>
+  <li><strong>为什么 <code>volatile</code> 不够做多线程同步</strong>(第四章埋的):<code>volatile</code> 只阻止编译器把变量缓存进寄存器(每次读真实内存),但它<strong>不产生内存屏障、不阻止 CPU 重排、不保证原子性</strong>。所以在 ARM 多核上,volatile 变量的多线程访问照样会因重排出 bug。<strong>多线程同步要用原子操作 + 屏障,不是 volatile。</strong>这是 C/C++ 里一个巨大的常见误区,面试高频。</li>
+</ul>
+<blockquote><p>这一章是第五卷"并发与同步"(SpinLock、Mutex、Atomic、RCU、内存屏障)的硬件地基。<strong>90% 的工程师会用锁,但只有懂 MESI 和内存序的人,才能理解锁为什么这样实现、无锁编程为什么难、ARM 上的诡异并发 bug 从哪来。</strong>、地平线做多核实时系统,这是核心考点。你能把"MESI 保证单地址一致 → 但 store buffer 导致跨地址重排 → 所以需要屏障 → acquire/release 是精细屏障 → 锁和原子操作靠它们"这条链讲通,就到了资深工程师的认知水平。</p></blockquote>
+
+<h2 id="s14">14.14 面试常问问题</h2>
+<p><strong>Q1:多核 Cache 不一致的问题是什么?怎么解决?</strong><br>各核私有 Cache 对同一地址可能存不同值。用 Cache 一致性协议(MESI)+ 嗅探/目录,保证写传播和写串行化。</p>
+<p><strong>Q2:MESI 四个状态各是什么?E 状态有什么用?</strong><br>Modified(改过、独占、脏)、Exclusive(独占、干净)、Shared(共享、干净)、Invalid(无效)。E 让"独占干净行改写"时无需广播,省一次总线事务。</p>
+<p><strong>Q3:Cache 一致性(coherence)和内存一致性/内存序(consistency)的区别?</strong><br>coherence 管单个地址所有核看到值一致;consistency 管多个地址读写的可见顺序。MESI 只解决前者,后者需内存屏障。</p>
+<p><strong>Q4:为什么会有内存重排?store buffer 起什么作用?</strong><br>为性能,写先进 store buffer 立即返回、延迟对外可见,后续读可能先执行,造成跨地址重排。invalidate queue 对称地延迟作废。</p>
+<p><strong>Q5:ARM 是强还是弱内存模型?带来什么后果?</strong><br>弱内存模型,允许大量重排。x86 上碰巧正确的多线程代码到 ARM 可能出 bug,必须正确使用内存屏障。</p>
+<p><strong>Q6:内存屏障有哪些?acquire/release 是什么?</strong><br>ARM 有 DMB(排序内存访问)、DSB(等完成)、ISB(刷流水线)。acquire(读,后续不上移)/release(写,之前不下移)是单向屏障,用于加解锁、发布订阅,比全屏障高效。</p>
+<p><strong>Q7:volatile 能用于多线程同步吗?为什么?</strong><br>不能。volatile 只防编译器把变量缓存进寄存器,不产生屏障、不防 CPU 重排、不保证原子。多线程同步要用原子操作+屏障。</p>
+
+<h2 id="s15">14.15 常见误区</h2>
+<ol>
+  <li><strong>"MESI 保证多线程程序正确"</strong>——只保证单地址一致(coherence),不保证跨地址顺序(consistency),后者要屏障。</li>
+  <li><strong>"一致性协议按变量工作"</strong>——按 Cache Line(第八章),这也是伪共享的根源。</li>
+  <li><strong>"CPU 不会重排我的代码"</strong>——弱内存模型(ARM)会重排无依赖的读写,单核语义不变但多核可见顺序变。</li>
+  <li><strong>"volatile 就能做同步"</strong>——不能,它不是屏障也不保证原子。</li>
+  <li><strong>"x86 能跑就没问题"</strong>——x86 强内存序掩盖了 bug,搬到 ARM 弱内存序就暴露。</li>
+  <li><strong>"加了锁就不用管内存序"</strong>——对,但那是因为锁的实现内部已经用了 acquire/release 屏障;自己写无锁代码就必须手动管。</li>
+  <li><strong>"屏障越多越安全,到处加"</strong>——屏障有性能代价(排空缓冲、挡重排),要精确加在需要的地方,优先用 acquire/release 而非全屏障。</li>
+</ol>
+
+<h2 id="s16">14.16 本章总结</h2>
+<ul>
+  <li>多核各有私有 Cache,同一地址可能各存不同值;<strong>Cache 一致性协议</strong>保证<strong>写传播 + 写串行化</strong>。</li>
+  <li>分清两个"一致性":<strong>Coherence(单地址,MESI 管)</strong> vs <strong>Consistency(跨地址顺序,屏障管)</strong>。</li>
+  <li>实现靠<strong>嗅探</strong>(小规模)或<strong>目录</strong>(大规模);改前作废别人、读时获取最新。</li>
+  <li><strong>MESI 四态</strong>:M(改过独占脏)、E(独占干净)、S(共享干净)、I(无效);脏必独占,E 优化了"独占行改写免广播"。</li>
+  <li>状态机由本核读写 + 嗅探他核读写驱动;M 态被别人读时须先提供最新数据(写传播的实现)。</li>
+  <li>变体 MOESI(O:脏且共享免写回)、MESIF(F:指定应答者)。</li>
+  <li><strong>关键陷阱</strong>:MESI 保证单地址一致,但 <strong>store buffer / invalidate queue</strong> 导致跨地址读写重排。</li>
+  <li><strong>ARM 是弱内存模型</strong>,重排多,x86 上正确的代码到 ARM 可能出 bug。</li>
+  <li><strong>内存屏障</strong>(DMB/DSB/ISB)强制顺序;<strong>acquire/release</strong> 是高效的单向屏障(LDAR/STLR),用于锁和发布-订阅。</li>
+  <li>锁、原子操作、RCU、无锁编程全建立在本章之上;<strong>volatile 不能做多线程同步</strong>。</li>
+</ul>
+
+<h2 id="s17">14.17 思维导图</h2>
+<pre><code>Cache 一致性 (MESI)
+├─ 一、问题:多核私有Cache对同一地址各说各话
+├─ 二、要保证:写传播 + 写串行化(仅单地址!)
+├─ 三、术语:Coherence(单地址,MESI) vs Consistency(跨地址序,屏障)
+├─ 四、实现:嗅探(广播,小规模)/目录(大规模)
+├─ 五、MESI四态
+│  ├─ M改过独占脏 / E独占干净 / S共享干净 / I无效
+│  ├─ 脏必独占;(脏且共享)不存在
+│  └─ E优化:独占干净改写免广播
+├─ 六、状态机:本核读写+嗅探他核驱动
+│  └─ M被读→先提供最新(写传播)
+├─ 七、完整例子:核0写核1读→硬件强制传播新值
+├─ 八、变体MOESI(O)/MESIF(F)
+├─ 九、★一致性≠内存序
+│  └─ x=1;r1=y || y=1;r2=x → ARM上可r1=r2=0!
+├─ 十、根源:StoreBuffer(写延迟可见)+InvalidateQueue(作废延迟)
+├─ 十一、弱内存模型(ARM!)+ 屏障DMB/DSB/ISB
+├─ 十二、Acquire(读)/Release(写)单向屏障(LDAR/STLR)
+│  └─ 发布-订阅无锁模式
+└─ 十三、连接:锁/原子(LDXR/STXR)/RCU靠屏障;volatile≠同步</code></pre>
+
+<h2 id="s18">14.18 课后练习与面试题</h2>
+<h3>课后练习</h3>
+<ol>
+  <li>在 RK3588(ARM)上写 14.9 的例子(两线程分别 <code>x=1;r1=y</code> 和 <code>y=1;r2=x</code>),循环几百万次统计 <code>r1==0&&r2==0</code> 出现的次数——你会真的看到它发生!再加 <code>__sync_synchronize()</code>(全屏障)后重跑,验证不再发生。这是理解内存序最震撼的实验。</li>
+  <li>把上面代码在 x86 机器上跑,对比出现频率(x86 强内存序下也可能因 store-load 重排出现,但语义规则不同),体会架构差异。</li>
+  <li>用 C++ <code>std::atomic</code> 写 14.12 的发布-订阅,分别用 <code>memory_order_relaxed</code> 和 <code>acquire/release</code>,在 ARM 上验证 relaxed 会读到旧 data、acquire/release 正确。</li>
+  <li>写一个用 <code>volatile</code>(而非原子)做的多线程计数器,多核并发自增,验证结果小于预期(丢更新),说明 volatile 不保证原子。</li>
+  <li>反汇编一段用了 <code>std::atomic</code> acquire/release 的代码,找出生成的 <code>LDAR</code>/<code>STLR</code>/<code>DMB</code> 指令。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>MESI 四个状态及转移的核心规则?E 状态的意义?</li>
+  <li>一致性协议如何保证核 1 能读到核 0 写的新值?</li>
+  <li>Coherence 和 Consistency(内存序)的区别?MESI 解决哪个?</li>
+  <li>为什么会发生内存重排?store buffer 和 invalidate queue 的作用?</li>
+  <li>ARM 内存模型的特点?对多核编程有何影响?</li>
+  <li>DMB/DSB/ISB 的区别?acquire/release 语义是什么?</li>
+  <li>自旋锁/原子操作是如何利用一致性和屏障实现的?</li>
+  <li>为什么 volatile 不能替代原子操作做多线程同步?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第十四章 完 · 下一章《第十五章 TrustZone 安全世界》</p>
+<div class="nav">
+  <a href="第13章-GIC中断控制器.html">← 第十三章</a>
+  <a href="index.html">目录</a>
+  <a href="第15章-TrustZone.html">第十五章 →</a>
+</div>
+
+</div>
+</body>
+</html>

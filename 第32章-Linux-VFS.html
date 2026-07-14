@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第卅二章 VFS 虚拟文件系统</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第31章-Linux内存管理Buddy与Slab.html">← 第卅一章</a>
+  <a href="index.html">目录</a>
+  <a href="第33章-Linux-Signal信号.html">第卅三章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第五卷 · Linux 内核</div>
+  <h1>第卅二章 VFS 虚拟文件系统</h1>
+  <div class="sub">"一切皆文件"背后的那层抽象</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么需要 VFS</a></li>
+    <li><a href="#s2">生活例子:统一插座</a></li>
+    <li><a href="#s3">VFS 四大对象</a></li>
+    <li><a href="#s4">inode:文件的身份证</a></li>
+    <li><a href="#s5">dentry:路径的缓存</a></li>
+    <li><a href="#s6">file:打开的文件</a></li>
+    <li><a href="#s7">fd → file → inode 的链条</a></li>
+    <li><a href="#s8">open/read 的完整流程</a></li>
+    <li><a href="#s9">一切皆文件:设备/管道/socket</a></li>
+    <li><a href="#s10">页缓存 page cache</a></li>
+    <li><a href="#s11">回扣 RT-Thread 设备框架</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:你用过 <code>open/read/write/close</code>,也听过"Linux 一切皆文件"。这句话背后是 <strong>VFS(Virtual File System,虚拟文件系统)</strong>——一层抽象,让 ext4、FAT、U盘、键盘、管道、网络 socket 全都能用同一套 <code>read/write</code> 接口操作。<strong>这一章你会发现,VFS 就是第26章 RT-Thread 设备框架"用函数指针统一设备"的正统放大版——又一次"加一层抽象"。</strong></p></blockquote>
+
+<h2 id="s1">32.1 为什么需要 VFS</h2>
+<p>设想没有 VFS 的世界:你的程序要读 ext4 文件用一套 API,读 FAT32 U盘用另一套,读 NTFS 又一套……每换一种文件系统,应用就得重写。更别说读键盘、读网络数据了。<strong>这是典型的"接口不统一"问题。</strong></p>
+<p>Linux 的解法和它一贯的哲学一样:<strong>加一层抽象。</strong>在应用和各种具体文件系统之间插入 <strong>VFS 层</strong>,规定一套统一接口(<code>read/write/open/...</code>),各文件系统各自实现这套接口。应用只对 VFS 编程,底层是 ext4 还是 FAT 还是 U 盘,应用不用管。</p>
+<pre><code>没有VFS:                     有VFS:
+ 应用 → ext4 API              应用 → 统一接口(read/write)
+ 应用 → FAT API                        │
+ 应用 → NTFS API                       ▼  VFS层
+ (每种都要适配)                 ┌──────┴──────┐
+                              ext4  FAT  NTFS  设备  socket
+                              (各自实现统一接口)</code></pre>
+<p><strong>这就是"一切皆文件"的技术根源:因为 VFS 定义了统一接口,连设备、管道、网络都实现这套接口,于是它们"看起来都像文件",都能用 read/write 操作。</strong></p>
+
+<h2 id="s2">32.2 生活例子：统一插座 / 万能遥控器</h2>
+<p>想象各国电器插头形状不同(美标、欧标、国标)。VFS 就像一个<strong>万能转换插座</strong>:墙上统一是一种插孔(VFS 接口),你的各国电器配一个转换头(各文件系统的实现),插上就能用。你(应用)只认墙上那个统一插孔,不用关心背后电是哪来的。</p>
+<p>或者像<strong>万能遥控器</strong>:一个遥控器(read/write)能控制电视、空调、音响——因为每个设备都实现了"接收遥控信号"这个统一接口。VFS 就是给所有存储/IO 设备定义的那套"统一遥控协议"。</p>
+
+<h2 id="s3">32.3 VFS 四大对象</h2>
+<p>VFS 用四个核心数据结构描述文件系统。<strong>先记住它们的分工,后面逐个展开:</strong></p>
+<table>
+<tr><th>对象</th><th>代表什么</th><th>生活类比</th></tr>
+<tr><td><strong>superblock</strong></td><td>一个已挂载的文件系统整体(整块盘的元信息)</td><td>一栋楼的物业总台</td></tr>
+<tr><td><strong>inode</strong></td><td>一个文件/目录的元数据(大小、权限、数据块位置),不含文件名</td><td>身份证(有编号、属性,但没写"外号")</td></tr>
+<tr><td><strong>dentry</strong></td><td>目录项:把文件名和 inode 关联起来,构成目录树</td><td>通讯录里"名字→身份证号"的一条记录</td></tr>
+<tr><td><strong>file</strong></td><td>一个"打开的文件"实例(含读写位置 offset)</td><td>你借出的一本书(记着你读到第几页)</td></tr>
+</table>
+<blockquote><p>一个关键区分:<strong>inode 是文件"本身"(磁盘上的实体),file 是文件"被打开的一次会话"。</strong>同一个文件被打开两次,有两个 file(各有各的读写位置),但只有一个 inode。这和第26章 RT-Thread 里 rt_device(设备本身)vs 打开设备的概念对应。四大对象里,<strong>superblock 管整个文件系统,inode+dentry 描述文件树的静态结构,file 描述动态的打开状态。</strong></p></blockquote>
+
+<h2 id="s4">32.4 inode：文件的身份证</h2>
+<p><strong>inode(index node,索引节点)</strong>存一个文件的所有元数据,<strong>除了文件名</strong>:</p>
+<pre><code>struct inode 里有什么:
+  ├─ i_mode    权限和类型(是普通文件?目录?设备?)
+  ├─ i_uid/gid 属主
+  ├─ i_size    文件大小
+  ├─ i_atime/mtime/ctime  时间戳
+  ├─ i_nlink   硬链接数(有几个文件名指向我)
+  ├─ 数据块位置 (文件内容存在磁盘哪些块)
+  └─ i_op / i_fop  操作函数表(★关键:指向具体文件系统的实现)</code></pre>
+<p>注意两点。第一,<strong>inode 里没有文件名</strong>——文件名在 dentry 里。为什么分开?因为一个文件可以有多个名字(硬链接),让多个 dentry 指向同一个 inode。第二,<strong><code>i_op</code>/<code>i_fop</code> 是函数指针表</strong>——这就是 VFS 统一接口的实现机制:VFS 调用 <code>inode->i_fop->read()</code>,ext4 的 inode 里这个指针指向 ext4 的读函数,FAT 的指向 FAT 的读函数。<strong>和第26章 RT-Thread 设备的 <code>rt_device_ops</code> 函数指针表一模一样的手法!</strong></p>
+
+<h2 id="s5">32.5 dentry：路径的缓存</h2>
+<p><strong>dentry(directory entry,目录项)</strong>把<strong>文件名</strong>和 <strong>inode</strong> 关联起来,并构成目录树:</p>
+<pre><code>路径 /home/cys/a.txt 对应一串 dentry:
+
+  dentry("/")  ──→ inode(根目录)
+     │ 子项
+  dentry("home") ──→ inode(home目录)
+     │
+  dentry("cys") ──→ inode(cys目录)
+     │
+  dentry("a.txt") ──→ inode(a.txt文件)
+
+每个dentry: {名字, 指向的inode, 父dentry, 子dentry们}</code></pre>
+<p>为什么单独有 dentry?<strong>为了加速路径查找(dcache,目录项缓存)。</strong>每次打开 <code>/home/cys/a.txt</code> 都要从根一级级查找目录,很慢(要读磁盘)。dentry 把查找过的"名字→inode"关系缓存在内存,下次直接命中,不用再读盘。<strong>dcache 是 Linux 文件系统性能的关键——它把"路径解析"从磁盘操作变成内存操作。</strong>(还记得第31章 slabtop 里的 dentry 缓存吗?那正是这些 dentry 用 Slab 分配的。)</p>
+
+<h2 id="s6">32.6 file：打开的文件</h2>
+<p><strong>struct file</strong> 代表<strong>一次"打开"</strong>。当你 <code>open()</code> 一个文件,内核创建一个 file 对象:</p>
+<pre><code>struct file 里有什么:
+  ├─ f_inode / f_path  指向文件(inode/dentry)
+  ├─ f_pos     ★当前读写位置(offset)
+  ├─ f_flags   打开模式(只读?追加?)
+  ├─ f_count   引用计数
+  └─ f_op      操作函数表(read/write/...)</code></pre>
+<p>关键是 <strong><code>f_pos</code></strong>——读写位置。你 read 10 字节,f_pos 前进 10。<strong>这是 file 和 inode 的本质区别:file 记录"读到哪了"这个会话状态,inode 不记。</strong>所以同一文件打开两次(两个 file),各读各的,互不影响 offset。<code>lseek</code> 就是改 f_pos。</p>
+
+<h2 id="s7">32.7 fd → file → inode 的链条</h2>
+<p>现在把用户看到的<strong>文件描述符 fd</strong>(那个小整数)和内核对象连起来,这是理解 IO 的核心链条:</p>
+<pre><code>用户态          进程内核结构           全局
+ fd=3  ──→  files_struct.fd_array[3] ──→ struct file ──→ inode ──→ 磁盘数据
+ (整数)      (每进程一张fd表)          (打开会话,有offset)  (文件实体)
+
+open("/a.txt") 做的事:
+  1. 路径解析(走dentry)→ 找到 inode
+  2. 创建 struct file, f_pos=0, 指向inode
+  3. 在当前进程fd表找个空槽(如3), 指向这个file
+  4. 返回 fd=3 给用户</code></pre>
+<blockquote><p>三层映射:<strong>fd 是进程私有的小整数(索引进程的 fd 表);fd 表项指向 file(打开会话,有 offset);file 指向 inode(文件实体)。</strong>这解释了很多现象:① <code>dup()</code> 复制 fd,两个 fd 指向<strong>同一个 file</strong>(共享 offset);② 两次 <code>open</code> 同一文件,两个 file 指向<strong>同一 inode</strong>(不共享 offset);③ fork 后子进程<strong>复制 fd 表但共享 file</strong>(第29章),所以父子进程读写同一文件共享 offset。面试爱问"fd、file、inode 的关系",这张图就是答案。</p></blockquote>
+
+<h2 id="s8">32.8 open/read 的完整流程</h2>
+<p>串一遍 <code>read(fd, buf, n)</code> 从用户到磁盘的完整路径,把 VFS 的分层看清:</p>
+<pre><code>read(3, buf, 100) 的旅程:
+  ① 用户调 read → 系统调用陷入内核(第七章软中断/svc)
+  ② 内核: fd=3 → 查进程fd表 → 拿到 struct file
+  ③ 调用 file->f_op->read()  ← VFS统一入口
+        │ (这个指针指向具体文件系统的实现)
+        ▼
+  ④ ext4的read实现:
+        - 先查 page cache(内存缓存)有没有这页?
+        - 有 → 直接拷给用户(快!)
+        - 没有 → 向块设备层发请求读磁盘 → 填page cache → 拷给用户
+  ⑤ 更新 file->f_pos += 实际读的字节
+  ⑥ 返回读到的字节数给用户</code></pre>
+<p><strong>VFS 的分层在第③步体现得最清楚:VFS 不关心怎么读,它只负责"根据 file 找到对应文件系统的 read 函数并调用"。</strong>具体读 ext4 还是 FAT,由 f_op 指向的实现决定。这就是"统一接口 + 多态实现"——面向对象里的多态,在 C 语言里用函数指针表实现(第25/26章 RT-Thread 反复用这招)。</p>
+
+<h2 id="s9">32.9 一切皆文件：设备 / 管道 / socket</h2>
+<p>VFS 最漂亮的地方:<strong>不只磁盘文件,连设备、管道、socket 都实现 f_op,于是都能用 read/write 操作。</strong></p>
+<table>
+<tr><th>"文件"</th><th>read/write 实际做什么</th></tr>
+<tr><td>普通文件(ext4)</td><td>读写磁盘数据</td></tr>
+<tr><td>设备文件 /dev/ttyS0</td><td>读写串口(f_op 指向串口驱动,第六卷)</td></tr>
+<tr><td>管道 pipe</td><td>读写内核里的一块缓冲(进程间通信)</td></tr>
+<tr><td>socket</td><td>读写网络数据(f_op 指向网络协议栈,第34章)</td></tr>
+<tr><td>/proc/xxx</td><td>读时内核动态生成信息(虚拟文件系统)</td></tr>
+</table>
+<blockquote><p>"一切皆文件"不是一句口号,而是<strong>工程上的统一</strong>:因为它们都实现了 VFS 的 f_op 接口,你可以用<strong>同一套工具和代码</strong>操作它们——<code>cat</code> 能读文件也能读 /dev/ttyS0 也能读 socket;<code>select/poll/epoll</code>(第35章)能同时等文件、管道、socket 就绪。<strong>这是"统一抽象"带来的巨大威力:一次学会 read/write,操作万物。</strong>这正是第26章 RT-Thread"把 GPIO/UART/SPI 都变成 rt_device,用统一 API 操作"的思想,Linux 用 VFS 做到了极致——连网络都纳入了文件模型。</p></blockquote>
+
+<h2 id="s10">32.10 页缓存 page cache</h2>
+<p>第32.8 步骤④提到 page cache,它太重要,单独讲。<strong>page cache 是内核在内存里对磁盘文件内容的缓存。</strong></p>
+<pre><code>为什么要page cache:
+  磁盘比内存慢几万倍(第八章存储金字塔)。
+  文件读过一次就缓存在内存(以页为单位),
+  下次读同一处 → 直接从内存拿, 不碰磁盘。
+
+  read: 先查page cache, 命中直接返回(快)
+  write: 通常先写page cache标记"脏", 稍后由内核
+         回写磁盘(异步) → 所以写完不代表落盘!</code></pre>
+<p>两个重点。第一,<strong>page cache 让文件 IO 大部分变成内存操作</strong>——这是 Linux 文件性能的核心,和第八章 Cache、第31章 Slab 一样是"用快的缓存慢的"思想(存储金字塔到处都是这招)。第二,<strong>write 默认是异步的</strong>:写入先进 page cache 标记为"脏页",内核稍后批量回写磁盘。所以 <code>write()</code> 返回不代表数据已落盘——想确保落盘要调 <code>fsync()</code>。<strong>这解释了"为什么突然断电会丢刚写的数据"</strong>(数据还在 page cache 没回写)。这些脏页占的内存,正是第31章 Buddy 分配的物理页。</p>
+
+<h2 id="s11">32.11 回扣 RT-Thread 设备框架</h2>
+<p>把 VFS 和你熟悉的 RTOS 设备抽象对齐,你会发现是同一个设计:</p>
+<table>
+<tr><th>概念</th><th>RT-Thread(第26章)</th><th>Linux VFS(本章)</th></tr>
+<tr><td>统一接口</td><td>rt_device_read/write</td><td>VFS read/write 系统调用</td></tr>
+<tr><td>多态实现</td><td>rt_device_ops 函数指针表</td><td>f_op / i_op 函数指针表</td></tr>
+<tr><td>设备/文件实体</td><td>rt_device 对象</td><td>inode</td></tr>
+<tr><td>打开的实例</td><td>打开的设备</td><td>struct file(带 offset)</td></tr>
+<tr><td>统一哲学</td><td>一切设备皆 rt_device</td><td>一切皆文件</td></tr>
+</table>
+<blockquote><p><strong>看清楚:RT-Thread 设备框架就是一个"迷你 VFS"。</strong>核心手法完全一样——<strong>定义统一接口 + 用函数指针表让每种设备/文件系统各自实现(C 语言的多态)。</strong>RT-Thread 因为是 RTOS,做得轻量(只管设备);Linux 的 VFS 把这套推到极致,连磁盘文件系统、网络、管道全纳入。<strong>你在第26章已经理解了这个思想的小版本,现在看 Linux 的大版本毫无障碍——这就是本教材"从小系统到大系统"路线的又一次兑现。</strong>"加一层抽象统一接口"是本书出现最多的设计模式:VFS、设备框架、调度类、中断控制器,全是它。</p></blockquote>
+
+<h2 id="s12">32.12 面试常问问题</h2>
+<p><strong>Q1:什么是 VFS?为什么需要它?</strong><br>VFS 是应用和具体文件系统之间的抽象层,定义统一接口(read/write/open),各文件系统各自实现。让应用不用关心底层是 ext4/FAT/设备/socket,是"一切皆文件"的技术基础。</p>
+<p><strong>Q2:VFS 四大对象?</strong><br>superblock(文件系统整体)、inode(文件元数据,无文件名)、dentry(文件名→inode,构成目录树+缓存加速)、file(打开的实例,带 offset)。</p>
+<p><strong>Q3:inode 和 file 的区别?</strong><br>inode 是文件实体(磁盘上一个,不含名字和读写位置);file 是一次打开的会话(有 f_pos 记读写位置)。同文件开两次,两个 file 共享一个 inode,各有各的 offset。</p>
+<p><strong>Q4:fd、file、inode 的关系?</strong><br>fd 是进程私有小整数→查进程 fd 表→file(打开会话)→inode(实体)。dup 共享 file(共享 offset);两次 open 共享 inode(不共享 offset);fork 复制 fd 表但共享 file。</p>
+<p><strong>Q5:"一切皆文件"怎么实现的?</strong><br>设备/管道/socket 都实现 VFS 的 f_op 接口,于是都能用 read/write 操作,用同一套工具(cat/epoll)处理。靠函数指针表的多态。</p>
+<p><strong>Q6:page cache 是什么?write 后立即断电会丢数据吗?</strong><br>内核在内存里对文件内容的缓存,让读写大多变内存操作。write 默认异步(先写 page cache 脏页,稍后回写),所以断电可能丢没回写的数据,要 fsync 确保落盘。</p>
+<p><strong>Q7:read 一个文件从系统调用到磁盘的流程?</strong><br>read→陷入内核→fd 查 file→调 file->f_op->read(VFS 多态)→具体 fs 查 page cache,命中返回,未命中读磁盘填缓存→更新 f_pos→返回。</p>
+
+<h2 id="s13">32.13 常见误区</h2>
+<ol>
+  <li><strong>"inode 里存文件名"</strong>——不存,文件名在 dentry(所以能有硬链接:多个 dentry 指一个 inode)。</li>
+  <li><strong>"fd 就是 file"</strong>——fd 是进程私有整数,经 fd 表指向 file 对象。</li>
+  <li><strong>"两次 open 共享读写位置"</strong>——不,两个 file 各有各的 offset;dup 才共享。</li>
+  <li><strong>"write 返回就落盘了"</strong>——默认写 page cache(异步回写),要 fsync 才保证落盘。</li>
+  <li><strong>"VFS 是一种文件系统"</strong>——VFS 不是文件系统,是所有文件系统之上的抽象层。</li>
+  <li><strong>"socket 不是文件"</strong>——在 VFS 眼里 socket 也有 file/f_op,能 read/write,所以"一切皆文件"。</li>
+</ol>
+
+<h2 id="s14">32.14 本章总结</h2>
+<ul>
+  <li><strong>VFS</strong> 是应用与具体文件系统之间的抽象层,统一 read/write 接口,各 fs 用<strong>函数指针表</strong>各自实现(多态)→ "一切皆文件"的根基。</li>
+  <li>四大对象:<strong>superblock</strong>(fs 整体)、<strong>inode</strong>(文件元数据,无名)、<strong>dentry</strong>(名→inode,建树+dcache 加速)、<strong>file</strong>(打开实例,带 f_pos)。</li>
+  <li>核心链条:<strong>fd(进程私有整数)→ file(会话,有 offset)→ inode(实体)</strong>;解释 dup/两次 open/fork 的共享差异。</li>
+  <li>read 流程:陷入内核 → fd 找 file → <strong>file->f_op->read 多态分发</strong> → 具体 fs 查 <strong>page cache</strong>,命中即返回,未命中读盘。</li>
+  <li>设备/管道/socket 都实现 f_op → 都能 read/write → 一套工具操作万物。</li>
+  <li><strong>page cache</strong>:内存缓存文件内容,读写大多变内存操作;write 默认异步(脏页回写),fsync 才落盘。</li>
+  <li>回扣:VFS = 第26章 RT-Thread 设备框架的放大版,同一"统一接口+函数指针多态"手法。</li>
+</ul>
+
+<h2 id="s15">32.15 思维导图 / 课后题</h2>
+<pre><code>VFS 虚拟文件系统
+├─ 一、为什么:统一各文件系统/设备的接口 → "一切皆文件"
+├─ 二、手法:加一层抽象 + 函数指针表(多态)
+├─ 三、★四大对象
+│   ├─ superblock  文件系统整体
+│   ├─ inode       文件元数据(无文件名!)
+│   ├─ dentry      名→inode, 建目录树 + dcache加速
+│   └─ file        打开实例, ★带f_pos(offset)
+├─ 四、★链条 fd(进程整数)→file(会话)→inode(实体)
+│   └─ dup共享file / 两次open共享inode / fork复制fd表共享file
+├─ 五、read流程:陷入→fd找file→f_op->read多态→page cache→磁盘
+├─ 六、一切皆文件:设备/管道/socket都实现f_op
+├─ 七、★page cache:内存缓存文件; write异步(脏页), fsync落盘
+└─ 八、回扣:= RT-Thread设备框架(rt_device_ops)的放大版</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li><code>ls -i</code> 看文件的 inode 号;<code>ln a.txt b.txt</code> 建硬链接,再 <code>ls -i</code> 观察两名字同 inode(验证 inode 不含名字)。</li>
+  <li>写程序 open 同一文件两次得两个 fd,一个 read 后看另一个的 offset 没变(验证独立 file);再用 dup 得两 fd,验证共享 offset。</li>
+  <li>大文件 <code>cat</code> 两遍,用 <code>time</code> 对比耗时,观察第二遍因 page cache 快很多;<code>echo 3 > /proc/sys/vm/drop_caches</code> 清缓存后再试。</li>
+  <li>写数据后 <code>strace</code> 观察 write 和 fsync 系统调用,理解异步回写。</li>
+  <li>读内核 <code>fs/read_write.c</code> 的 <code>vfs_read</code>,找到 <code>file->f_op->read_iter</code> 调用点,对照本章多态分发。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>VFS 是什么?为什么需要它?</li>
+  <li>VFS 四大对象及各自作用?</li>
+  <li>inode 和 file 的本质区别?</li>
+  <li>fd、file、inode 三者关系?dup 和两次 open 的差异?</li>
+  <li>"一切皆文件"在技术上如何实现?</li>
+  <li>page cache 的作用?write 后断电会不会丢数据?</li>
+  <li>把 VFS 和 RT-Thread 设备框架做对比。</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第卅二章 完 · 下一章《第卅三章 Signal 信号》</p>
+<div class="nav">
+  <a href="第31章-Linux内存管理Buddy与Slab.html">← 第卅一章</a>
+  <a href="index.html">目录</a>
+  <a href="第33章-Linux-Signal信号.html">第卅三章 →</a>
+</div>
+
+</div>
+</body>
+</html>

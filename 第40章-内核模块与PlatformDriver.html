@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第四十章 内核模块与 Platform Driver</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第39章-驱动总览与字符设备.html">← 第卅九章</a>
+  <a href="index.html">目录</a>
+  <a href="第41章-设备树DeviceTree.html">第四十一章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第六卷 · Linux 驱动</div>
+  <h1>第四十章 内核模块与 Platform Driver</h1>
+  <div class="sub">驱动怎么"插拔",以及设备与驱动如何配对</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">内核模块:可插拔的内核代码</a></li>
+    <li><a href="#s2">生活例子:乐高扩展块</a></li>
+    <li><a href="#s3">模块的骨架与编译</a></li>
+    <li><a href="#s4">模块常用命令</a></li>
+    <li><a href="#s5">设备与驱动分离的思想</a></li>
+    <li><a href="#s6">总线-设备-驱动模型</a></li>
+    <li><a href="#s7">Platform 平台设备</a></li>
+    <li><a href="#s8">platform_driver 的写法</a></li>
+    <li><a href="#s9">probe:设备与驱动配对成功</a></li>
+    <li><a href="#s10">设备信息从哪来:设备树</a></li>
+    <li><a href="#s11">回扣 RT-Thread 与统一模型</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:上一章的驱动怎么"装进"内核、又怎么卸载?答案是<strong>内核模块(kernel module)</strong>——可动态加载/卸载的内核代码。更重要的是,现代 Linux 驱动不再把"设备信息"写死在驱动里,而是用<strong>总线-设备-驱动模型</strong>把它们分离:<strong>Platform Driver</strong> 描述"怎么驱动",设备树(第41章)描述"有哪些硬件",内核负责撮合。这是 RK3588 等 SoC 驱动开发的标准范式。</p></blockquote>
+
+<h2 id="s1">40.1 内核模块：可插拔的内核代码</h2>
+<p>内核是一整个大程序。如果每加一个驱动都要重新编译整个内核、重启,那太痛苦了(改一个 LED 驱动要重启整机)。<strong>需要一种机制,能在内核运行时动态"插入"或"拔出"一段代码。</strong>这就是<strong>内核模块</strong>(.ko 文件,kernel object)。</p>
+<p>模块是<strong>可以在系统运行时动态加载进内核、也能卸载的一段内核代码</strong>。加载后它就"长在"内核里,拥有内核权限,能注册驱动、响应中断;卸载后干净移除。<strong>好处:开发驱动时改一行 <code>insmod</code> 重载即可,不用重编内核、不用重启;发布时按需加载(用到某硬件才加载对应模块,省内存)。</strong>宏内核(第28章)本是"全编译进一个大程序",模块机制给了它"运行时可扩展"的灵活性——鱼和熊掌兼得。</p>
+
+<h2 id="s2">40.2 生活例子：乐高扩展块</h2>
+<p>内核是一座已经搭好的乐高城堡(核心功能)。你想加一个新功能(驱动),不必推倒重搭整个城堡——<strong>做一块能插上去的扩展积木(模块),需要时"咔"一声插上(insmod),不用了拔下来(rmmod)。</strong>插上后它就是城堡的一部分,和城堡浑然一体(拥有内核权限);拔下来城堡照常运转。</p>
+<p><strong>关键是"标准的插口"</strong>:扩展块和城堡之间有统一的凸点接口(模块的 init/exit 入口、内核导出的符号),所以能自由插拔。这个"标准插口"让模块开发和内核主体解耦——你写模块时只需对接内核提供的 API,不用改内核源码。</p>
+
+<h2 id="s3">40.3 模块的骨架与编译</h2>
+<p>一个内核模块最小骨架就三部分:</p>
+<pre><code>#include &lt;linux/module.h&gt;
+#include &lt;linux/init.h&gt;
+
+static int __init my_init(void){        // ★加载时调用(构造)
+    printk(KERN_INFO "module loaded\n");
+    return 0;   // 返回0表示成功
+}
+static void __exit my_exit(void){       // ★卸载时调用(析构)
+    printk(KERN_INFO "module unloaded\n");
+}
+
+module_init(my_init);   // 注册加载入口
+module_exit(my_exit);   // 注册卸载入口
+MODULE_LICENSE("GPL");  // ★许可证(不写会污染内核, 部分API不可用)
+MODULE_AUTHOR("you");</code></pre>
+<p>编译用一个特殊 Makefile(借内核构建系统 Kbuild):</p>
+<pre><code># Makefile
+obj-m += mymod.o                        # 要编成模块的目标
+KDIR := /lib/modules/$(shell uname -r)/build   # 内核源码/头文件路径
+all:
+	make -C $(KDIR) M=$(PWD) modules   # 借内核的构建系统编译
+clean:
+	make -C $(KDIR) M=$(PWD) clean</code></pre>
+<p><strong><code>module_init</code>/<code>module_exit</code> 注册加载/卸载入口</strong>——这就是上一章驱动里 <code>register_chrdev</code> 所在的 <code>my_init</code> 的由来:模块加载时 <code>my_init</code> 跑,里面注册驱动;卸载时 <code>my_exit</code> 跑,注销驱动。<code>__init</code> 标记的函数用完就释放内存(省内存)。编译产出 <code>.ko</code> 文件。</p>
+
+<h2 id="s4">40.4 模块常用命令</h2>
+<p>操作模块的命令,驱动开发天天用:</p>
+<table>
+<tr><th>命令</th><th>作用</th></tr>
+<tr><td><code>insmod mymod.ko</code></td><td>加载模块(触发 module_init)</td></tr>
+<tr><td><code>rmmod mymod</code></td><td>卸载模块(触发 module_exit)</td></tr>
+<tr><td><code>modprobe mymod</code></td><td>加载模块<strong>并自动处理依赖</strong>(比 insmod 智能)</td></tr>
+<tr><td><code>lsmod</code></td><td>列出已加载的模块</td></tr>
+<tr><td><code>modinfo mymod.ko</code></td><td>看模块信息(作者、许可证、参数)</td></tr>
+<tr><td><code>dmesg</code></td><td>看内核日志(你 printk 的输出在这)</td></tr>
+</table>
+<p><strong>开发循环</strong>:改代码 → <code>make</code> → <code>insmod</code> → 测试 → <code>dmesg</code> 看输出 → <code>rmmod</code> → 再改。<strong>核心:<code>printk</code> 的输出去 <code>dmesg</code> 看(内核没有 printf 到终端,日志进内核缓冲区)。</strong><code>modprobe</code> 和 <code>insmod</code> 的区别:modprobe 会自动加载依赖的其他模块并从标准路径找,insmod 只加载你指定的单个文件——实际部署用 modprobe。</p>
+
+<h2 id="s5">40.5 设备与驱动分离的思想</h2>
+<p>现在讲本章的重头戏。上一章的驱动有个隐藏问题:<strong>硬件的信息(寄存器地址、中断号、时钟)写死在了驱动代码里。</strong>但同一个驱动可能要用在不同板子上(RK3588 和另一块板的同款串口,寄存器地址不同),难道每块板改一次驱动源码?</p>
+<blockquote><p><strong>解决思路:把"设备信息"和"驱动逻辑"分开。</strong>驱动只写"怎么操作这类硬件"(通用逻辑),具体的"这块板上这个设备在什么地址、用哪个中断"作为<strong>数据</strong>单独描述。内核在运行时把"设备信息"喂给"驱动",两者配对。<strong>这样同一个驱动配不同的设备信息,就能用在不同板子上,驱动代码完全不用改。</strong>这就是"机制与策略分离""代码与数据分离"的经典工程思想。Linux 用<strong>总线-设备-驱动模型</strong>实现它——下一节。</p></blockquote>
+
+<h2 id="s6">40.6 总线-设备-驱动模型</h2>
+<p>Linux 用三个概念组织所有硬件,这是理解现代驱动的框架:</p>
+<pre><code>Bus(总线) — Device(设备) — Driver(驱动) 模型:
+
+  ┌─────────── Bus 总线 (如 platform, i2c, spi, usb) ───────────┐
+  │  维护两个链表, 负责【撮合】:                                    │
+  │                                                              │
+  │   Device链表          ←── match() 配对 ──→    Driver链表      │
+  │   [设备1: 地址,中断]                          [驱动A: 支持XX]  │
+  │   [设备2: ...]                                [驱动B: ...]    │
+  └─────────────────────────────────────────────────────────────┘
+
+  规则: 总线不断检查, 若某Device和某Driver能匹配(比如name/兼容串相同)
+        → 调用该Driver的 probe(device) → 驱动开始管理这个设备</code></pre>
+<p><strong>三个角色:Device(设备,描述"有什么硬件、在哪")、Driver(驱动,描述"怎么操作")、Bus(总线,负责把能配对的设备和驱动撮合起来)。</strong>总线像个媒人:一边是设备名单,一边是驱动名单,它按规则(名字/兼容串匹配)牵线。<strong>配对成功就调驱动的 <code>probe</code> 函数,把设备交给驱动管理。</strong>I2C、SPI、USB、platform 都是"总线"。这个模型让设备和驱动彻底解耦、动态匹配——插入新设备自动找驱动,加载新驱动自动找设备。</p>
+
+<h2 id="s7">40.7 Platform 平台设备</h2>
+<p>I2C/SPI/USB 是真实的物理总线(有时钟线、数据线)。但 SoC 内部还有大量设备<strong>不挂在任何真实总线上</strong>——它们直接连在 CPU 的内存地址空间里(如 SoC 内部的 UART 控制器、GPIO 控制器、定时器)。这类设备用一个"虚拟总线"管理,叫 <strong>platform bus(平台总线)</strong>。</p>
+<pre><code>platform 总线: 一个"虚拟总线", 管理【直接挂在SoC内存映射上的设备】
+
+  真实总线:  I2C设备 → I2C总线    SPI设备 → SPI总线
+  虚拟总线:  SoC内部UART/GPIO/定时器 → platform总线(它们没有共同的物理总线)
+
+  为什么造个虚拟总线? 为了让这些设备也能套用统一的
+  "总线-设备-驱动"模型 → 一致的驱动框架, 不搞特殊化</code></pre>
+<p><strong>platform 总线是为"片上设备"造的虚拟总线</strong>,好让它们也能纳入统一的"总线-设备-驱动"模型(否则这些设备就得各写各的特殊逻辑)。<strong>RK3588 上你写的大部分驱动都是 platform driver</strong>——因为 GPIO、UART、I2C 控制器本身、定时器这些 SoC 内部外设,都挂在 platform 总线上。这是嵌入式 Linux 驱动最常见的类型。</p>
+
+<h2 id="s8">40.8 platform_driver 的写法</h2>
+<p>写一个 platform driver 的标准骨架:</p>
+<pre><code>static int my_probe(struct platform_device *pdev){   // ★配对成功时调用
+    // 从pdev获取硬件资源(寄存器地址、中断号——来自设备树)
+    // 初始化硬件、注册字符设备(第39章)等
+    dev_info(&pdev->dev, "probed!\n");
+    return 0;
+}
+static int my_remove(struct platform_device *pdev){  // 设备移除时
+    return 0;
+}
+
+static const struct of_device_id my_of_match[] = {   // ★匹配表
+    { .compatible = "myvendor,mydevice" },  // 和设备树的compatible对应
+    { }
+};
+MODULE_DEVICE_TABLE(of, my_of_match);
+
+static struct platform_driver my_driver = {
+    .probe  = my_probe,
+    .remove = my_remove,
+    .driver = {
+        .name = "my_driver",
+        .of_match_table = my_of_match,   // 用这个表和设备匹配
+    },
+};
+module_platform_driver(my_driver);   // ★一行搞定注册/注销(替代init/exit)</code></pre>
+<p>核心是三样:<strong><code>probe</code></strong>(配对成功后初始化硬件的函数)、<strong><code>of_match_table</code></strong>(靠 <code>compatible</code> 字符串和设备树里的设备匹配)、<strong><code>module_platform_driver</code></strong>(自动生成 init/exit 完成注册)。<strong>注意驱动里没有任何硬编码的地址/中断号</strong>——这些"设备信息"来自设备树(第41章),在 probe 里动态获取。这就是"驱动逻辑"和"设备信息"分离的落地。</p>
+
+<h2 id="s9">40.9 probe：设备与驱动配对成功</h2>
+<p><strong><code>probe</code></strong> 是驱动的灵魂函数,一定要理解它何时被调、干什么:</p>
+<pre><code>probe 的触发时机:
+  ① 系统启动/加载驱动时, platform总线做匹配
+  ② 发现有个设备的 compatible = "myvendor,mydevice"
+     正好等于某驱动 of_match_table 里的项 → 匹配成功!
+  ③ 总线调用该驱动的 probe(pdev), 把设备传进去
+  ④ probe里: 拿到寄存器地址/中断/时钟(从设备树)→ 映射寄存器
+             → 初始化硬件 → 注册字符设备/中断处理 → 设备就绪
+
+  一句话: probe = "驱动遇到了它该管的设备, 在这里把它跑起来"</code></pre>
+<blockquote><p><strong>probe 是"设备与驱动成功配对"的回调</strong>:总线撮合成功,就调驱动的 probe,并把设备(<code>platform_device</code>)作为参数传进来。<strong>probe 里做所有初始化工作</strong>:从设备(实际从设备树)读出这个具体设备的寄存器地址、中断号、时钟,把寄存器映射进内核地址空间(<code>ioremap</code>),申请中断(第43章),注册字符设备(第39章),让设备可用。<strong>对应地,设备移除或驱动卸载时调 <code>remove</code> 做清理。</strong>你写驱动的主要精力,就花在写好 probe(把硬件跑起来)和各操作函数(read/write/ioctl)上。probe 是驱动的"开机启动"入口。</p></blockquote>
+
+<h2 id="s10">40.10 设备信息从哪来：设备树</h2>
+<p>反复提到"设备信息来自设备树",这里点明,为第41章铺垫:</p>
+<pre><code>驱动里没写死地址, 那"这个设备在0xFE660000、用中断132"从哪来?
+  → 来自【设备树 DeviceTree】(第41章)
+
+设备树是一个描述硬件的文本文件(.dts), 例如:
+  myuart: serial@fe660000 {
+      compatible = "myvendor,mydevice";  ← 用它和驱动匹配!
+      reg = <0xfe660000 0x100>;          ← 寄存器地址和大小
+      interrupts = <132>;                 ← 中断号
+  };
+
+  流程: 内核启动读设备树 → 为每个节点生成一个platform_device
+        → platform总线拿它的compatible去匹配驱动
+        → 匹配上就probe, probe里用reg/interrupts初始化</code></pre>
+<p><strong>设备树是"设备信息"的载体:它用文本描述板子上有哪些硬件、各在什么地址、用什么中断和时钟。</strong>内核启动时解析设备树,为每个硬件节点创建一个 <code>platform_device</code>(带上 compatible、reg、interrupts 等信息),然后 platform 总线拿 compatible 去匹配驱动。<strong>于是:同一个驱动 + 不同板子的设备树 = 适配不同硬件,驱动代码零修改。</strong>这就是设备与驱动分离的完整闭环。设备树的语法和用法,下一章第41章详讲。</p>
+
+<h2 id="s11">40.11 回扣 RT-Thread 与统一模型</h2>
+<p>把本章概念和你熟悉的对齐:</p>
+<table>
+<tr><th>概念</th><th>Linux(本章)</th><th>RT-Thread / 你的经验</th></tr>
+<tr><td>可加载代码单元</td><td>内核模块 .ko(insmod/rmmod)</td><td>RT-Thread 动态模块 / 组件</td></tr>
+<tr><td>设备-驱动分离</td><td>总线-设备-驱动 + 设备树</td><td>RT-Thread 设备注册(较简化)</td></tr>
+<tr><td>初始化入口</td><td>probe / module_init</td><td>RT-Thread INIT_EXPORT 自动初始化(第27章)</td></tr>
+<tr><td>片上外设驱动</td><td>platform driver</td><td>STM32 HAL/寄存器直接操作</td></tr>
+</table>
+<blockquote><p><strong>对比你在 STM32/RT-Thread 的经验,能看出 Linux 驱动模型"重"在哪、为什么重。</strong>在 STM32 里,你直接在代码里写死寄存器地址(<code>#define UART0_BASE 0x40011000</code>),因为就一块板、一个固件,简单直接。但 Linux 要<strong>一个内核镜像跑在成千上万种硬件上</strong>(手机、服务器、RK3588、树莓派……),必须把"设备信息"从驱动里剥离出来(设备树),让驱动通用。<strong>总线-设备-驱动模型、probe、设备树,都是为"一套代码适配海量硬件"这个 Linux 特有需求服务的。</strong>理解了这个"为什么",你就不会觉得这套框架繁琐,而会明白它的每个部件都在解决真实的工程问题。这也是从 RTOS 迈向 Linux 驱动开发必须完成的思维升级——从"为一块板写死"到"为无数板解耦"。</p></blockquote>
+
+<h2 id="s12">40.12 面试常问问题</h2>
+<p><strong>Q1:什么是内核模块?有什么好处?</strong><br>可在运行时动态加载(insmod)/卸载(rmmod)的内核代码(.ko)。好处:开发时改代码重载即可不用重编内核/重启;发布时按需加载省内存。给宏内核提供了运行时可扩展性。</p>
+<p><strong>Q2:module_init/module_exit 的作用?</strong><br>注册模块的加载/卸载入口函数。加载时执行 init(里面注册驱动),卸载时执行 exit(注销驱动)。</p>
+<p><strong>Q3:insmod 和 modprobe 的区别?</strong><br>insmod 加载指定的单个 .ko;modprobe 从标准路径加载并自动处理模块依赖(先加载依赖的模块)。部署用 modprobe。</p>
+<p><strong>Q4:总线-设备-驱动模型是什么?解决什么问题?</strong><br>用 Bus(总线,撮合)、Device(设备信息)、Driver(驱动逻辑)三者分离,把"设备信息"和"驱动逻辑"解耦。总线按匹配规则(compatible)撮合设备和驱动,配对成功调 probe。让一套驱动适配不同硬件。</p>
+<p><strong>Q5:platform 设备是什么?什么时候用 platform driver?</strong><br>platform 是管理"直接挂在 SoC 内存映射上、无真实总线的片上设备"(UART/GPIO/定时器控制器等)的虚拟总线。SoC 内部外设的驱动多是 platform driver。</p>
+<p><strong>Q6:probe 函数何时被调用?做什么?</strong><br>总线把设备和驱动匹配成功(compatible 相同)时调用,把设备传入。probe 里从设备树获取寄存器地址/中断/时钟,映射寄存器、初始化硬件、注册字符设备/中断,让设备就绪。</p>
+<p><strong>Q7:驱动里不写死寄存器地址,那地址从哪来?</strong><br>来自设备树(.dts):内核解析设备树为每个硬件节点建 platform_device(带 reg/interrupts),probe 里读取。同一驱动配不同设备树适配不同板子,驱动零修改。</p>
+
+<h2 id="s13">40.13 常见误区</h2>
+<ol>
+  <li><strong>"加驱动必须重编内核重启"</strong>——用模块可动态 insmod/rmmod,不用重启。</li>
+  <li><strong>"printk 会打印到终端"</strong>——进内核日志缓冲,用 dmesg 看。</li>
+  <li><strong>"驱动里要写死寄存器地址"</strong>——现代做法从设备树获取,驱动保持通用。</li>
+  <li><strong>"platform 是一种物理总线"</strong>——是虚拟总线,为片上无总线设备套用统一模型而设。</li>
+  <li><strong>"probe 是自己调用的"</strong>——由总线在设备-驱动匹配成功时回调。</li>
+  <li><strong>"模块不写 MODULE_LICENSE 也没事"</strong>——会污染内核、部分 GPL-only 的 API 不可用,应写。</li>
+</ol>
+
+<h2 id="s14">40.14 本章总结</h2>
+<ul>
+  <li><strong>内核模块</strong>(.ko):运行时可 <code>insmod</code>/<code>rmmod</code> 的内核代码,给宏内核运行时扩展能力;骨架=<code>module_init</code>/<code>module_exit</code>+<code>MODULE_LICENSE</code>,借 Kbuild 编译。</li>
+  <li>命令:insmod/rmmod/<strong>modprobe(处理依赖)</strong>/lsmod/modinfo;<strong>printk 输出看 dmesg</strong>。</li>
+  <li>核心思想:<strong>设备信息与驱动逻辑分离</strong>——让一套驱动适配不同硬件。</li>
+  <li><strong>总线-设备-驱动模型</strong>:Bus 撮合、Device(有什么硬件)、Driver(怎么操作),按 compatible 匹配,配对成功调 <strong>probe</strong>。</li>
+  <li><strong>platform 总线</strong>:管片上无真实总线设备(UART/GPIO/定时器),SoC 驱动多是 platform driver;写法=probe+of_match_table+module_platform_driver。</li>
+  <li><strong>probe</strong>:设备-驱动配对成功的回调,从设备树取地址/中断/时钟、映射寄存器、初始化硬件、注册设备。</li>
+  <li><strong>设备信息来自设备树</strong>(第41章):内核解析 .dts 建 platform_device;同驱动+不同设备树适配不同板,驱动零改。</li>
+  <li>回扣:这套"重"框架是为 Linux"一套代码跑海量硬件"服务的,对比 STM32 写死地址是必要的思维升级。</li>
+</ul>
+
+<h2 id="s15">40.15 思维导图 / 课后题</h2>
+<pre><code>内核模块与 Platform Driver
+├─ 一、内核模块.ko:运行时insmod/rmmod, 宏内核可扩展
+├─ 二、骨架:module_init/module_exit + MODULE_LICENSE, Kbuild编译
+├─ 三、命令:insmod/rmmod/modprobe(依赖)/lsmod/modinfo; ★printk→dmesg
+├─ 四、★核心思想:设备信息 与 驱动逻辑 分离
+├─ 五、★总线-设备-驱动模型:Bus撮合 / Device(有什么) / Driver(怎么做)
+│      └─ 按compatible匹配 → 配对成功调probe
+├─ 六、platform总线:管片上无总线设备(UART/GPIO/定时器)
+│      └─ SoC驱动多是platform driver
+├─ 七、platform_driver写法:probe + of_match_table + module_platform_driver
+├─ 八、★probe:配对成功回调, 取地址/中断/时钟→映射→初始化→注册
+├─ 九、设备信息来自★设备树(.dts): reg/interrupts/compatible → 第41章
+└─ 十、回扣:重框架为"一套代码跑海量硬件"; vs STM32写死地址</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>写 40.3 的最小模块,make 编译,<code>insmod</code>/<code>rmmod</code>,<code>dmesg</code> 看 init/exit 打印;<code>lsmod | grep mymod</code> 确认加载。</li>
+  <li><code>modinfo</code> 看你模块的信息;给模块加 <code>module_param</code> 参数,<code>insmod mymod.ko x=5</code> 传参并在 init 里打印。</li>
+  <li><code>ls /sys/bus/platform/devices</code> 和 <code>/sys/bus/platform/drivers</code> 看系统里的 platform 设备和驱动;<code>ls /sys/bus/i2c</code> 对比。</li>
+  <li>写一个 platform driver 骨架(probe 里 printk),用设备树或代码注册一个匹配的 platform_device,观察 probe 被调用。</li>
+  <li>思考:为什么 RK3588 的串口驱动是 platform driver 而不是直接写死地址?对比 STM32 你会怎么写。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>内核模块是什么?相比编译进内核有什么好处?</li>
+  <li>insmod、rmmod、modprobe 的区别?printk 输出在哪看?</li>
+  <li>总线-设备-驱动模型解决什么问题?三个角色各是什么?</li>
+  <li>platform 总线/设备是什么?为什么需要它?</li>
+  <li>probe 函数何时被调用?里面通常做什么?</li>
+  <li>驱动如何做到不写死寄存器地址?设备信息从哪来?</li>
+  <li>对比 Linux 驱动模型和 STM32/RT-Thread 的驱动写法,为什么 Linux 这么"重"?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第四十章 完 · 下一章《第四十一章 设备树 DeviceTree》</p>
+<div class="nav">
+  <a href="第39章-驱动总览与字符设备.html">← 第卅九章</a>
+  <a href="index.html">目录</a>
+  <a href="第41章-设备树DeviceTree.html">第四十一章 →</a>
+</div>
+
+</div>
+</body>
+</html>

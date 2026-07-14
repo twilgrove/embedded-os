@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第四十一章 设备树 DeviceTree</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第40章-内核模块与PlatformDriver.html">← 第四十章</a>
+  <a href="index.html">目录</a>
+  <a href="第42章-GPIO与Pinctrl.html">第四十二章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第六卷 · Linux 驱动</div>
+  <h1>第四十一章 设备树 DeviceTree</h1>
+  <div class="sub">用一份文本描述"这块板子上有什么硬件"</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么需要设备树</a></li>
+    <li><a href="#s2">生活例子:房屋平面图</a></li>
+    <li><a href="#s3">设备树是什么</a></li>
+    <li><a href="#s4">语法:节点与属性</a></li>
+    <li><a href="#s5">三个关键属性:compatible/reg/interrupts</a></li>
+    <li><a href="#s6">地址表示:#address-cells/#size-cells</a></li>
+    <li><a href="#s7">引用与 phandle</a></li>
+    <li><a href="#s8">dts → dtb 编译</a></li>
+    <li><a href="#s9">驱动如何读设备树</a></li>
+    <li><a href="#s10">status 与设备的启用/禁用</a></li>
+    <li><a href="#s11">回扣 platform driver 全流程</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:上一章反复说"设备信息来自设备树",这一章把设备树讲透。<strong>设备树(DeviceTree)是一份描述硬件的文本文件</strong>,告诉内核"这块板上有哪些设备、各在什么地址、用什么中断和时钟"。它是 ARM Linux(RK3588、树莓派、所有 SoC 板)驱动开发绕不开的核心,也是车企岗位必考。学完你就能看懂、修改 .dts 文件,让驱动认识你的硬件。</p></blockquote>
+
+<h2 id="s1">41.1 为什么需要设备树</h2>
+<p>回到第40章的核心矛盾:<strong>一个 Linux 内核镜像要跑在成千上万种不同硬件上。</strong>每块板子的硬件布局都不同——RK3588 的 UART 在地址 0xFE660000、树莓派的在别处,中断号、时钟也各异。如果把这些信息写死在内核代码里,每块板都要改内核源码、重新编译,完全无法维护。</p>
+<p>历史上 ARM Linux 真这么干过(每块板一个 <code>board_xxx.c</code> 硬编码),导致内核里堆满了几千个板级文件,Linus Torvalds 都受不了了(著名的 "ARM board file 之乱")。<strong>解法:把"硬件描述"从内核代码里彻底剥离,变成一份独立的数据文件——设备树。</strong>内核代码保持通用(只有驱动逻辑),硬件差异全放进设备树。换板子只换设备树,内核和驱动不动。<strong>这就是"代码与数据分离"思想在硬件描述上的应用。</strong></p>
+
+<h2 id="s2">41.2 生活例子：房屋平面图</h2>
+<p>想象一家装修公司(内核+驱动),掌握通用的装修技术(怎么装灯、怎么接水管)。但每套房子(每块板)的户型不同——灯在哪、水管走向、几个房间都不一样。<strong>公司不会为每套房重写一遍技术手册,而是拿到一张"房屋平面图"(设备树)</strong>:图上标明"客厅在这、这里要装 3 个灯、厨房水管在那"。工人照图施工,同一套技术适配任何户型。</p>
+<p><strong>设备树就是这张"硬件平面图":它不含任何"怎么操作硬件"的逻辑(那是驱动的事),只描述"有什么硬件、在什么位置、什么规格"。</strong>驱动(装修工)读这张图,就知道该去操作哪个地址的哪个设备。换个板子=换张平面图,施工队(驱动)不变。</p>
+
+<h2 id="s3">41.3 设备树是什么</h2>
+<p>明确设备树的定位:</p>
+<table>
+<tr><th>问题</th><th>答案</th></tr>
+<tr><td>是什么</td><td>一种描述硬件的<strong>数据结构/文件格式</strong>(树形)</td></tr>
+<tr><td>描述什么</td><td>板上有哪些设备、地址、中断、时钟、GPIO、总线连接关系</td></tr>
+<tr><td>不描述什么</td><td>"怎么操作硬件"(那是驱动的逻辑,在 .c 代码里)</td></tr>
+<tr><td>源文件</td><td><code>.dts</code>(device tree source,文本,给人写/读)</td></tr>
+<tr><td>编译产物</td><td><code>.dtb</code>(device tree blob,二进制,给内核读)</td></tr>
+<tr><td>谁读它</td><td>bootloader 加载 .dtb 传给内核;内核解析生成设备</td></tr>
+</table>
+<p><strong>"树"体现在它的结构:硬件按层级组织成一棵树。</strong>根是整块板,下面挂 CPU、内存、各种总线(SoC),总线下面挂具体设备(UART、I2C 控制器),I2C 控制器下面又挂 I2C 设备(传感器)——正如硬件的实际连接层级。这棵树精确反映了"什么挂在什么下面"的物理拓扑。</p>
+
+<h2 id="s4">41.4 语法：节点与属性</h2>
+<p>设备树语法很简单,就两个概念:<strong>节点(node)</strong>和<strong>属性(property)</strong>。</p>
+<pre><code>/ {                              // 根节点
+    model = "My Board";          // 属性: 名 = 值
+    compatible = "myvendor,myboard";
+
+    cpus {                       // 子节点
+        cpu@0 { ... };
+    };
+
+    soc {                        // SoC节点
+        uart0: serial@fe660000 {         // ★一个UART设备节点
+            compatible = "rockchip,rk3588-uart";
+            reg = <0xfe660000 0x100>;    // 属性: 寄存器地址+大小
+            interrupts = <GIC_SPI 132 IRQ_TYPE_LEVEL_HIGH>;
+            clocks = <&cru SCLK_UART0>;  // 引用时钟(见41.7)
+            status = "okay";             // 启用
+        };
+    };
+};</code></pre>
+<p><strong>节点</strong>=一个硬件(或一组),用 <code>名字@地址 { }</code> 表示,可嵌套(体现层级)。<strong>属性</strong>=节点的一条信息,<code>名 = 值;</code>形式,值可以是字符串、数字(尖括号 <code>&lt;&gt;</code> 里)、引用等。<code>uart0:</code> 是<strong>标签(label)</strong>,方便别处引用这个节点。<strong>整个 .dts 就是这样一棵"节点里嵌节点、每个节点带若干属性"的树。</strong>看懂这个结构,设备树就不神秘了。</p>
+
+<h2 id="s5">41.5 三个关键属性：compatible / reg / interrupts</h2>
+<p>无数属性里,这三个最核心,必须吃透(它们直接对应第40章的匹配和 probe):</p>
+<table>
+<tr><th>属性</th><th>作用</th><th>对应</th></tr>
+<tr><td><strong>compatible</strong></td><td>"兼容字符串",标识这是什么设备,<strong>用来匹配驱动</strong></td><td>驱动的 of_match_table(第40章)</td></tr>
+<tr><td><strong>reg</strong></td><td>寄存器<strong>地址和大小</strong>(设备在内存映射的位置)</td><td>probe 里 ioremap 映射</td></tr>
+<tr><td><strong>interrupts</strong></td><td>设备用的<strong>中断号</strong>和触发方式</td><td>probe 里申请中断(第43章)、GIC(第13章)</td></tr>
+</table>
+<blockquote><p><strong>这三个属性串起了整个驱动匹配和初始化:</strong>①<code>compatible</code> 是"身份证"——内核拿它去和各驱动的 <code>of_match_table</code> 比对,相同就匹配成功,调那个驱动的 probe(第40章)。②<code>reg</code> 告诉驱动"设备寄存器在哪"——probe 里用 <code>ioremap</code> 把这个物理地址映射进内核虚拟地址空间(第九/十章),才能读写寄存器。③<code>interrupts</code> 告诉驱动"设备用哪个中断"——probe 里申请这个中断(第43章),接到 GIC(第13章)。<strong>记住这三个,你就掌握了设备树 80% 的实用内容。</strong>compatible 决定"谁来驱动",reg/interrupts 决定"驱动怎么找到硬件"。</p></blockquote>
+
+<h2 id="s6">41.6 地址表示：#address-cells / #size-cells</h2>
+<p>一个初学者常困惑的点:<code>reg = &lt;0xfe660000 0x100&gt;</code> 里两个数怎么解读?靠父节点的两个属性:</p>
+<pre><code>soc {
+    #address-cells = &lt;2&gt;;   // 地址用【2个】32位数表示(64位地址)
+    #size-cells = &lt;2&gt;;      // 大小用【2个】32位数表示
+
+    uart0: serial@fe660000 {
+        reg = &lt;0x0 0xfe660000  0x0 0x100&gt;;
+        //     └─地址(2个数)─┘  └─大小(2个数)─┘
+    };
+};</code></pre>
+<p><strong><code>#address-cells</code> 和 <code>#size-cells</code> 定义"子节点的 reg 里,地址占几个数、大小占几个数"。</strong>比如都为 2,表示地址用 2 个 32 位数拼成 64 位(RK3588 是 64 位地址,所以要 2 个)、大小也 2 个数。这是为了兼容 32/64 位不同地址宽度。<strong>解读一个 reg,先看父节点这两个属性,才知道怎么切分。</strong>这是设备树最容易读错的地方,记住"往父节点看 cells 定义"就不会错。</p>
+
+<h2 id="s7">41.7 引用与 phandle</h2>
+<p>设备之间常有依赖关系:一个设备要用某个时钟、某个 GPIO、挂在某个中断控制器下。设备树用<strong>引用</strong>表达这种关系:</p>
+<pre><code>cru: clock-controller@fd7c0000 {   // 时钟控制器, 有标签 cru
+    #clock-cells = <1>;
+};
+
+uart0: serial@fe660000 {
+    clocks = <&cru SCLK_UART0>;    // ★引用cru节点, 要它的SCLK_UART0时钟
+    //        └phandle┘ └参数┘
+    interrupt-parent = <&gic>;     // 引用中断控制器gic(第13章)
+};</code></pre>
+<p><strong><code>&label</code> 就是引用(底层是 phandle,一个唯一编号)——指向另一个节点。</strong>比如 <code>clocks = &lt;&cru SCLK_UART0&gt;</code> 表示"我的时钟由 cru 这个时钟控制器提供,具体是它的 SCLK_UART0"。<strong>引用让设备树能表达设备间的连接和依赖</strong>(时钟、复位、中断、GPIO、pinctrl 等都靠引用)。这样内核 probe 一个设备时,能顺着引用找到它依赖的时钟控制器、去使能时钟。<strong>引用把一棵树变成了能表达复杂硬件关系的图。</strong></p>
+
+<h2 id="s8">41.8 dts → dtb 编译</h2>
+<p>设备树的两种形态和转换:</p>
+<pre><code>.dts (文本, 人读写)  ──dtc编译──→  .dtb (二进制, 机器读)
+
+  dtc -I dts -O dtb -o board.dtb board.dts   # 编译
+  dtc -I dtb -O dts -o out.dts board.dtb     # 反编译(看已有dtb)
+
+  相关文件:
+   .dts   板级设备树源文件
+   .dtsi  设备树"头文件"(include, i=include, 放SoC公共部分)
+   .dtb   编译后的二进制, 烧进板子/放boot分区
+
+启动流程:
+  bootloader(如U-Boot) 加载 .dtb 到内存
+    → 把dtb地址传给内核
+    → 内核解析dtb, 为每个节点建platform_device(第40章)
+    → 触发驱动匹配和probe</code></pre>
+<p><strong><code>.dts</code> 给人读写,用 <code>dtc</code>(device tree compiler)编译成 <code>.dtb</code> 给内核读。</strong><code>.dtsi</code> 是"设备树头文件"——把 SoC 公共部分(如 RK3588 芯片本身固有的外设)抽出来,各板子的 .dts <code>#include</code> 它再补充自己板子特有的部分(和 C 的 .h 一个道理,避免重复)。<strong>启动时 U-Boot 把 .dtb 传给内核,内核解析后按第40章流程创建设备、匹配驱动、调 probe。</strong>改硬件配置,改 .dts、重新 dtc 编译出 .dtb、替换即可,不碰内核。</p>
+
+<h2 id="s9">41.9 驱动如何读设备树</h2>
+<p>驱动在 probe 里怎么把设备树的信息取出来用?一套 <code>of_*</code>(of=open firmware)API:</p>
+<pre><code>static int my_probe(struct platform_device *pdev){
+    struct device_node *np = pdev->dev.of_node;  // 本设备的设备树节点
+    struct resource *res;
+    void __iomem *base;
+    int irq;
+    u32 val;
+
+    // ① 取寄存器地址并映射(reg属性)
+    res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+    base = devm_ioremap_resource(&pdev->dev, res);  // ★映射寄存器
+
+    // ② 取中断号(interrupts属性)
+    irq = platform_get_irq(pdev, 0);
+
+    // ③ 读自定义属性
+    of_property_read_u32(np, "clock-frequency", &val);
+
+    // 之后就能 readl(base)/writel(v, base) 读写寄存器了(第42章)
+    return 0;
+}</code></pre>
+<p><strong>关键函数</strong>:<code>platform_get_resource</code>+<code>devm_ioremap_resource</code> 把 reg 里的物理地址映射成能读写的内核指针(<code>base</code>);<code>platform_get_irq</code> 取中断号;<code>of_property_read_u32/string</code> 读任意自定义属性。<strong>拿到映射后的 <code>base</code>,就能用 <code>readl(base+offset)</code>/<code>writel(val, base+offset)</code> 读写硬件寄存器了(第42章操作硬件)。</strong>注意 <code>devm_</code> 前缀的函数(devm=device managed)会在设备移除时<strong>自动释放</strong>资源,不用手动清理——现代驱动的省心写法。</p>
+
+<h2 id="s10">41.10 status 与设备的启用/禁用</h2>
+<p>一个实用属性 <code>status</code>,工程中天天改:</p>
+<pre><code>uart0: serial@fe660000 {
+    ...
+    status = "disabled";   // 默认禁用(SoC的.dtsi里常这样)
+};
+
+// 板级.dts里, 如果这块板用到了uart0, 就打开它:
+&uart0 {
+    status = "okay";       // ★启用! (用引用覆盖属性)
+    pinctrl-0 = <&uart0_pins>;   // 顺便配引脚(第42章)
+};</code></pre>
+<p><strong><code>status = "okay"</code> 启用设备,<code>"disabled"</code> 禁用(内核跳过它,不创建设备、不 probe)。</strong>常见套路:SoC 的 <code>.dtsi</code> 里把所有外设都定义好但设为 <code>disabled</code>(因为不是每块板都用);具体板子的 <code>.dts</code> 里,用引用 <code>&uart0 { status = "okay"; }</code> 把这块板实际用到的外设打开。<strong>这就是你在实际项目里"启用一个外设"的操作——在板级 dts 里把对应节点 status 改成 okay,并配好引脚/时钟。</strong>调试硬件不通时,第一件事就是查设备树里这个设备 status 是不是 okay、reg/中断/引脚对不对。</p>
+
+<h2 id="s11">41.11 回扣 platform driver 全流程</h2>
+<p>把第40、41章合起来,走一遍"从设备树到设备就绪"的完整流程——这是嵌入式 Linux 驱动的主干:</p>
+<pre><code>完整流程(以一个UART为例):
+  ① 你在板级.dts里: &uart0 { status="okay"; ... }  描述硬件
+  ② dtc编译 .dts → .dtb
+  ③ U-Boot加载.dtb传给内核
+  ④ 内核解析dtb → 为uart0节点建一个 platform_device
+       (携带 compatible/reg/interrupts等信息)
+  ⑤ platform总线用uart0的compatible = "rockchip,rk3588-uart"
+       去匹配驱动的 of_match_table → 匹配成功!
+  ⑥ 调用驱动的 probe(pdev)
+  ⑦ probe里: platform_get_resource取reg → ioremap映射寄存器
+             platform_get_irq取中断 → request_irq申请
+             初始化硬件 → 注册为字符设备(第39章)
+  ⑧ 设备就绪, /dev/ttyS0 可用, 应用能read/write</code></pre>
+<blockquote><p><strong>这条流程是整个第六卷的主干,把前面所有知识焊在一起:</strong>设备树(本章)描述硬件 → platform 总线-设备-驱动模型(第40章)撮合 → probe 里映射寄存器(第九/十章 MMU/虚拟内存)、申请中断(第七/13章、第43章)→ 注册字符设备(第39章)→ 挂到 VFS(第32章)→ 应用 read/write。<strong>后面 GPIO(42)、UART(44)、I2C(45)、SPI(46)、CAN(47)每一种驱动,都是这条主干 + 各自硬件的具体操作。</strong>你只要牢牢记住这条主干,再学任何具体外设驱动,都是"往主干上填该硬件的细节"。<strong>这就是嵌入式 Linux 驱动开发的统一范式</strong>——理解它,你就有了驱动开发的全局地图,不会在细节里迷路。</p></blockquote>
+
+<h2 id="s12">41.12 面试常问问题</h2>
+<p><strong>Q1:设备树是什么?为什么要用它?</strong><br>描述硬件的文本文件(.dts),告诉内核板上有哪些设备、地址、中断、时钟。为了让一个通用内核适配海量不同硬件——把硬件描述从内核代码剥离成数据,换板只换设备树,内核/驱动不改。解决了 ARM 板级文件泛滥问题。</p>
+<p><strong>Q2:设备树的基本语法?</strong><br>由节点(名字@地址 { })和属性(名=值;)组成的树,节点可嵌套体现硬件层级。label 方便引用,值可为字符串/数字(&lt;&gt;)/引用(&label)。</p>
+<p><strong>Q3:compatible、reg、interrupts 各是什么?</strong><br>compatible:兼容字符串,用来匹配驱动(对应 of_match_table);reg:寄存器地址和大小(probe 里 ioremap);interrupts:中断号和触发方式(probe 里申请中断)。</p>
+<p><strong>Q4:#address-cells/#size-cells 的作用?</strong><br>定义子节点 reg 里地址和大小各占几个 32 位数,兼容 32/64 位地址宽度。解读 reg 要先看父节点这两个属性。</p>
+<p><strong>Q5:.dts、.dtsi、.dtb 的区别?</strong><br>.dts 板级源文件;.dtsi 设备树头文件(include,放 SoC 公共部分);.dtb 编译后的二进制(dtc 生成,给内核读)。</p>
+<p><strong>Q6:驱动怎么读设备树信息?</strong><br>probe 里用 of_* / platform_* API:platform_get_resource+devm_ioremap_resource 映射寄存器,platform_get_irq 取中断,of_property_read_* 读属性。</p>
+<p><strong>Q7:status="okay"/"disabled" 有什么用?怎么启用一个外设?</strong><br>okay 启用、disabled 禁用(内核跳过)。SoC 的 .dtsi 常默认 disabled;板级 .dts 用 &node { status="okay"; } 打开实际用到的外设并配引脚时钟。</p>
+
+<h2 id="s13">41.13 常见误区</h2>
+<ol>
+  <li><strong>"设备树包含驱动逻辑"</strong>——只描述硬件(数据),操作逻辑在驱动 .c 里。</li>
+  <li><strong>"改硬件配置要改内核代码"</strong>——改设备树 .dts 即可,内核/驱动不动。</li>
+  <li><strong>"reg 的数字直接就是地址+大小各一个"</strong>——要看父节点 #address-cells/#size-cells 决定各占几个数。</li>
+  <li><strong>"compatible 随便写"</strong>——必须和驱动 of_match_table 里的完全一致才能匹配。</li>
+  <li><strong>"设备定义了就一定会被驱动"</strong>——status 要是 okay,且 compatible 匹配到驱动才行。</li>
+  <li><strong>"设备树是 ARM 独有"</strong>——主要用于 ARM/RISC-V 等嵌入式;x86 多用 ACPI,但思想类似。</li>
+</ol>
+
+<h2 id="s14">41.14 本章总结</h2>
+<ul>
+  <li><strong>设备树</strong>:描述硬件的<strong>文本文件</strong>(.dts),告诉内核板上有哪些设备、地址、中断、时钟——把硬件描述从内核代码剥离成<strong>数据</strong>,让通用内核适配海量硬件。</li>
+  <li>语法:<strong>节点</strong>(名字@地址{},可嵌套)+ <strong>属性</strong>(名=值),构成反映硬件层级的树;label 供引用。</li>
+  <li>三大关键属性:<strong>compatible</strong>(匹配驱动)、<strong>reg</strong>(寄存器地址+大小)、<strong>interrupts</strong>(中断)。</li>
+  <li><strong>#address-cells/#size-cells</strong>:定义子节点 reg 的地址/大小各占几个数(看父节点)。</li>
+  <li><strong>引用 &label</strong>(phandle):表达设备间依赖(时钟/中断/GPIO/pinctrl)。</li>
+  <li>形态:<strong>.dts</strong>(源)/<strong>.dtsi</strong>(头文件,SoC 公共)/<strong>.dtb</strong>(dtc 编译的二进制);U-Boot 加载 dtb 传给内核。</li>
+  <li>驱动读取:probe 里 <code>platform_get_resource</code>+<code>devm_ioremap_resource</code>(映射寄存器)、<code>platform_get_irq</code>、<code>of_property_read_*</code>。</li>
+  <li><strong>status="okay"/"disabled"</strong> 启用/禁用设备;板级 dts 用引用打开外设。</li>
+  <li>主干流程:<strong>dts→dtb→内核解析建 platform_device→compatible 匹配→probe(映射寄存器+申请中断+注册字符设备)→应用可用</strong>,是全卷统一范式。</li>
+</ul>
+
+<h2 id="s15">41.15 思维导图 / 课后题</h2>
+<pre><code>设备树 DeviceTree
+├─ 一、为什么:一套内核跑海量硬件 → 硬件描述剥离成数据(解决板级文件泛滥)
+├─ 二、定位:描述"有什么硬件"(数据), 不含"怎么操作"(驱动逻辑)
+├─ 三、语法:★节点(名@地址{}) + 属性(名=值), 树形反映硬件层级
+├─ 四、★三大属性:compatible(匹配驱动)/reg(地址)/interrupts(中断)
+├─ 五、#address-cells/#size-cells:reg里地址/大小各占几个数(看父节点)
+├─ 六、引用&label(phandle):表达依赖(时钟/中断/GPIO/pinctrl)
+├─ 七、形态:.dts(源)/.dtsi(头,SoC公共)/.dtb(dtc编译, U-Boot传内核)
+├─ 八、驱动读取:platform_get_resource+ioremap / get_irq / of_property_read
+├─ 九、★status=okay/disabled: 板级dts用引用启用外设
+└─ 十、★主干:dts→dtb→建platform_device→compatible匹配→probe→应用可用</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>在运行的 Linux(树莓派/RK3588/或用 QEMU)上 <code>ls /proc/device-tree/</code>,浏览节点和属性(每个属性是个文件);<code>cat /proc/device-tree/model</code> 看板型号。</li>
+  <li>用 <code>dtc -I fs -O dts /proc/device-tree</code> 把运行中的设备树导出成 .dts 阅读;找到一个 uart/i2c 节点,看它的 compatible/reg/interrupts/status。</li>
+  <li>找到你板子 SoC 的 .dtsi 和板级 .dts(内核源码 arch/arm64/boot/dts/),看板级 dts 如何用 <code>&node { status="okay"; }</code> 启用外设。</li>
+  <li>给一个 disabled 的外设在板级 dts 改成 okay、配好 pinctrl,重新 dtc 编译 dtb,观察设备是否出现(进阶,需硬件)。</li>
+  <li>解读一个 <code>reg = &lt;0x0 0xfe660000 0x0 0x100&gt;</code>:结合父节点 cells 说明地址和大小分别是多少。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>设备树是什么?解决了什么历史问题?</li>
+  <li>设备树的基本语法(节点/属性/引用)?</li>
+  <li>compatible、reg、interrupts 分别起什么作用?</li>
+  <li>#address-cells/#size-cells 怎么用?</li>
+  <li>.dts/.dtsi/.dtb 的区别?启动时谁把 dtb 给内核?</li>
+  <li>驱动 probe 里如何获取寄存器地址和中断号?</li>
+  <li>从设备树到设备就绪(应用能用)的完整流程?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第四十一章 完 · 下一章《第四十二章 GPIO 与 Pinctrl》</p>
+<div class="nav">
+  <a href="第40章-内核模块与PlatformDriver.html">← 第四十章</a>
+  <a href="index.html">目录</a>
+  <a href="第42章-GPIO与Pinctrl.html">第四十二章 →</a>
+</div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第卅四章 Socket 与网络协议栈</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第33章-Linux-Signal信号.html">← 第卅三章</a>
+  <a href="index.html">目录</a>
+  <a href="第35章-Linux-Epoll与IO多路复用.html">第卅五章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第五卷 · Linux 内核</div>
+  <h1>第卅四章 Socket 与网络协议栈</h1>
+  <div class="sub">数据是怎么"分层"穿过内核发出去的</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么需要分层</a></li>
+    <li><a href="#s2">生活例子:寄快递的封装</a></li>
+    <li><a href="#s3">网络分层模型</a></li>
+    <li><a href="#s4">socket:网络的文件接口</a></li>
+    <li><a href="#s5">TCP vs UDP</a></li>
+    <li><a href="#s6">TCP 三次握手四次挥手</a></li>
+    <li><a href="#s7">sk_buff:数据包的载体</a></li>
+    <li><a href="#s8">发送:一路封装下沉</a></li>
+    <li><a href="#s9">接收:软中断与协议栈上浮</a></li>
+    <li><a href="#s10">socket 与 VFS 的统一</a></li>
+    <li><a href="#s11">回扣中断/VFS/嵌入式</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:你写过 socket 程序、用过 TCP/UDP、跑过 ROS2(底层是 DDS 走 UDP)。这章讲<strong>数据从你的 <code>send()</code> 到网线上、再从网线到对方 <code>recv()</code>,在内核里怎么一层层封装/解封装</strong>。核心是理解"<strong>分层</strong>"这个网络的灵魂思想,以及 socket 如何借助第32章 VFS 变成"网络的文件"。</p></blockquote>
+
+<h2 id="s1">34.1 为什么需要分层</h2>
+<p>网络要解决的问题极其复杂:两台机器隔着千山万水、经过无数路由器、链路会丢包会乱序、硬件五花八门(以太网/WiFi/光纤)……如果让一个程序把这些全处理,没法写。<strong>解法还是那个老朋友——分层抽象(第32章 VFS 也是分层)。</strong></p>
+<p>把网络任务切成若干层,<strong>每层只干一件事,只和相邻层打交道</strong>:应用层管"数据内容",传输层管"可靠传给对方的某个程序",网络层管"跨网络找到对方主机",链路层管"在一根线上把比特发出去"。<strong>每层向上提供简单接口,向下隐藏复杂细节。</strong>换 WiFi 还是有线?只是最底层变,上面不用改。这就是分层的威力:<strong>把一个巨复杂问题,拆成几个各自可控的小问题。</strong></p>
+
+<h2 id="s2">34.2 生活例子：寄快递的层层封装</h2>
+<p>你寄一封信给朋友。你只写信纸内容(应用层),塞进信封写上收件人姓名(传输层:给对方的哪个人);信封放进快递箱写上详细地址(网络层:哪个城市哪条街);快递公司装上卡车,司机只管"把这箱货从 A 站开到 B 站"(链路层:一段路的运输)。</p>
+<p><strong>关键:每一层只关心自己那层的"地址",并把上层的东西当成"不透明的内容"包起来。</strong>司机不看信的内容,只看到货箱;分拣员不拆信封,只看快递单。收件方则反过来层层拆封:签收拆箱→看到信封→拆信封→读信。<strong>这个"发送方层层打包、接收方层层拆包"就是网络协议栈的工作方式。</strong></p>
+
+<h2 id="s3">34.3 网络分层模型</h2>
+<p>经典 OSI 七层太学术,实际用 <strong>TCP/IP 四层</strong>模型(Linux 就这么实现):</p>
+<table>
+<tr><th>层</th><th>干什么</th><th>协议例</th><th>"地址"</th><th>数据单位</th></tr>
+<tr><td><strong>应用层</strong></td><td>具体应用的数据</td><td>HTTP/DNS/DDS(ROS2)</td><td>-</td><td>message</td></tr>
+<tr><td><strong>传输层</strong></td><td>端到端,送到对方的哪个程序</td><td><strong>TCP / UDP</strong></td><td>端口号</td><td>段 segment</td></tr>
+<tr><td><strong>网络层</strong></td><td>跨网络找到对方主机、路由</td><td><strong>IP</strong></td><td>IP 地址</td><td>包 packet</td></tr>
+<tr><td><strong>链路层</strong></td><td>在一段物理链路上传比特</td><td>以太网/WiFi</td><td>MAC 地址</td><td>帧 frame</td></tr>
+</table>
+<pre><code>发送时数据被逐层加"头"(封装):
+
+  应用数据                          [ data ]
+  传输层加TCP头(端口)         [TCP| data ]
+  网络层加IP头(IP地址)     [IP|TCP| data ]
+  链路层加以太网头(MAC) [ETH|IP|TCP| data ]  → 发到网线
+
+接收时反过来, 每层拆掉自己的头, 交给上层。</code></pre>
+<p><strong>每层加一个"头(header)"</strong>,里面是这层需要的控制信息(端口、IP、MAC)。就像快递的层层包装,每层贴自己的单子。接收方每层读并撕掉对应的头。<strong>记住三个关键地址的分工:端口号(找主机上的哪个程序)、IP 地址(找哪台主机)、MAC 地址(找同一链路上的哪个网卡)。</strong></p>
+
+<h2 id="s4">34.4 socket：网络的文件接口</h2>
+<p>应用程序怎么用网络?通过 <strong>socket(套接字)</strong>。socket 是内核给应用提供的"网络端点"抽象:</p>
+<pre><code>// 服务端典型流程
+int fd = socket(AF_INET, SOCK_STREAM, 0);  // 创建socket, 得到一个fd!
+bind(fd, &addr, ...);      // 绑定IP:端口
+listen(fd, backlog);       // 开始监听
+int cfd = accept(fd, ...); // 接受一个连接, 得到新fd
+read(cfd, buf, n);         // 像读文件一样收数据!
+write(cfd, buf, n);        // 像写文件一样发数据!
+close(cfd);</code></pre>
+<p><strong>注意 <code>socket()</code> 返回一个 fd,之后能用 <code>read/write/close</code> 操作它——就像文件!</strong>这正是第32章"一切皆文件"的体现:socket 在内核里也有对应的 <code>struct file</code> 和 <code>f_op</code>,只不过它的 read/write 实现是"走网络协议栈收发",而不是"读写磁盘"。<strong>所以你在第32章学的 fd→file→(这里)→socket 链条,让网络编程和文件编程用同一套接口。</strong>这也是为什么 epoll(第35章)能同时监控文件和 socket。</p>
+
+<h2 id="s5">34.5 TCP vs UDP</h2>
+<p>传输层两个主角,面试必问、选型必知:</p>
+<table>
+<tr><th></th><th>TCP</th><th>UDP</th></tr>
+<tr><td>连接</td><td>面向连接(先握手)</td><td>无连接(直接发)</td></tr>
+<tr><td>可靠性</td><td>可靠(确认+重传,不丢不乱序)</td><td>不可靠(可能丢/乱序)</td></tr>
+<tr><td>顺序</td><td>保证顺序</td><td>不保证</td></tr>
+<tr><td>速度/开销</td><td>较慢,开销大</td><td>快,开销小</td></tr>
+<tr><td>流 vs 报文</td><td>字节流(可能粘包)</td><td>报文边界清晰</td></tr>
+<tr><td>典型用途</td><td>HTTP、文件传输(要求可靠)</td><td>视频/游戏/DDS(要求实时)</td></tr>
+</table>
+<blockquote><p><strong>选型核心:要可靠还是要实时。</strong>TCP 用确认重传保证不丢,代价是延迟(丢了要等重传)和开销。UDP 简单快速,但要应用自己处理丢包。<strong>关键给机器人场景:ROS2 底层的 DDS 默认走 UDP</strong>——因为机器人/无人机的传感器数据(激光雷达、图像)要求<strong>低延迟</strong>,丢一两帧无所谓(下一帧马上来),不能为等重传而卡顿。这就是为什么实时系统偏爱 UDP。<strong>另一个 TCP 的坑:字节流会"粘包"</strong>——TCP 把数据看成连续字节流,不保留你 send 的边界,收方要自己按协议切分消息(所以应用层协议要带长度字段)。UDP 保留报文边界,不粘包。</p></blockquote>
+
+<h2 id="s6">34.6 TCP 三次握手 / 四次挥手</h2>
+<p>TCP 的"面向连接"靠握手建立、挥手断开。面试高频,画出来:</p>
+<pre><code>三次握手(建连接):        四次挥手(断连接):
+ client      server        client      server
+   │─ SYN ───→│              │─ FIN ───→│  我要关了
+   │←SYN+ACK ─│              │←── ACK ──│  知道了
+   │─ ACK ───→│              │          │  (server还能发剩余数据)
+   建立连接 ✓                │←── FIN ──│  我也关了
+                             │─── ACK ─→│
+                             连接关闭 ✓</code></pre>
+<p><strong>为什么三次握手?</strong>要双方都确认"我能发、我能收,对方也能发能收"。三次是让双方都确认收发能力的最小次数(两次不够:server 无法确认 client 能收)。<strong>为什么挥手要四次?</strong>因为关闭是"半关闭"的——一方说"我发完了"(FIN),但另一方可能还有数据要发,所以对方的 ACK 和它自己的 FIN 分开发(不能像握手那样合并),就成了四次。这些细节面试常问,理解"为什么"比背步骤重要。</p>
+
+<h2 id="s7">34.7 sk_buff：数据包的载体</h2>
+<p>内核里,一个网络数据包用 <strong><code>struct sk_buff</code>(简称 skb)</strong>表示。它是网络子系统的核心数据结构,贯穿所有层:</p>
+<pre><code>sk_buff 的巧妙设计:
+  ┌──────────────────────────────────┐
+  │ [head]...[各层的头]...[data...]...[tail] │  一块数据缓冲区
+  └──────────────────────────────────┘
+       指针: head/data/tail/end
+
+  发送: 数据在中间, 每下沉一层就把data指针前移,
+        在前面"腾出"空间填这层的头 → 不用拷贝数据!
+  接收: 每上浮一层就把data指针后移, "跳过"这层的头</code></pre>
+<p><strong>skb 的精髓:用移动指针代替拷贝数据。</strong>加一层头(封装)不是把整个数据往后挪、再在前面插头(那要拷贝),而是<strong>预留了前置空间,只把 data 指针前移,在腾出的位置填头</strong>。拆头也只是 data 指针后移。<strong>网络要处理海量包,任何多余的内存拷贝都是性能杀手</strong>(回想第八章:内存拷贝要过 Cache、耗带宽),所以 skb 极力避免拷贝。理解这个"零拷贝"设计,是理解内核网络性能的关键。</p>
+
+<h2 id="s8">34.8 发送：一路封装下沉</h2>
+<p>把 <code>write(sockfd, buf, n)</code> 到网线的完整旅程串起来:</p>
+<pre><code>write(sockfd, buf, n) 发送之旅:
+  ① 系统调用陷入内核 → 找到socket对应的file/sock
+  ② 数据拷入内核, 装进 sk_buff
+  ③ 传输层(TCP): 加TCP头(端口、序号、校验), 处理可靠性
+  ④ 网络层(IP): 加IP头(源/目的IP), 查路由表决定从哪个网卡出、下一跳
+  ⑤ 链路层: 加以太网头(MAC), ARP查目的MAC
+  ⑥ 交给网卡驱动 → 网卡DMA把skb数据搬到硬件 → 发到线上
+  ⑦ 网卡发完触发中断, 内核回收skb</code></pre>
+<p>整个过程数据(skb)不断"下沉",每层加自己的头(移动指针,不拷贝)。<strong>第④步查路由表决定"这个包该往哪走",是 IP 层的核心工作。</strong>第⑥步网卡用 <strong>DMA</strong>(第六卷)直接搬数据,不劳 CPU 逐字节拷。发送基本是"进程主动调用 → 一路同步下沉到网卡"。<strong>接收则不同,因为数据是"突然到来"的,要靠中断——见下节。</strong></p>
+
+<h2 id="s9">34.9 接收：软中断与协议栈上浮</h2>
+<p>接收是网络里最能体现前面知识串联的部分。数据<strong>什么时候来不确定</strong>,所以靠中断(第七章)通知:</p>
+<pre><code>数据包到达的接收之旅:
+  ① 网卡收到包, DMA存入内存, 触发【硬中断】(第七章)
+  ② 硬中断处理极短: 只标记"有包要处理", 触发【软中断NET_RX】
+        —— 硬中断里不做耗时处理! (第七章原则: ISR要短)
+  ③ 软中断(SoftIRQ, 第36章)里慢慢处理:
+        取出skb → 链路层拆以太头 → IP层拆IP头 → TCP层拆TCP头
+  ④ 数据放进socket的接收缓冲区
+  ⑤ 唤醒阻塞在recv的进程 (或通知epoll, 第35章)
+  ⑥ 进程 read/recv 把数据从内核缓冲拷到用户buf</code></pre>
+<blockquote><p><strong>这里三章知识漂亮地汇合了:</strong>①网卡用<strong>中断</strong>通知(第七章);②但硬中断只做最少的事(标记+触发软中断),因为"<strong>ISR 要短</strong>"(第七章原则)——耗时的协议栈处理推迟到<strong>软中断</strong>(第36章将详解)去做;⑤处理完<strong>唤醒睡眠的进程</strong>(第30章调度),让它从内核返回用户态(第33章递送时机同一关口)拿数据。<strong>"硬中断快速响应 + 软中断延后处理"这个"上半部/下半部"拆分,是第七章"ISR 只置标志、主体后处理"思想在 Linux 网络里的正统实现</strong>——你在 STM32 里写"中断只置 flag,主循环处理"时,已经在用这个思想了,Linux 只是把它做成了系统化的软中断机制。</p></blockquote>
+
+<h2 id="s10">34.10 socket 与 VFS 的统一</h2>
+<p>回到第32章的主题,看 socket 如何融入"一切皆文件":</p>
+<pre><code>socket 在内核里的样子:
+  fd ──→ struct file ──→ struct socket ──→ struct sock
+  (整数)  (VFS的file,      (socket层)        (协议相关状态:
+           f_op指向            │              TCP连接状态、
+           socket的读写)       │              收发缓冲、序号...)
+                          实际收发走协议栈
+
+  read(sockfd) → file->f_op->read → socket的read实现 → 从sock接收缓冲取数据</code></pre>
+<p><strong>socket 有 file、有 f_op,所以能 read/write/close/poll——完全是个"文件"。</strong>只是它的 f_op 实现不是读磁盘,而是操作网络协议栈。<strong>这就是第32章"一切皆文件"最有说服力的例子:连网络这么复杂的东西,也套进了统一的文件接口。</strong>好处是巨大的:同一套 epoll(第35章)能同时等文件、管道、socket;同一个 <code>close</code> 关闭一切;shell 能重定向 socket。<strong>统一抽象让整个系统的部件可以自由组合。</strong></p>
+
+<h2 id="s11">34.11 回扣中断 / VFS / 嵌入式</h2>
+<p>网络这章几乎串起了全书,梳理这些连接:</p>
+<table>
+<tr><th>网络里的机制</th><th>用到的前面知识</th></tr>
+<tr><td>接收靠网卡中断</td><td>第七章 中断、第13章 GIC</td></tr>
+<tr><td>硬中断短、软中断处理协议栈</td><td>第七章"ISR 要短"、第36章 SoftIRQ</td></tr>
+<tr><td>socket 是文件</td><td>第32章 VFS、fd→file</td></tr>
+<tr><td>收到数据唤醒进程</td><td>第30章 调度、进程唤醒</td></tr>
+<tr><td>skb 避免拷贝</td><td>第八章 Cache/内存带宽、DMA</td></tr>
+<tr><td>数据缓冲、skb 分配</td><td>第31章 Slab(skb 用专用缓存)</td></tr>
+<tr><td>分层抽象</td><td>第32章 VFS 同样是分层</td></tr>
+</table>
+<blockquote><p><strong>网络子系统是 Linux 内核里综合性最强的部分,它把中断、调度、内存、文件抽象全用上了。</strong>对机器人工程师尤其重要:<strong>ROS2 的通信(DDS over UDP)、无人机图传、车载以太网</strong>都建立在这套协议栈上。理解"数据如何经中断进入、经软中断上浮、唤醒进程"这条链,你才能诊断实际的网络延迟、丢包、性能问题(比如"为什么高负载下网络延迟抖动"——可能是软中断处理不及时,第36章会讲)。<strong>这一章也验证了本书的整体设计:所有前面的砖,最终砌成了网络这栋楼。</strong></p></blockquote>
+
+<h2 id="s12">34.12 面试常问问题</h2>
+<p><strong>Q1:为什么网络要分层?TCP/IP 四层?</strong><br>分层把复杂问题拆成各层独立小问题,每层只管一件事、只和相邻层交互,可替换。四层:应用/传输(TCP·UDP,端口)/网络(IP,IP 地址)/链路(以太网,MAC)。发送逐层加头,接收逐层拆头。</p>
+<p><strong>Q2:TCP 和 UDP 的区别?机器人/ROS2 为什么用 UDP?</strong><br>TCP 面向连接、可靠(确认重传)、有序但慢;UDP 无连接、不可靠但快、保留报文边界。ROS2/DDS 用 UDP 因为传感器数据要低延迟,丢帧可容忍,不能为重传卡顿。</p>
+<p><strong>Q3:TCP 三次握手、四次挥手为什么是这个次数?</strong><br>三次握手让双方都确认彼此收发能力(两次不够);四次挥手因为关闭是半关闭,一方 FIN 后对方可能还有数据要发,ACK 和 FIN 分开发,故四次。</p>
+<p><strong>Q4:一个包接收的完整流程?</strong><br>网卡 DMA 收包→硬中断(只标记,触发软中断)→软中断 NET_RX 里逐层拆头→放 socket 接收缓冲→唤醒 recv 进程/通知 epoll→用户 read 拷走。</p>
+<p><strong>Q5:为什么接收用"硬中断+软中断"两段?</strong><br>硬中断要短(第七章),但协议栈处理耗时,放硬中断会长时间关中断丢包。所以硬中断只标记,把耗时处理推给软中断(下半部)。</p>
+<p><strong>Q6:socket 和文件什么关系?</strong><br>socket 在内核有 file/f_op,能 read/write/close/poll,是"文件"(一切皆文件)。故 epoll 能同时管文件和 socket。</p>
+<p><strong>Q7:sk_buff 为什么高效?TCP 粘包怎么回事?</strong><br>skb 用移动指针加/拆头,避免拷贝数据(零拷贝思想)。TCP 是字节流不保留 send 边界,收方要按应用协议(带长度)切分,即"粘包";UDP 保留报文边界不粘包。</p>
+
+<h2 id="s13">34.13 常见误区</h2>
+<ol>
+  <li><strong>"UDP 一定丢包不能用"</strong>——UDP 不保证可靠,但低延迟场景(视频/DDS)正合适,可在应用层做必要的可靠性。</li>
+  <li><strong>"TCP 发一次 send 对方 recv 一次收全"</strong>——TCP 是字节流会粘包/拆包,要按协议切分。</li>
+  <li><strong>"三次握手是随便定的"</strong>——是双方确认收发能力的最小次数,有明确道理。</li>
+  <li><strong>"网卡收到包 CPU 立刻全程处理"</strong>——硬中断只标记,协议栈处理在软中断,避免长时间关中断。</li>
+  <li><strong>"socket 不是文件"</strong>——socket 有 file/f_op,能 read/write/epoll,是文件抽象的一员。</li>
+  <li><strong>"每层加头都要拷贝数据"</strong>——skb 用移动指针避免拷贝。</li>
+</ol>
+
+<h2 id="s14">34.14 本章总结</h2>
+<ul>
+  <li>网络靠<strong>分层</strong>驯服复杂:应用 / 传输(<strong>TCP·UDP</strong>,端口) / 网络(<strong>IP</strong>,IP 地址) / 链路(以太网,MAC)。发送逐层<strong>加头封装</strong>,接收逐层<strong>拆头</strong>。</li>
+  <li><strong>socket 返回 fd,能 read/write</strong>——是"网络的文件"(第32章一切皆文件),内核里 fd→file→socket→sock。</li>
+  <li><strong>TCP</strong>:面向连接、可靠(确认重传)、有序、字节流(粘包)、慢;<strong>UDP</strong>:无连接、不可靠、快、保留报文边界。<strong>ROS2/机器人用 UDP 求低延迟。</strong></li>
+  <li>TCP <strong>三次握手</strong>(确认双方收发能力)、<strong>四次挥手</strong>(半关闭,FIN 与 ACK 分开)。</li>
+  <li><strong>sk_buff</strong>:包的载体,用<strong>移动指针</strong>加/拆头避免拷贝(零拷贝)。</li>
+  <li>发送:进程调用→装 skb→逐层加头→查路由→网卡 DMA 发出。</li>
+  <li>接收:<strong>网卡硬中断(只标记)→软中断 NET_RX(逐层拆头)→放缓冲→唤醒进程</strong>——第七章"上半部/下半部"的正统实现。</li>
+  <li>网络综合了中断/调度/内存/VFS,是全书知识的汇合点,也是 ROS2/图传/车载网的基础。</li>
+</ul>
+
+<h2 id="s15">34.15 思维导图 / 课后题</h2>
+<pre><code>Socket 与网络协议栈
+├─ 一、为什么分层:拆复杂问题, 每层只管一事+可替换
+├─ 二、★四层:应用/传输(TCP·UDP端口)/网络(IP)/链路(MAC)
+│      └─ 发送逐层加头, 接收逐层拆头
+├─ 三、socket:返回fd, 能read/write → 网络的"文件"(VFS)
+│      └─ fd→file→socket→sock
+├─ 四、★TCP vs UDP:可靠有序慢 vs 不可靠快低延迟
+│      └─ ROS2/机器人用UDP; TCP字节流会粘包
+├─ 五、TCP 三次握手(确认收发能力)/ 四次挥手(半关闭)
+├─ 六、★sk_buff:移动指针加/拆头, 零拷贝
+├─ 七、发送:装skb→逐层加头→查路由→网卡DMA
+├─ 八、★接收:硬中断(标记)→软中断NET_RX(拆头)→唤醒进程
+│      └─ 第七章"上半部/下半部"的正统实现
+└─ 九、回扣:综合中断+调度+内存(slab/skb)+VFS = 全书汇合</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>写一对 TCP client/server 收发消息;故意 send 两次短消息,server 一次 recv,观察可能一次收到两条(粘包),体会字节流。</li>
+  <li>改成 UDP 收发,观察 sendto 一次对应 recvfrom 一次(报文边界)。</li>
+  <li>用 <code>tcpdump</code> 或 Wireshark 抓一次 TCP 连接,亲眼看三次握手(SYN/SYN-ACK/ACK)和四次挥手。</li>
+  <li><code>cat /proc/softirqs</code> 看 NET_RX/NET_TX 软中断计数;大流量时再看,理解网络走软中断。</li>
+  <li>读内核 <code>net/ipv4/tcp.c</code> 的 <code>tcp_sendmsg</code> 和 <code>net/core/dev.c</code> 的 <code>netif_rx</code>/<code>napi</code>,对照发送/接收路径。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>网络为什么分层?TCP/IP 四层各管什么、用什么地址?</li>
+  <li>TCP 与 UDP 的区别?机器人/ROS2 为什么偏爱 UDP?</li>
+  <li>三次握手、四次挥手为什么是这个次数?</li>
+  <li>一个数据包从网卡到应用的完整接收流程?</li>
+  <li>为什么接收要分硬中断和软中断两段处理?</li>
+  <li>socket 和文件是什么关系?带来什么好处?</li>
+  <li>sk_buff 如何做到高效?TCP 粘包的本质?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第卅四章 完 · 下一章《第卅五章 Epoll 与 IO 多路复用》</p>
+<div class="nav">
+  <a href="第33章-Linux-Signal信号.html">← 第卅三章</a>
+  <a href="index.html">目录</a>
+  <a href="第35章-Linux-Epoll与IO多路复用.html">第卅五章 →</a>
+</div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第四十二章 GPIO 与 Pinctrl</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第41章-设备树DeviceTree.html">← 第四十一章</a>
+  <a href="index.html">目录</a>
+  <a href="第43章-中断驱动与DMA.html">第四十三章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第六卷 · Linux 驱动</div>
+  <h1>第四十二章 GPIO 与 Pinctrl</h1>
+  <div class="sub">最简单的外设,和一根引脚的"身兼数职"</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">GPIO:最基础的引脚控制</a></li>
+    <li><a href="#s2">生活例子:开关和门铃</a></li>
+    <li><a href="#s3">寄存器视角:GPIO 怎么工作</a></li>
+    <li><a href="#s4">一根引脚身兼数职:复用</a></li>
+    <li><a href="#s5">Pinctrl:引脚复用管理器</a></li>
+    <li><a href="#s6">设备树里配 Pinctrl 和 GPIO</a></li>
+    <li><a href="#s7">内核 GPIO 子系统 API</a></li>
+    <li><a href="#s8">GPIO 中断</a></li>
+    <li><a href="#s9">用户空间用 GPIO(sysfs/libgpiod)</a></li>
+    <li><a href="#s10">一个 LED 驱动实例</a></li>
+    <li><a href="#s11">回扣寄存器/STM32/子系统思想</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:GPIO(通用输入输出)是最简单的外设——控制一根引脚的高低电平(点灯、读按键)。但它引出两个重要概念:<strong>引脚复用</strong>(一根物理引脚能当 GPIO、也能当 UART/I2C)和管理它的 <strong>Pinctrl 子系统</strong>。这一章你会第一次把第41章的设备树、寄存器操作真正用起来,写出点灯驱动。这是所有外设驱动的"Hello World"。</p></blockquote>
+
+<h2 id="s1">42.1 GPIO：最基础的引脚控制</h2>
+<p><strong>GPIO = General Purpose Input/Output(通用输入输出)。</strong>就是芯片上一根可以被软件控制的引脚,能干两件最基本的事:</p>
+<ul>
+  <li><strong>输出</strong>:软件让这根引脚输出高电平(3.3V)或低电平(0V)——比如点亮/熄灭一个 LED、控制一个继电器。</li>
+  <li><strong>输入</strong>:软件读这根引脚当前是高还是低——比如读一个按键按没按、读一个传感器的数字信号。</li>
+</ul>
+<p><strong>GPIO 是数字世界和物理世界的最简单接口:一根线,要么高要么低,软件读或写。</strong>你在 STM32 上点过灯(<code>HAL_GPIO_WritePin</code>),就是操作 GPIO。它是最基础的外设,理解它就理解了"软件如何通过寄存器控制物理引脚"这个驱动的本质动作。无人机上的状态灯、蜂鸣器、简单开关量传感器,都靠 GPIO。</p>
+
+<h2 id="s2">42.2 生活例子：开关和门铃</h2>
+<p><strong>GPIO 输出</strong>像墙上的电灯开关:你(软件)拨到"开"(写 1),灯亮(引脚高电平);拨到"关"(写 0),灯灭。你控制的是"给不给电"。</p>
+<p><strong>GPIO 输入</strong>像看门铃按钮的状态:你(软件)去看"现在有没有人按着门铃"(读引脚),按着=高电平(读到 1),没按=低电平(读到 0)。你观察的是"外面给没给电"。<strong>同一根引脚,配成输出你就是"发号施令"的开关,配成输入你就是"察言观色"的观察者——方向由软件配置决定。</strong>这个"方向"就是 GPIO 第一个要配的东西。</p>
+
+<h2 id="s3">42.3 寄存器视角：GPIO 怎么工作</h2>
+<p>GPIO 在硬件上就是几个寄存器,软件读写这些寄存器来控制引脚(和 STM32 一样):</p>
+<pre><code>一个GPIO控制器的核心寄存器(简化):
+  ┌────────────┬──────────────────────────────┐
+  │ DIR  方向寄存器 │ 每个bit配一根引脚: 0=输入, 1=输出 │
+  │ DATA 数据寄存器 │ 输出时写: 1=高 0=低; 输入时读: 引脚电平 │
+  │ (还有: 上下拉、驱动强度、中断使能等)              │
+  └────────────┴──────────────────────────────┘
+
+  点灯(GPIO5 输出高):
+    ① DIR  的第5位 置1  (设为输出)
+    ② DATA 的第5位 置1  (输出高 → 灯亮)
+
+  读按键(GPIO3 输入):
+    ① DIR 的第3位 置0   (设为输入)
+    ② 读 DATA 的第3位   (1=按下 或 松开, 看接法)</code></pre>
+<p><strong>本质:GPIO 控制器是一块寄存器,每个引脚对应寄存器里的一个 bit。</strong>配方向(DIR)、读写电平(DATA),就是对这些 bit 做位操作(第四章寄存器、位运算)。<strong>这和你在 STM32 裸机里 <code>GPIOA->ODR |= (1&lt;&lt;5)</code> 点灯是完全一样的操作</strong>——只不过在 Linux 里,这些寄存器地址来自设备树(第41章),而且内核提供了封装好的 GPIO 子系统 API(42.7),你通常不用直接碰寄存器。但理解底层是这些 bit,才不会把 GPIO 当黑魔法。</p>
+
+<h2 id="s4">42.4 一根引脚身兼数职：复用</h2>
+<p>关键概念来了。芯片的引脚数量有限(几百根),但功能需求很多(UART、I2C、SPI、PWM、GPIO……)。怎么办?<strong>让一根物理引脚能"身兼数职"——通过配置,同一根引脚可以当 GPIO,也可以当 UART 的 TX,还可以当 I2C 的 SCL。</strong>这叫<strong>引脚复用(pin multiplexing,pinmux)</strong>。</p>
+<pre><code>一根物理引脚 PIN_37, 通过"复用选择"决定它是什么:
+
+   复用值 = 0 → 这根引脚是 GPIO
+   复用值 = 1 → 这根引脚是 UART2_TX
+   复用值 = 2 → 这根引脚是 I2C1_SCL
+   复用值 = 3 → 这根引脚是 PWM3
+   (芯片内部有个多路选择器MUX, 按复用值把引脚接到不同的内部功能模块)
+
+   同一时刻只能选一个功能! 选了UART_TX就不能同时当GPIO</code></pre>
+<blockquote><p><strong>复用是 SoC 的必然设计:引脚是稀缺资源,靠复用让有限的引脚支持丰富的功能组合。</strong>芯片内部有个"多路选择器",复用配置值决定这根引脚接到哪个内部功能模块。<strong>关键约束:同一根引脚同一时刻只能是一种功能</strong>——你把某引脚配成 UART_TX,它就不能同时当 GPIO 或 I2C。<strong>这就带来一个管理问题:谁来分配和记录"每根引脚现在是什么功能",防止冲突(两个驱动都想用同一根引脚)?</strong>答案是 Pinctrl 子系统(下一节)。你在 STM32 里配 <code>GPIO_AF</code>(alternate function)就是选复用,Linux 把它系统化成了 Pinctrl。</p></blockquote>
+
+<h2 id="s5">42.5 Pinctrl：引脚复用管理器</h2>
+<p><strong>Pinctrl(pin control)子系统</strong>是内核里专门管理"引脚复用和电气属性"的框架:</p>
+<table>
+<tr><th>Pinctrl 管什么</th><th>说明</th></tr>
+<tr><td>引脚复用(mux)</td><td>每根引脚当什么功能(GPIO/UART/I2C…)</td></tr>
+<tr><td>电气配置</td><td>上拉/下拉电阻、驱动强度、开漏/推挽</td></tr>
+<tr><td>冲突管理</td><td>记录引脚占用,防止两个设备抢同一引脚</td></tr>
+</table>
+<p><strong>Pinctrl 的核心价值:统一管理引脚这个稀缺共享资源,自动配置和防冲突。</strong>驱动不用自己去写复用寄存器,而是在设备树里声明"我这个 UART 要用这组引脚、配成 UART 功能",Pinctrl 在设备 probe 时(第40章)<strong>自动</strong>把这些引脚配置好(写复用寄存器、设上下拉),并记录占用。<strong>这样各设备驱动只管声明需求,Pinctrl 统一落实,避免了引脚冲突和重复代码。</strong>又是一个"子系统统一管理某类资源"的经典设计(和第31章 Slab 管内存、GPIO 子系统管引脚同理)。</p>
+
+<h2 id="s6">42.6 设备树里配 Pinctrl 和 GPIO</h2>
+<p>实际工程中,引脚复用和 GPIO 都在设备树里配置。看典型写法:</p>
+<pre><code>// ① Pinctrl: 定义一组引脚的复用(某UART用的引脚)
+&pinctrl {
+    uart2_pins: uart2-pins {
+        rockchip,pins =
+            &lt;1 RK_PB0 1 &pcfg_pull_none&gt;,  // 引脚配成功能1(UART_TX)
+            &lt;1 RK_PB1 1 &pcfg_pull_up&gt;;    // 引脚配成功能1(UART_RX), 上拉
+    };
+};
+
+// ② 设备引用这组引脚配置
+&uart2 {
+    status = "okay";
+    pinctrl-names = "default";
+    pinctrl-0 = &lt;&uart2_pins&gt;;   // ★probe时Pinctrl自动应用这组配置
+};
+
+// ③ 一个用GPIO的设备(如LED)
+myled {
+    compatible = "myvendor,myled";
+    gpios = &lt;&gpio3 5 GPIO_ACTIVE_HIGH&gt;;  // 用gpio3的第5号引脚, 高电平有效
+};</code></pre>
+<p><strong>模式很清晰</strong>:①在 pinctrl 节点里定义"引脚组"(哪些引脚、配成什么功能、上下拉);②设备节点用 <code>pinctrl-0</code> 引用它——设备 probe 时 Pinctrl 自动应用(把这些引脚配成 UART 功能);③用 GPIO 的设备用 <code>gpios</code> 属性声明"我要用哪个 GPIO 控制器的第几号引脚"。<strong>这就是第41章设备树 + 本章 Pinctrl/GPIO 的结合:硬件的引脚分配全在设备树描述,驱动只管用。</strong></p>
+
+<h2 id="s7">42.7 内核 GPIO 子系统 API</h2>
+<p>驱动里操作 GPIO,用内核 <strong>GPIO 子系统</strong>提供的 API(现代是 gpiod 描述符接口),不直接碰寄存器:</p>
+<pre><code>#include &lt;linux/gpio/consumer.h&gt;
+
+// 在probe里, 从设备树的 gpios 属性获取GPIO描述符
+struct gpio_desc *led;
+led = devm_gpiod_get(&pdev->dev, "led", GPIOD_OUT_LOW);
+//    从设备树"led-gpios"取, 配成输出、初始低电平
+
+// 控制GPIO:
+gpiod_set_value(led, 1);       // 输出高(点灯)
+gpiod_set_value(led, 0);       // 输出低(灭灯)
+int v = gpiod_get_value(btn);  // 读输入(读按键)
+gpiod_direction_input(btn);    // 设为输入
+gpiod_direction_output(led,0); // 设为输出</code></pre>
+<p><strong>GPIO 子系统把"操作寄存器"封装成统一的 <code>gpiod_*</code> 函数</strong>:<code>devm_gpiod_get</code> 从设备树拿到 GPIO(自动解析 gpios 属性、找到对应 GPIO 控制器);<code>gpiod_set_value</code>/<code>gpiod_get_value</code> 读写电平;<code>gpiod_direction_*</code> 配方向。<strong>好处:驱动代码和具体 SoC 的 GPIO 寄存器无关</strong>——RK3588 和别的芯片 GPIO 寄存器布局不同,但 <code>gpiod_set_value</code> 接口一样,底层由各 SoC 的 GPIO 控制器驱动实现。<strong>这就是子系统的威力:上层驱动写一次,适配所有 SoC。</strong>(<code>devm_</code> 前缀=设备移除时自动释放,第41章。)</p>
+
+<h2 id="s8">42.8 GPIO 中断</h2>
+<p>GPIO 不只能被动读,还能配成<strong>中断源</strong>:引脚电平变化时触发中断(比如按键按下、传感器信号跳变)——这样不用轮询,事件来了自动通知(第七章中断思想)。</p>
+<pre><code>GPIO中断: 把一个输入GPIO配成"电平变化时触发中断"
+
+  int irq = gpiod_to_irq(btn);   // 把GPIO转成中断号
+  request_irq(irq, btn_isr,       // 申请中断, 注册处理函数(第43章)
+              IRQF_TRIGGER_FALLING, // 下降沿触发(按下瞬间)
+              "mybtn", dev);
+
+  irqreturn_t btn_isr(int irq, void *dev){  // 按键按下时自动调用
+      // 处理按键... (上半部要短! 第36章)
+      return IRQ_HANDLED;
+  }</code></pre>
+<p><strong>GPIO 中断让"读按键/传感器"从"不停轮询"变成"事件驱动"</strong>:配成下降沿触发,按键一按下就自动调用你的 ISR,CPU 平时不用管。<code>gpiod_to_irq</code> 把 GPIO 转成中断号,再用 <code>request_irq</code> 注册(第43章详讲中断处理)。<strong>这把第七章中断、第36章上半部/下半部的知识用到了 GPIO 上</strong>——ISR 里要短,复杂处理推给下半部。无人机很多按键、限位开关、外部传感器信号都用 GPIO 中断,避免轮询浪费 CPU。</p>
+
+<h2 id="s9">42.9 用户空间用 GPIO（sysfs / libgpiod）</h2>
+<p>有时不想写内核驱动,想在用户空间(应用/脚本)直接控制 GPIO(快速原型、上层逻辑)。有两种方式:</p>
+<table>
+<tr><th>方式</th><th>说明</th><th>状态</th></tr>
+<tr><td><strong>sysfs</strong>(旧)</td><td><code>/sys/class/gpio/</code> 下 echo 导出、写方向和值</td><td>已废弃(deprecated)</td></tr>
+<tr><td><strong>libgpiod</strong>(新)</td><td>通过 <code>/dev/gpiochipN</code> 字符设备,用库/命令行(gpioset/gpioget)操作</td><td>现在推荐</td></tr>
+</table>
+<pre><code># 旧 sysfs 方式(了解, 已废弃):
+echo 133 > /sys/class/gpio/export
+echo out > /sys/class/gpio/gpio133/direction
+echo 1   > /sys/class/gpio/gpio133/value    # 点灯
+
+# 新 libgpiod 方式(推荐):
+gpioset gpiochip0 5=1     # 把gpiochip0的5号引脚设为1
+gpioget gpiochip0 3       # 读3号引脚
+gpiodetect / gpioinfo     # 查看GPIO控制器和引脚</code></pre>
+<p><strong>用户空间访问 GPIO 适合快速验证和上层控制逻辑</strong>(不用编译内核模块)。老的 <code>/sys/class/gpio</code> sysfs 接口已废弃(全局编号混乱、不安全),<strong>现在用 libgpiod</strong>(基于 <code>/dev/gpiochip</code> 字符设备——又是"一切皆文件"第32章)。ROS2/Python 快速控制无人机上的 GPIO 常走这条路。但要接中断、要精确时序或高性能,还是得写内核驱动。</p>
+
+<h2 id="s10">42.10 一个 LED 驱动实例</h2>
+<p>把本章串起来,一个完整的 platform LED 驱动骨架(第40章 platform + 本章 GPIO):</p>
+<pre><code>struct led_data { struct gpio_desc *gpio; };
+
+static int led_probe(struct platform_device *pdev){
+    struct led_data *d;
+    d = devm_kzalloc(&pdev->dev, sizeof(*d), GFP_KERNEL);
+    d->gpio = devm_gpiod_get(&pdev->dev, "led", GPIOD_OUT_LOW); // 取GPIO
+    platform_set_drvdata(pdev, d);
+    gpiod_set_value(d->gpio, 1);   // 点灯
+    dev_info(&pdev->dev, "LED on\n");
+    return 0;
+}
+static int led_remove(struct platform_device *pdev){
+    struct led_data *d = platform_get_drvdata(pdev);
+    gpiod_set_value(d->gpio, 0);   // 灭灯
+    return 0;
+}
+static const struct of_device_id led_of[] = {
+    { .compatible = "myvendor,myled" }, { }
+};
+static struct platform_driver led_drv = {
+    .probe = led_probe, .remove = led_remove,
+    .driver = { .name="myled", .of_match_table=led_of },
+};
+module_platform_driver(led_drv);
+MODULE_LICENSE("GPL");</code></pre>
+<p><strong>这个驱动完整体现了第40-42章的主干</strong>:设备树里 <code>myled</code> 节点(compatible + led-gpios,第41章)→ platform 总线匹配 <code>compatible="myvendor,myled"</code>(第40章)→ 调 <code>led_probe</code> → probe 里 <code>devm_gpiod_get</code> 从设备树拿 GPIO、<code>gpiod_set_value</code> 点灯。<strong>短短几十行,但它是所有外设驱动的骨架模板</strong>——UART/I2C/SPI 驱动只是把"点灯"换成"操作对应硬件",结构完全一样。这就是你的驱动"Hello World"。</p>
+
+<h2 id="s11">42.11 回扣寄存器 / STM32 / 子系统思想</h2>
+<p>本章的知识连接:</p>
+<table>
+<tr><th>本章概念</th><th>连接到</th></tr>
+<tr><td>GPIO 就是操作寄存器 bit</td><td>第四章寄存器、STM32 GPIO->ODR</td></tr>
+<tr><td>引脚复用(pinmux)</td><td>STM32 的 alternate function(AF)</td></tr>
+<tr><td>GPIO 中断</td><td>第七章中断、第36章上/下半部、STM32 EXTI</td></tr>
+<tr><td>GPIO/Pinctrl 子系统</td><td>"子系统统一管理资源"(第31章 Slab、VFS 第32章)</td></tr>
+<tr><td>寄存器地址来自设备树</td><td>第41章设备树</td></tr>
+</table>
+<blockquote><p><strong>GPIO 是你从 STM32 迈向 Linux 驱动最好的桥梁</strong>:同样是点灯,STM32 里你直接 <code>GPIOA->ODR |= (1&lt;&lt;5)</code>(操作寄存器),Linux 里你 <code>gpiod_set_value(led, 1)</code>——<strong>底层完全一样(都是置那个 bit),区别是 Linux 多了几层抽象</strong>:设备树描述引脚(而非硬编码地址)、Pinctrl 管复用(而非手动配 AF)、GPIO 子系统封装寄存器操作(而非直接写)。<strong>这些抽象让你的驱动代码能跨 SoC 复用、能和别的驱动和平共处(不抢引脚)、能被上层统一管理。</strong>你会发现 Linux 驱动的"复杂"都不是无意义的——每一层抽象都在解决"多设备、多硬件、多用户"环境下的真实问题。掌握了 GPIO 这个最简单外设的完整 Linux 处理方式,后面复杂外设不过是"同样的框架 + 更复杂的硬件操作"。</p></blockquote>
+
+<h2 id="s12">42.12 面试常问问题</h2>
+<p><strong>Q1:GPIO 是什么?能做什么?</strong><br>通用输入输出引脚。输出:软件控制引脚高低电平(点灯/控制继电器);输入:软件读引脚电平(读按键/数字传感器)。是数字世界和物理世界最简单的接口。</p>
+<p><strong>Q2:什么是引脚复用?为什么需要?</strong><br>一根物理引脚通过配置可当不同功能(GPIO/UART/I2C/PWM)。因为引脚数量有限、功能需求多,复用让有限引脚支持丰富功能。同一引脚同一时刻只能一种功能。</p>
+<p><strong>Q3:Pinctrl 子系统的作用?</strong><br>统一管理引脚复用和电气属性(上下拉、驱动强度),记录占用防冲突。驱动在设备树声明引脚需求,Pinctrl 在 probe 时自动配置。</p>
+<p><strong>Q4:驱动里怎么操作 GPIO?</strong><br>用 GPIO 子系统 gpiod_* API:devm_gpiod_get 从设备树取 GPIO,gpiod_set_value/get_value 读写,gpiod_direction_* 配方向。不直接碰寄存器,跨 SoC 通用。</p>
+<p><strong>Q5:怎么用 GPIO 做中断?</strong><br>gpiod_to_irq 把 GPIO 转成中断号,request_irq 注册 ISR 并指定触发方式(上升/下降沿)。让读按键/传感器从轮询变事件驱动,ISR 要短(上半部)。</p>
+<p><strong>Q6:用户空间怎么控制 GPIO?</strong><br>旧的 /sys/class/gpio(已废弃),新的 libgpiod(基于 /dev/gpiochip 字符设备,gpioset/gpioget)。适合快速原型和上层逻辑;高性能/中断还得写内核驱动。</p>
+<p><strong>Q7:Linux 点灯和 STM32 点灯的区别?</strong><br>底层都是置寄存器 bit。Linux 多了抽象:寄存器地址来自设备树(非硬编码)、Pinctrl 管复用(非手动 AF)、gpiod API 封装(非直接写寄存器),换来跨 SoC 复用和防冲突。</p>
+
+<h2 id="s13">42.13 常见误区</h2>
+<ol>
+  <li><strong>"一根引脚能同时当 GPIO 和 UART"</strong>——复用下同一时刻只能一种功能。</li>
+  <li><strong>"驱动里要直接写 GPIO 寄存器"</strong>——用 gpiod_* 子系统 API,跨 SoC 通用。</li>
+  <li><strong>"GPIO 地址写死在驱动里"</strong>——来自设备树的 gpios 属性和 GPIO 控制器节点。</li>
+  <li><strong>"读按键只能轮询"</strong>——可配 GPIO 中断,事件驱动更高效。</li>
+  <li><strong>"用 /sys/class/gpio 是标准做法"</strong>——已废弃,现在用 libgpiod。</li>
+  <li><strong>"Pinctrl 可有可无"</strong>——不配好引脚复用,外设(UART/I2C)根本不通,是硬件调试第一步。</li>
+</ol>
+
+<h2 id="s14">42.14 本章总结</h2>
+<ul>
+  <li><strong>GPIO</strong>:可软件控制的引脚,<strong>输出</strong>(写高低,点灯)/<strong>输入</strong>(读电平,读按键)。底层是操作 GPIO 控制器寄存器的 bit(同 STM32)。</li>
+  <li><strong>引脚复用(pinmux)</strong>:一根物理引脚可配成不同功能(GPIO/UART/I2C…),同一时刻只能一种;因引脚稀缺而生。</li>
+  <li><strong>Pinctrl 子系统</strong>:统一管引脚复用+电气属性+防冲突;驱动在设备树声明,probe 时自动应用。</li>
+  <li>设备树里配:pinctrl 节点定义引脚组,设备用 <code>pinctrl-0</code> 引用;GPIO 设备用 <code>gpios</code> 属性。</li>
+  <li>驱动 API:<strong>gpiod_*</strong>(devm_gpiod_get 取、gpiod_set/get_value 读写、gpiod_direction_* 配向),封装寄存器、跨 SoC 通用。</li>
+  <li><strong>GPIO 中断</strong>:gpiod_to_irq+request_irq,把引脚变化变成中断(事件驱动,ISR 要短)。</li>
+  <li>用户空间:旧 sysfs(废弃)/ 新 <strong>libgpiod</strong>(/dev/gpiochip,gpioset/gpioget)。</li>
+  <li>回扣:GPIO 是 STM32→Linux 驱动的桥梁;LED 驱动是所有外设驱动的骨架模板(第40-42章主干的最小实例)。</li>
+</ul>
+
+<h2 id="s15">42.15 思维导图 / 课后题</h2>
+<pre><code>GPIO 与 Pinctrl
+├─ 一、GPIO:软件控引脚 输出(点灯)/输入(读键) = 操作寄存器bit
+├─ 二、寄存器:DIR(方向) + DATA(电平), 每引脚一个bit
+├─ 三、★引脚复用pinmux:一引脚多功能(GPIO/UART/I2C), 同时刻只一种
+├─ 四、★Pinctrl子系统:管复用+电气属性+防冲突, probe自动应用
+├─ 五、设备树:pinctrl节点定义引脚组 + 设备pinctrl-0引用; gpios属性
+├─ 六、★驱动API:gpiod_*(get/set_value/direction), 封装寄存器跨SoC
+├─ 七、GPIO中断:gpiod_to_irq+request_irq, 轮询→事件驱动(ISR要短)
+├─ 八、用户空间:sysfs(废弃) / ★libgpiod(/dev/gpiochip)
+├─ 九、LED驱动实例 = platform(40)+设备树(41)+GPIO(42)主干最小闭环
+└─ 十、回扣:STM32点灯的Linux版; 抽象换来跨SoC复用+防冲突</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>在板子上 <code>gpiodetect</code>/<code>gpioinfo</code> 查看 GPIO 控制器和引脚状态;用 <code>gpioset</code> 点亮一个 LED、<code>gpioget</code> 读一个按键。</li>
+  <li>照 42.10 写 LED platform 驱动,在设备树加 myled 节点(compatible+led-gpios),加载驱动观察灯亮、probe 打印。</li>
+  <li>给 LED 驱动加字符设备接口(第39章),让 <code>echo 1 > /dev/myled</code> 点灯、<code>echo 0</code> 灭灯(write 里 gpiod_set_value)。</li>
+  <li>写一个按键 GPIO 中断驱动:gpiod_to_irq+request_irq,按下时 dmesg 打印,理解事件驱动。</li>
+  <li>找你板子设备树里一个外设(如 uart),看它的 pinctrl-0 引用的引脚组定义,理解复用配置。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>GPIO 能做什么?输入输出模式各是什么?</li>
+  <li>什么是引脚复用?为什么需要?有什么约束?</li>
+  <li>Pinctrl 子系统解决什么问题?怎么用?</li>
+  <li>驱动里用什么 API 操作 GPIO?为什么不直接写寄存器?</li>
+  <li>如何用 GPIO 实现中断?比轮询好在哪?</li>
+  <li>用户空间访问 GPIO 的新旧方式?</li>
+  <li>对比 Linux 和 STM32 点灯,Linux 多了哪些抽象、为什么?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第四十二章 完 · 下一章《第四十三章 中断驱动与 DMA》</p>
+<div class="nav">
+  <a href="第41章-设备树DeviceTree.html">← 第四十一章</a>
+  <a href="index.html">目录</a>
+  <a href="第43章-中断驱动与DMA.html">第四十三章 →</a>
+</div>
+
+</div>
+</body>
+</html>

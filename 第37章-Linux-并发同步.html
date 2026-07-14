@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第卅七章 并发同步:原子/SpinLock/Mutex</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第36章-Linux-中断与SoftIRQ.html">← 第卅六章</a>
+  <a href="index.html">目录</a>
+  <a href="第38章-Linux-RCU.html">第卅八章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第五卷 · Linux 内核</div>
+  <h1>第卅七章 并发同步:原子/SpinLock/Mutex</h1>
+  <div class="sub">多核时代,如何安全地共享一个变量</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">竞态:并发的根本问题</a></li>
+    <li><a href="#s2">生活例子:两人改同一账本</a></li>
+    <li><a href="#s3">临界区与互斥</a></li>
+    <li><a href="#s4">原子操作</a></li>
+    <li><a href="#s5">硬件基础:LL/SC 与 CAS</a></li>
+    <li><a href="#s6">SpinLock 自旋锁</a></li>
+    <li><a href="#s7">Mutex 睡眠锁</a></li>
+    <li><a href="#s8">SpinLock vs Mutex 怎么选</a></li>
+    <li><a href="#s9">中断与锁:更深的坑</a></li>
+    <li><a href="#s10">读写锁与 seqlock</a></li>
+    <li><a href="#s11">回扣内存屏障与 FreeRTOS</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:多核 CPU(第14章)上,两个核同时改一个变量会出错——这是<strong>竞态(race condition)</strong>。第21章你学过 FreeRTOS 的 Mutex 和优先级继承,第14章你学过 MESI 和内存屏障。这一章把 Linux 内核的同步工具讲全:<strong>原子操作、自旋锁(SpinLock)、互斥锁(Mutex)</strong>,以及最关键的"<strong>什么场景该用哪个</strong>"。这是多核编程的命根子,面试重灾区。</p></blockquote>
+
+<h2 id="s1">37.1 竞态：并发的根本问题</h2>
+<p>看一个经典 bug。两个 CPU 核同时执行 <code>count++</code>:</p>
+<pre><code>count++ 看似一步, 实际是三步(第三章指令):
+   ① load  把count从内存读进寄存器
+   ② add   寄存器+1
+   ③ store 写回内存
+
+两个核同时做(count初始=5):
+  CPU0: load(5)          CPU1: load(5)     ← 都读到5!
+  CPU0: add →6           CPU1: add →6
+  CPU0: store(6)         CPU1: store(6)    ← 都写6!
+  结果 count=6, 但应该是7! 丢了一次加法 ✗</code></pre>
+<p><strong>这就是竞态:多个执行流并发访问同一共享数据,结果依赖于它们交错的时序,可能出错。</strong>根源是 <code>count++</code> 不是"一步到位"的——它中间可以被打断/交错。多核让这个问题变得普遍(两个核真的能同时跑);单核也有(中断打断、任务切换,第21章 FreeRTOS 讲过)。<strong>凡是"多个执行流共享可变数据"的地方,都要考虑竞态。</strong></p>
+
+<h2 id="s2">37.2 生活例子：两人改同一账本</h2>
+<p>夫妻俩共用一个存款账本(共享变量)。都想存 100 元。<strong>出错的时序</strong>:妻子看到余额 500(读),丈夫也看到 500(读);妻子算 500+100=600 写上去,丈夫也算 500+100=600 写上去。<strong>存了两次 100,账本却只加了 100</strong>——丢了一次(和 count++ 一模一样)。</p>
+<p>怎么办?<strong>加把锁</strong>:谁改账本前先拿到那把唯一的锁,改完再放锁。妻子拿锁→读 500→写 600→放锁;丈夫这时才能拿锁→读 600→写 700。<strong>锁保证"读-改-写"这一串操作不被别人插进来</strong>——这就是互斥。同步的所有工具,本质都在解决"如何让一段操作不被并发打断"。</p>
+
+<h2 id="s3">37.3 临界区与互斥</h2>
+<p>固定两个核心术语:</p>
+<ul>
+  <li><strong>临界区(critical section)</strong>:访问共享数据的那段代码(如 <code>count++</code> 那三步)。</li>
+  <li><strong>互斥(mutual exclusion)</strong>:保证同一时刻<strong>最多一个</strong>执行流在临界区里。</li>
+</ul>
+<pre><code>       lock();        ← 进临界区前上锁
+       count++;       ← 临界区: 同一时刻只有一个执行流在这
+       unlock();      ← 出临界区放锁</code></pre>
+<p><strong>同步机制的目标就一个:保护临界区,实现互斥。</strong>但"怎么实现互斥"有很多方案,代价各不同——有的用一条特殊硬件指令(原子操作),有的忙等(自旋锁),有的睡眠(互斥锁)。选哪个取决于<strong>临界区多长、在什么上下文(能不能睡眠,第36章)</strong>。下面逐个看。</p>
+
+<h2 id="s4">37.4 原子操作(atomic)</h2>
+<p>最轻量的同步:<strong>原子操作</strong>——把"读-改-写"合并成<strong>一个不可分割</strong>的硬件动作,别人无法插进中间。</p>
+<pre><code>atomic_t count;              // 原子整数类型
+atomic_inc(&count);          // 原子地 +1, 一步到位, 不会被打断
+atomic_add(5, &count);       // 原子地 +5
+int v = atomic_read(&count); // 原子读
+
+对比: 普通 count++ 会出竞态; atomic_inc 保证正确
+      (硬件保证 load-add-store 作为一个整体完成)</code></pre>
+<p><strong>原子操作适合"对一个简单变量做简单修改"(计数器、标志位)。</strong>它不用锁,靠 CPU 提供的特殊指令直接保证不可分割,开销极小(没有加锁解锁、没有睡眠/唤醒)。引用计数(第32章 file 的 f_count、第31章 page 引用计数)、统计计数器,全用原子操作。<strong>但它只能保护"单个变量的单个操作";要保护"一段涉及多个变量的复杂逻辑",原子操作不够,得用锁。</strong>那原子操作本身怎么实现的?靠硬件——下一节。</p>
+
+<h2 id="s5">37.5 硬件基础：LL/SC 与 CAS</h2>
+<p>原子操作和锁,最终都建立在 CPU 提供的<strong>原子指令</strong>上。ARM 用 <strong>LL/SC</strong>(Load-Linked/Store-Conditional,第14章提过):</p>
+<pre><code>ARM 的 LDXR / STXR (独占访问):
+  loop:
+    LDXR  r1, [addr]   ; 独占load: 读值 + 标记"我在盯着这个地址"
+    ADD   r1, r1, #1   ; 改
+    STXR  r2, r1, [addr]; 条件store: 若期间没别人动过addr → 成功(r2=0)
+                       ;            若被别人动过 → 失败(r2=1)
+    CBNZ  r2, loop     ; 失败就重试整个过程
+
+关键: STXR会检查"从LDXR到现在, 这个地址有没有被别的核动过"
+      没动过才写成功 → 保证了原子性</code></pre>
+<blockquote><p>LL/SC 的巧思:<strong>不是"锁住地址不让别人碰",而是"乐观地做,提交时检查有没有被人动过,被动过就重来"。</strong>LDXR 读值并做个标记,STXR 提交时若发现期间有人改过这个地址(通过第14章 Cache 一致性 MESI 监测到),就失败重试。这叫"乐观并发"。x86 则用 <strong>CAS</strong>(Compare-And-Swap,<code>cmpxchg</code> 指令):"如果内存里的值还等于我预期的旧值,就换成新值,否则失败"——思想相同。<strong>所有更高级的同步(原子操作、自旋锁、Mutex、无锁数据结构、甚至第38章 RCU 的一部分)最终都靠这条 LL/SC 或 CAS 硬件指令搭起来。</strong>这是第14章 MESI/原子性硬件知识在软件层的直接兑现——没有硬件的原子指令,软件层根本无法实现可靠的互斥。</p></blockquote>
+
+<h2 id="s6">37.6 SpinLock 自旋锁</h2>
+<p>要保护一段(涉及多变量的)临界区,最基础的锁是 <strong>SpinLock(自旋锁)</strong>。特点:<strong>拿不到锁就"原地打转"忙等,不睡眠。</strong></p>
+<pre><code>spinlock_t lock;
+spin_lock(&lock);      // 拿锁: 拿不到就在这里死循环"自旋"等待
+   ... 临界区 ...        // 拿到了, 干活
+spin_unlock(&lock);    // 放锁
+
+自旋锁的"自旋":
+  while (锁被别人占着)
+      ;   // 空转! 不断重试, CPU在这里"打转"不干别的也不睡
+  拿到锁</code></pre>
+<p><strong>自旋锁的关键性质:等待时"忙等"(空转 CPU),不睡眠、不切换。</strong>好处:拿到锁没有切换开销,<strong>响应极快</strong>(锁一放马上抢到)。坏处:等待时白白烧 CPU。<strong>所以自旋锁只适合"临界区非常短"的场景</strong>——短到"忙等一下就拿到"比"切换出去睡再切回来"更划算。<strong>致命前提:持有自旋锁时绝对不能睡眠</strong>(睡了别人一直空转等你,浪费;单核还会死锁)。这就决定了它是"中断上下文(第36章)唯一能用的锁"——因为中断上下文本来就不能睡。</p>
+
+<h2 id="s7">37.7 Mutex 睡眠锁</h2>
+<p>另一种锁是 <strong>Mutex(互斥锁)</strong>。特点:<strong>拿不到锁就睡眠(让出 CPU),等锁释放时被唤醒。</strong>这就是第21章 FreeRTOS 那个 Mutex 的 Linux 版。</p>
+<pre><code>struct mutex lock;
+mutex_lock(&lock);     // 拿锁: 拿不到就【睡眠】, 让出CPU给别人跑
+   ... 临界区 ...        // (可以是长临界区, 甚至临界区里再睡眠)
+mutex_unlock(&lock);   // 放锁: 唤醒等待的进程
+
+对比自旋锁:
+  自旋锁: 拿不到 → 原地空转(不让CPU)
+  Mutex:  拿不到 → 睡眠(让出CPU, 别人能用这个核)</code></pre>
+<p><strong>Mutex 等待时睡眠</strong>——不烧 CPU,让出核给别的进程跑。代价是有<strong>睡眠+唤醒+上下文切换的开销</strong>(第30章)。<strong>所以 Mutex 适合"临界区较长"的场景</strong>:临界区长,与其忙等浪费,不如睡一觉让别人干活。<strong>因为 Mutex 会睡眠,所以只能在进程上下文用,不能在中断上下文/持自旋锁时用</strong>(第36章:中断上下文不能睡)。Mutex 也支持优先级继承(第21章那个机制),防优先级反转。</p>
+
+<h2 id="s8">37.8 SpinLock vs Mutex 怎么选(核心)</h2>
+<p>这是本章最重要、面试必考的决策。两个锁的对比:</p>
+<table>
+<tr><th></th><th>SpinLock 自旋锁</th><th>Mutex 睡眠锁</th></tr>
+<tr><td>拿不到锁时</td><td>忙等(自旋,占 CPU)</td><td>睡眠(让出 CPU)</td></tr>
+<tr><td>等待开销</td><td>烧 CPU,但无切换</td><td>不烧 CPU,但有切换开销</td></tr>
+<tr><td>适合临界区</td><td><strong>短</strong></td><td><strong>长</strong></td></tr>
+<tr><td>持锁时能睡眠吗</td><td>❌ 绝对不能</td><td>✅ 可以</td></tr>
+<tr><td>能用在中断上下文吗</td><td>✅ 能(唯一选择)</td><td>❌ 不能(会睡)</td></tr>
+</table>
+<pre><code>决策树:
+  临界区里/需要睡眠吗? 或 在中断上下文吗?
+   ├─ 是(中断上下文, 或临界区要睡眠) → 只能 SpinLock
+   └─ 否(进程上下文, 不睡)
+        │
+        临界区长还是短?
+         ├─ 很短(几条指令) → SpinLock(避免切换开销)
+         └─ 较长(可能耗时) → Mutex(睡眠, 不烧CPU)</code></pre>
+<blockquote><p><strong>一句话决策:能睡的进程上下文里,短临界区用 SpinLock、长临界区用 Mutex;中断上下文(或任何不能睡的地方)只能用 SpinLock。</strong>核心权衡是"忙等的 CPU 浪费" vs "睡眠切换的开销":临界区短到"忙等一下 < 切换两次",用自旋锁;临界区长到"忙等浪费 > 切换开销",用 Mutex。<strong>而"能不能睡眠"(第36章上下文)是一票否决项——中断上下文不能睡,直接排除 Mutex。</strong>面试极爱问"自旋锁和互斥锁的区别、什么时候用哪个",把这张表和决策树答出来就满分。</p></blockquote>
+
+<h2 id="s9">37.9 中断与锁：更深的坑</h2>
+<p>一个真实又致命的死锁场景,面试进阶必问。假设进程和中断处理都要访问同一个共享数据,用自旋锁保护:</p>
+<pre><code>危险场景(单核):
+  进程上下文:
+     spin_lock(&lock);     // 进程拿到锁
+     ... 操作共享数据 ...
+     ← 此时来了个中断!
+        中断handler: spin_lock(&lock);  // 想拿同一把锁
+                     → 锁被进程占着, 自旋等待...
+                     → 但进程被中断打断了, 没机会放锁!
+                     → 【死锁】互相等, 系统卡死 ✗
+
+解决: 进程侧用 spin_lock_irqsave(&lock, flags)
+     → 拿锁的同时【关本地中断】, 临界区内不会被中断打断
+     → 中断进不来, 就不会来抢锁 → 无死锁</code></pre>
+<blockquote><p><strong>这个坑的本质:如果一把锁会被"中断上下文"和"进程上下文"同时争用,进程侧持锁时必须关中断</strong>(<code>spin_lock_irqsave</code>),否则中断在进程持锁期间打断进来抢同一把锁,而进程又因为被打断没法放锁,形成死锁。<strong>规则:被中断和进程共用的自旋锁,进程侧要用 <code>spin_lock_irqsave</code>(关中断版)。</strong>这把第36章(中断上下文)、第七章(关中断)、本章(锁)全串起来了——多核/中断环境下的并发,必须同时考虑"谁会碰这个数据""在什么上下文""要不要关中断"。<strong>这类分析能力,正是嵌入式/内核工程师的核心功力,也是这类公司重点考察的。</strong></p></blockquote>
+
+<h2 id="s10">37.10 读写锁与 seqlock</h2>
+<p>一个常见优化:很多数据<strong>读多写少</strong>(如配置、路由表)。普通锁不管读写都互斥,但<strong>多个"读者"其实可以同时读</strong>(读不改数据,不冲突)。为此有专门的锁:</p>
+<table>
+<tr><th>锁</th><th>特点</th><th>适合</th></tr>
+<tr><td><strong>读写锁 rwlock</strong></td><td>多个读者可同时持有;写者独占(排斥所有读者和其他写者)</td><td>读多写少</td></tr>
+<tr><td><strong>seqlock</strong></td><td>写者优先、不被读者挡;读者读完检查"序号"变没变,变了(说明读期间有写)就重读</td><td>读极多、写要低延迟(如系统时间)</td></tr>
+</table>
+<p><strong>读写锁</strong>放宽了"读者之间"的互斥(读者可并行),提升读多场景的并发。<strong>seqlock</strong> 更激进:写者不等读者(用一个序号,写前后各加一),读者读完比对序号,若期间发生过写就重读——<strong>让写者永不被读者阻塞</strong>(适合写要低延迟的场景,如内核维护的系统时间 <code>gettimeofday</code>)。这些是针对特定访问模式的优化,思想上都是"减少不必要的互斥"。<strong>把"减少互斥"推到极致,就是第38章的 RCU——读者完全无锁。</strong></p>
+
+<h2 id="s11">37.11 回扣内存屏障与 FreeRTOS</h2>
+<p>本章和前面几章的连接非常密:</p>
+<table>
+<tr><th>本章概念</th><th>连接到</th></tr>
+<tr><td>原子操作靠 LL/SC/CAS</td><td>第14章 MESI、原子指令硬件</td></tr>
+<tr><td>锁内部要内存屏障(保证顺序)</td><td>第14章 DMB/DSB、acquire/release</td></tr>
+<tr><td>Mutex 睡眠/唤醒</td><td>第30章 调度、第21章 FreeRTOS Mutex</td></tr>
+<tr><td>Mutex 优先级继承</td><td>第21章 优先级反转/继承</td></tr>
+<tr><td>SpinLock 只能用在不能睡的上下文</td><td>第36章 中断上下文</td></tr>
+<tr><td>关中断保护临界区</td><td>第七章 关中断、FreeRTOS 临界区</td></tr>
+</table>
+<blockquote><p><strong>一个重要补充:锁不只是"互斥",还隐含"内存屏障"(第14章)。</strong><code>spin_lock</code> 有 acquire 语义、<code>spin_unlock</code> 有 release 语义——保证临界区内的内存操作不会"跑到"锁外面去(编译器/CPU 乱序,第14章)。所以锁同时解决了两件事:<strong>互斥(同一时刻一个执行流)+ 内存序(临界区内的修改对下一个拿锁者可见)。</strong>回想第21章:FreeRTOS 的 Mutex + 优先级继承,就是本章 Mutex 的"小系统版";FreeRTOS 的临界区(关中断),就是本章 <code>spin_lock_irqsave</code> 的单核版。<strong>你在 FreeRTOS 里建立的"共享数据要保护、临界区要短、关中断防打断"的直觉,在 Linux 多核环境下依然成立,只是工具更丰富、还要额外考虑"多核真并行"和"内存序"。</strong></p></blockquote>
+
+<h2 id="s12">37.12 面试常问问题</h2>
+<p><strong>Q1:什么是竞态?举例。</strong><br>多执行流并发访问共享数据,结果依赖交错时序而可能出错。如两核同时 count++(load-add-store 交错),丢失一次加法。</p>
+<p><strong>Q2:自旋锁和互斥锁的区别?什么时候用哪个?</strong><br>自旋锁拿不到锁忙等(不睡,占 CPU),适合短临界区、可用于中断上下文;互斥锁拿不到锁睡眠(让 CPU,有切换开销),适合长临界区、只能进程上下文。中断上下文/持锁要睡→只能自旋锁;进程上下文短临界区→自旋锁,长→互斥锁。</p>
+<p><strong>Q3:持有自旋锁时能睡眠吗?为什么?</strong><br>不能。持锁睡眠会让等锁者一直空转浪费 CPU,单核还会死锁(睡了没人放锁)。所以持自旋锁期间不能调用任何可能睡眠的函数。</p>
+<p><strong>Q4:原子操作怎么实现的?</strong><br>靠 CPU 原子指令:ARM 的 LL/SC(LDXR/STXR,乐观地做、提交时检查有没有被别人动过,被动过重试),x86 的 CAS(cmpxchg)。</p>
+<p><strong>Q5:一个数据被进程和中断都访问,用自旋锁要注意什么?</strong><br>进程侧要用 spin_lock_irqsave(拿锁同时关本地中断),否则进程持锁时中断打断进来抢同一锁,进程没法放锁→死锁。</p>
+<p><strong>Q6:读多写少的数据用什么?</strong><br>读写锁(读者可并行,写者独占)或 seqlock(写者不被读者挡,读者靠序号检测重读);极致是 RCU(读者无锁,第38章)。</p>
+<p><strong>Q7:锁除了互斥还保证什么?</strong><br>内存序:lock 有 acquire、unlock 有 release 语义(内存屏障),保证临界区内的修改不越界、对下一个拿锁者可见。</p>
+
+<h2 id="s13">37.13 常见误区</h2>
+<ol>
+  <li><strong>"count++ 是原子的"</strong>——不是,它是 load-add-store 三步,多核会竞态,要用 atomic_inc。</li>
+  <li><strong>"自旋锁比互斥锁好/差"</strong>——没有绝对好坏,看临界区长短和上下文;各有适用。</li>
+  <li><strong>"持自旋锁可以调用 kmalloc(GFP_KERNEL)/mutex"</strong>——不能,这些可能睡眠,持自旋锁不能睡。</li>
+  <li><strong>"单核不用考虑竞态"</strong>——单核也有(中断打断、任务切换),FreeRTOS 也要临界区。</li>
+  <li><strong>"锁只管互斥"</strong>——还隐含内存屏障,保证内存操作顺序和可见性。</li>
+  <li><strong>"加了锁就万无一失"</strong>——用错(忘关中断、加锁顺序不一致)会死锁;锁多了还伤性能。</li>
+</ol>
+
+<h2 id="s14">37.14 本章总结</h2>
+<ul>
+  <li><strong>竞态</strong>:多执行流并发访问共享数据,结果依赖交错时序而出错(count++ 经典例)。多核让它普遍,单核也有。</li>
+  <li>目标:保护<strong>临界区</strong>、实现<strong>互斥</strong>。工具按代价从轻到重:原子操作 → 自旋锁 → 互斥锁。</li>
+  <li><strong>原子操作</strong>:单变量单操作(计数/标志),靠硬件 <strong>LL/SC(ARM)/CAS(x86)</strong> 保证不可分割,最轻量。</li>
+  <li><strong>SpinLock</strong>:拿不到锁<strong>忙等不睡</strong>,适合<strong>短临界区</strong>、<strong>中断上下文唯一可用</strong>;<strong>持锁绝不能睡</strong>。</li>
+  <li><strong>Mutex</strong>:拿不到锁<strong>睡眠</strong>,适合<strong>长临界区</strong>、只能<strong>进程上下文</strong>;支持优先级继承(第21章)。</li>
+  <li>选择:不能睡/中断上下文→SpinLock;进程上下文短→SpinLock、长→Mutex。<strong>核心权衡:忙等浪费 vs 切换开销;能否睡眠一票否决。</strong></li>
+  <li>坑:进程与中断共用的自旋锁,进程侧要 <strong>spin_lock_irqsave(关中断)</strong> 防死锁。</li>
+  <li>优化:读多写少用<strong>读写锁/seqlock</strong>;极致读无锁是 <strong>RCU(第38章)</strong>。锁还隐含<strong>内存屏障</strong>(第14章)。</li>
+</ul>
+
+<h2 id="s15">37.15 思维导图 / 课后题</h2>
+<pre><code>并发同步:原子/SpinLock/Mutex
+├─ 一、★竞态:count++(load-add-store)多核交错→丢更新
+├─ 二、目标:保护临界区, 互斥
+├─ 三、原子操作:单变量单操作, 最轻量
+│      └─ 硬件:★LL/SC(ARM LDXR/STXR) / CAS(x86 cmpxchg)
+├─ 四、★SpinLock:拿不到→忙等不睡; 短临界区; 中断上下文唯一; 持锁不能睡
+├─ 五、★Mutex:拿不到→睡眠; 长临界区; 只进程上下文; 优先级继承
+├─ 六、★选择:能睡? 短→spin/长→mutex; 中断上下文→只能spin
+│      └─ 权衡:忙等浪费 vs 切换开销; 能否睡一票否决
+├─ 七、★坑:进程+中断共用锁 → spin_lock_irqsave(关中断)防死锁
+├─ 八、读多写少:rwlock / seqlock → 极致RCU(第38章)
+└─ 九、回扣:锁隐含内存屏障(第14章); = FreeRTOS Mutex/临界区的多核版</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>写多线程程序,多个线程各对全局 <code>count</code> 加一百万次(无锁),观察最终结果 &lt; 预期(竞态);加 mutex/原子操作后正确。</li>
+  <li>用 C11 <code>&lt;stdatomic.h&gt;</code> 的 <code>atomic_fetch_add</code> 重做上题,对比性能和正确性。</li>
+  <li>用 <code>perf</code> 或计时对比:极短临界区下自旋锁 vs 互斥锁的性能差异,理解切换开销。</li>
+  <li>思考并画出:两把锁 A、B,线程1 先 A 后 B,线程2 先 B 后 A,如何死锁(加锁顺序不一致);怎么避免(统一加锁顺序)。</li>
+  <li>读内核 <code>kernel/locking/spinlock.c</code> 和 <code>mutex.c</code>,找到自旋等待和睡眠等待的实现,对照本章。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>什么是竞态?为什么 count++ 不安全?</li>
+  <li>自旋锁和互斥锁的区别?各自适用场景?</li>
+  <li>持有自旋锁时为什么不能睡眠?</li>
+  <li>原子操作靠什么硬件机制实现?LL/SC 和 CAS 的思想?</li>
+  <li>进程和中断共享数据用自旋锁,为什么要 irqsave?</li>
+  <li>读多写少的场景有哪些优化的锁?</li>
+  <li>锁除了互斥还提供什么保证?和内存屏障什么关系?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第卅七章 完 · 下一章《第卅八章 RCU》</p>
+<div class="nav">
+  <a href="第36章-Linux-中断与SoftIRQ.html">← 第卅六章</a>
+  <a href="index.html">目录</a>
+  <a href="第38章-Linux-RCU.html">第卅八章 →</a>
+</div>
+
+</div>
+</body>
+</html>

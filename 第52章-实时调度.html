@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第五十二章 实时调度:优先级/RMS/EDF</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第51章-延迟Latency的来源.html">← 第五十一章</a>
+  <a href="index.html">目录</a>
+  <a href="第53章-优先级反转与继承.html">第五十三章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第七卷 · 实时系统</div>
+  <h1>第五十二章 实时调度:优先级/RMS/EDF</h1>
+  <div class="sub">怎么排班,才能保证每个任务都不误点</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">实时调度要回答的问题</a></li>
+    <li><a href="#s2">生活例子:护士排班</a></li>
+    <li><a href="#s3">周期任务模型</a></li>
+    <li><a href="#s4">固定优先级 vs 动态优先级</a></li>
+    <li><a href="#s5">RMS:单调速率调度</a></li>
+    <li><a href="#s6">RMS 的可调度性判据</a></li>
+    <li><a href="#s7">EDF:最早截止期优先</a></li>
+    <li><a href="#s8">RMS vs EDF 对比</a></li>
+    <li><a href="#s9">Linux 的实时调度类</a></li>
+    <li><a href="#s10">多核实时调度的难题</a></li>
+    <li><a href="#s11">回扣 FreeRTOS 与工程</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:实时系统里有多个任务(飞控:姿态环、位置环、遥控解析、日志……),各有周期和 deadline。<strong>怎么安排它们在 CPU 上的执行顺序,才能保证每个任务都不错过 deadline?</strong>这就是实时调度理论。本章讲两大经典算法——<strong>RMS(单调速率)</strong>和 <strong>EDF(最早截止期)</strong>,以及如何用<strong>可调度性分析</strong>提前证明"这组任务一定不会误点"。这是实时系统从"能跑"到"可证明"的关键,面试常考。</p></blockquote>
+
+<h2 id="s1">52.1 实时调度要回答的问题</h2>
+<p>第30章讲过通用调度(CFS 追求公平)。实时调度目标完全不同:<strong>不是公平,而是保证每个任务在 deadline 前完成。</strong>它要回答两个问题:</p>
+<ul>
+  <li><strong>调度策略</strong>:多个任务就绪时,先运行哪个?(按什么规则排优先级)</li>
+  <li><strong>可调度性分析</strong>:给定一组任务(各自的周期、执行时间、deadline),用某调度策略,<strong>能不能保证都不误点</strong>?——这能在设计阶段<strong>数学证明</strong>,不用等运行出事。</li>
+</ul>
+<p><strong>实时调度最珍贵的能力是"可调度性分析"——在系统上线前,用数学证明"这组任务一定都能满足 deadline"。</strong>这对硬实时至关重要:你不能靠"跑跑看没出事"来保证飞控不炸机,而要<strong>提前证明</strong>最坏情况下也不误点。RMS 和 EDF 之所以经典,不只因为它们是调度规则,更因为它们有<strong>配套的可调度性判据</strong>(52.6、52.7),让你能算出"行还是不行"。这是实时系统工程的科学基础。</p>
+
+<h2 id="s2">52.2 生活例子：护士排班</h2>
+<p>一个护士(CPU)要照顾几个病人(任务),每个病人有不同的<strong>照顾频率和紧迫性</strong>:病人 A 每 2 小时要量一次血压(周期 2h)、病人 B 每 5 小时喂一次药、病人 C 每 10 小时换一次液……每次照顾要花一定时间,而且<strong>必须在下一个周期到来前完成</strong>(错过就出问题)。</p>
+<p><strong>护士怎么排班,才能保证每个病人都按时被照顾到?</strong>一种思路:<strong>频率高的优先</strong>(A 每 2 小时就要,最频繁,给最高优先级)——这就是 RMS。另一种思路:<strong>看谁的"下一次截止时间"最近就先做谁</strong>(哪个病人马上就要错过了,先救他)——这就是 EDF。<strong>而且护士上岗前,护士长要能算出"以现在的病人数和照顾时间,一个护士忙得过来吗(会不会有人被耽误)"</strong>——这就是可调度性分析。本章就是把这套排班的智慧形式化。</p>
+
+<h2 id="s3">52.3 周期任务模型</h2>
+<p>实时调度分析建立在一个标准模型上——<strong>周期任务</strong>:</p>
+<pre><code>每个实时任务用几个参数描述:
+  ★T (Period, 周期):    每隔T时间, 任务要执行一次
+  ★C (Computation, 执行时间): 每次执行需要的CPU时间(常用WCET, 第54章)
+  ★D (Deadline, 截止期): 每次必须在触发后D时间内完成(常D=T)
+  U (Utilization, 利用率): U = C/T (这个任务占用CPU的比例)
+
+  例: 姿态控制任务 T=2ms, C=0.5ms
+     → 每2ms要跑一次, 每次0.5ms, 利用率 U=0.5/2=25%
+     → 必须在每个2ms周期内跑完那0.5ms
+
+  一组任务的总利用率: U_total = Σ(Ci/Ti)
+   → 显然 U_total > 1 (>100%) 绝对不可调度(CPU不够用!)
+   → U_total ≤ 1 是必要条件, 但不一定充分(要看调度算法)</code></pre>
+<p><strong>周期任务模型用三个参数刻画每个任务:周期 T、执行时间 C、截止期 D。</strong>飞控的姿态环、位置环等都是典型周期任务(固定频率跑)。<strong>利用率 U=C/T</strong> 是核心量——一个任务占多少 CPU;一组任务的<strong>总利用率 ΣCi/Ti</strong> 决定了它们总共要多少 CPU。<strong>总利用率 > 100% 铁定做不完(CPU 不够);≤ 100% 是必要条件,但能不能真的都不误点,还要看调度算法和具体判据</strong>(下面 RMS/EDF 各有不同的可调度门槛)。这个模型是所有可调度性分析的基础。</p>
+
+<h2 id="s4">52.4 固定优先级 vs 动态优先级</h2>
+<p>实时调度算法分两大类,RMS 和 EDF 分属其一:</p>
+<table>
+<tr><th></th><th>固定优先级(RMS)</th><th>动态优先级(EDF)</th></tr>
+<tr><td>优先级</td><td>任务的优先级<strong>固定不变</strong>(设计时定死)</td><td>优先级<strong>动态变化</strong>(按当前情况算)</td></tr>
+<tr><td>依据</td><td>按周期定(周期短=优先级高)</td><td>按截止期定(deadline 近=优先级高)</td></tr>
+<tr><td>实现</td><td>简单(和第17章 FreeRTOS 优先级调度一样)</td><td>复杂(每次要比较 deadline)</td></tr>
+<tr><td>CPU 利用率上限</td><td>较低(~69%~100%)</td><td>可达 100%</td></tr>
+</table>
+<p><strong>固定优先级</strong>:每个任务的优先级在设计时定死、运行中不变(就是你熟悉的第17章 FreeRTOS 优先级抢占调度)。<strong>动态优先级</strong>:优先级随运行时情况变化(如按"谁的 deadline 最近"动态调整)。<strong>RMS 是固定优先级的代表,EDF 是动态优先级的代表。</strong>固定优先级实现简单、可预测、被 RTOS 广泛采用,但 CPU 利用率上限低;动态优先级(EDF)能榨干 CPU(利用率达 100%),但实现复杂、行为较难预测。这个分类决定了两种算法的根本特性差异。</p>
+
+<h2 id="s5">52.5 RMS：单调速率调度</h2>
+<p><strong>RMS = Rate Monotonic Scheduling(单调速率调度)。</strong>规则极简:</p>
+<pre><code>RMS 规则: 周期越短(速率越高)的任务, 优先级越高
+          (rate = 1/T, 速率单调 → 优先级单调)
+
+  例: 任务A T=2ms, 任务B T=5ms, 任务C T=10ms
+     → 优先级: A > B > C  (A周期最短, 最高优先级)
+     → 就绪时总是先运行周期最短的
+
+  为什么"周期短的优先"合理?
+   周期短的任务, 两次执行间隔小, "更急"(更快又要来一次),
+   给它高优先级, 让它能及时跑完不误点。
+
+  ★RMS是"最优的固定优先级算法":
+   如果RMS都调度不了这组任务, 那没有任何固定优先级方案能调度
+   (RMS optimality定理)</code></pre>
+<blockquote><p><strong>RMS 的规则简单到优雅:周期越短、优先级越高。</strong>直觉上,周期短的任务"催得紧"(很快又要跑一次),给它高优先级理所应当。<strong>RMS 的重要地位在于它是"最优的固定优先级调度算法"</strong>——数学证明:如果按 RMS 分配优先级都无法让某组任务全部满足 deadline,那么任何其他固定优先级分配方案也不可能做到。<strong>换句话说,用固定优先级,RMS 就是你能做到的最好。</strong>这个最优性让 RMS 成为固定优先级实时系统的标准做法。<strong>你在 FreeRTOS 里给"周期短的控制任务设高优先级、周期长的日志任务设低优先级"——不知不觉就在用 RMS 思想!</strong>本章让你知其所以然:这不是拍脑袋,而是有最优性理论支撑的。</p></blockquote>
+
+<h2 id="s6">52.6 RMS 的可调度性判据</h2>
+<p>RMS 配套一个著名的可调度性判据(Liu & Layland 定理),能算"这组任务用 RMS 能不能都不误点":</p>
+<pre><code>★Liu-Layland 判据(充分条件):
+  n个周期任务, 总利用率 U = Σ(Ci/Ti)
+  若  U ≤ n·(2^(1/n) − 1)   则一定可调度(RMS下都不误点)
+
+  这个上界随n变化:
+   n=1: 100%      n=2: 82.8%     n=3: 78.0%
+   n=4: 75.7%     ...            n→∞: ln2 ≈ 69.3%
+
+  含义: 用RMS, 只要总利用率不超过约69%(保守), 一定安全!
+   ★这是【充分条件】: 满足则一定可调度;
+     不满足也【未必】不可调度(可用更精确的响应时间分析RTA)
+
+  例: 3个任务 U=0.7 > 0.78? 不, 0.7<0.78 → 一定可调度 ✓
+      若 U=0.8 > 0.78 → 判据不保证, 要用精确分析再判</code></pre>
+<p><strong>Liu-Layland 判据给出一个"安全线":用 RMS,只要总利用率不超过 n·(2^(1/n)−1)(n 多时约 69%),就保证所有任务都不误点。</strong>这是一个<strong>充分条件</strong>——满足了一定安全,是设计时的"保守但可靠"的门槛。<strong>关键洞察:RMS 保证安全的利用率上限只有约 69%(而非 100%)</strong>——为了固定优先级的简单和可预测,牺牲了约 30% 的 CPU 利用率。<strong>超过 69% 不代表一定不行</strong>,只是这个简单判据不再保证,要用更精确的"响应时间分析(RTA)"逐个算每个任务的最坏响应时间。<strong>面试可能让你算:给几个任务的 T 和 C,判断 RMS 下是否可调度</strong>——套这个公式即可。</p>
+
+<h2 id="s7">52.7 EDF：最早截止期优先</h2>
+<p><strong>EDF = Earliest Deadline First(最早截止期优先)。</strong>动态优先级的代表:</p>
+<pre><code>EDF 规则: 谁的【当前 deadline 最近】, 谁优先级最高
+          (优先级动态变: 随时间推移, 各任务的deadline远近在变)
+
+  例: 此刻 任务A还有3ms到deadline, 任务B还有1ms到deadline
+     → 先运行B(它更急, deadline更近)
+     过一会儿情况变了, 再重新比
+
+  ★EDF 可调度性判据(超简单):
+     总利用率 U = Σ(Ci/Ti) ≤ 1 (100%)  ⟺ 可调度
+   → EDF能把CPU用到100%还保证不误点! (单核, D=T时)
+   → 这是它相对RMS的最大优势: 利用率上限100% vs RMS的69%
+
+  ★EDF 是"最优的动态优先级算法"(单核):
+     只要U≤1, EDF一定能调度; 任何算法调度不了的(U>1), EDF也不行
+     → 换句话说EDF能调度一切"理论上可调度"的任务集</code></pre>
+<blockquote><p><strong>EDF 的规则也很直觉:谁最快要误点(deadline 最近),就先做谁——像救火,哪里最急先救哪里。</strong>因为 deadline 随时间推移在变,任务的相对优先级动态变化(动态优先级)。<strong>EDF 的杀手锏是它的可调度性判据极其简单且强大:总利用率 ≤ 100% 就一定可调度(单核、D=T)。</strong>这意味着 <strong>EDF 能把 CPU 榨到 100% 还保证不误点</strong>,而 RMS 只能保证到约 69%——<strong>EDF 的 CPU 利用率上限碾压 RMS。</strong>而且 EDF 是"最优的动态优先级算法":凡是理论上可调度的任务集(U≤1),EDF 都能调度。<strong>听起来 EDF 完胜,为什么 RTOS 大多还用 RMS?</strong>因为 EDF 有实现复杂、过载时行为糟糕(一旦 U>1,EDF 可能"雪崩式"多个任务连环误点,而 RMS 过载时只有低优先级任务受影响,更可预测)等缺点——下一节对比。</p></blockquote>
+
+<h2 id="s8">52.8 RMS vs EDF 对比</h2>
+<p>两大算法全面对比(面试高频):</p>
+<table>
+<tr><th></th><th>RMS(固定优先级)</th><th>EDF(动态优先级)</th></tr>
+<tr><td>优先级</td><td>固定(周期短=高)</td><td>动态(deadline 近=高)</td></tr>
+<tr><td>CPU 利用率上限</td><td>约 69%~(n 相关)</td><td><strong>100%</strong></td></tr>
+<tr><td>实现复杂度</td><td>简单(比固定优先级)</td><td>复杂(动态比 deadline)</td></tr>
+<tr><td>可预测性</td><td>高(优先级固定,行为好懂)</td><td>较低</td></tr>
+<tr><td>过载(U>1)时</td><td>只低优先级任务受损(可控)</td><td><strong>可能雪崩</strong>(多任务连环误点)</td></tr>
+<tr><td>采用</td><td>大多数 RTOS、飞控(FreeRTOS 优先级)</td><td>部分系统、Linux SCHED_DEADLINE</td></tr>
+</table>
+<blockquote><p><strong>RMS 和 EDF 是一对经典权衡:EDF 利用率高(100%)但复杂、过载时会雪崩;RMS 利用率低(69%)但简单、可预测、过载时优雅降级。</strong>过载行为的差异尤其关键:<strong>RMS 过载时,高优先级(短周期、通常最关键的控制)任务不受影响,只有低优先级任务误点——可控、可预测;而 EDF 过载时,可能一个任务超时引发连锁反应,多个任务集体误点——灾难性。</strong>对硬实时安全系统,"过载时行为可预测"往往比"利用率高"更重要——<strong>所以飞控、汽车等安全关键系统大多用固定优先级(RMS 思想),宁可 CPU 只用到 69% 也要行为可控。</strong>EDF 更适合"利用率要求高、过载可控"的场景(Linux 的 SCHED_DEADLINE 用 EDF)。<strong>没有绝对好坏,选择取决于"你更看重利用率还是可预测性/安全裕度"</strong>——这又回到实时系统的核心权衡。</p></blockquote>
+
+<h2 id="s9">52.9 Linux 的实时调度类</h2>
+<p>回到 Linux(第30章讲过调度类),看它提供的实时调度策略:</p>
+<table>
+<tr><th>调度策略</th><th>类型</th><th>说明</th></tr>
+<tr><td><strong>SCHED_FIFO</strong></td><td>实时,固定优先级</td><td>先进先出:同优先级不轮转,一直跑到主动让出/被更高优先级抢占</td></tr>
+<tr><td><strong>SCHED_RR</strong></td><td>实时,固定优先级</td><td>轮转:同优先级任务时间片轮流(Round Robin)</td></tr>
+<tr><td><strong>SCHED_DEADLINE</strong></td><td>实时,EDF</td><td>基于 EDF,指定周期/运行时/deadline,内核保证</td></tr>
+<tr><td>SCHED_OTHER(CFS)</td><td>非实时</td><td>普通任务,公平调度(第30章)</td></tr>
+</table>
+<pre><code>用法(给任务设实时调度):
+  struct sched_param p = { .sched_priority = 80 };
+  sched_setscheduler(pid, SCHED_FIFO, &p);   // 设为实时FIFO优先级80
+  // 或 chrt -f 80 ./myprogram
+
+  ★实时优先级(1-99)高于所有普通任务(CFS):
+    只要有实时任务就绪, 普通任务就得不到CPU
+    → 实时任务里死循环 = 系统卡死! (要小心)</code></pre>
+<p><strong>Linux 提供三种实时调度策略</strong>:<strong>SCHED_FIFO</strong>(固定优先级、同级不轮转,对应 RMS 式固定优先级)、<strong>SCHED_RR</strong>(固定优先级但同级时间片轮转)、<strong>SCHED_DEADLINE</strong>(基于 EDF,直接指定 deadline)。<strong>实时优先级(1-99)高于所有普通 CFS 任务</strong>——只要有实时任务就绪,普通任务就靠边站。<strong>这带来一个危险:实时任务里若有死循环,会饿死所有普通任务、卡死系统</strong>(所以有 RT throttling 机制默认限制实时任务最多用 95% CPU 留口子)。<strong>做 Linux 实时应用,就是把关键任务设成 SCHED_FIFO 高优先级(第55章配合 PREEMPT_RT)。</strong>在 RK3588 上跑实时任务就用这些。</p>
+
+<h2 id="s10">52.10 多核实时调度的难题</h2>
+<p>前面的 RMS/EDF 理论都是<strong>单核</strong>的。多核(SMP,第30章)让实时调度变复杂,了解即可:</p>
+<pre><code>多核实时调度两种思路:
+  ① 分区调度(Partitioned): 每个任务固定绑到某个核
+     → 每个核独立跑单核RMS/EDF, 简单、可预测
+     → 但是"装箱问题": 任务往核上分配可能装不下(某核满了)
+  ② 全局调度(Global): 任务可在任意核跑, 全局一个队列
+     → 灵活、利用率高, 但分析极难(有Dhall效应等反常现象)
+
+  ★多核实时的反直觉: 单核的漂亮结论(EDF U≤1)在多核不成立!
+     多核上U远小于核数也可能不可调度(经典反例)
+  实践: 安全关键系统常用【分区+绑核】(CPU affinity, 第八卷),
+        牺牲灵活性换可预测性和可分析性</code></pre>
+<p><strong>多核实时调度远比单核难,单核的漂亮定理(如 EDF U≤1 可调度)在多核不再成立。</strong>两种思路:<strong>分区调度</strong>(每个任务绑定固定核,各核独立跑单核算法——简单可分析,但分配是装箱问题)、<strong>全局调度</strong>(任务可跨核迁移——灵活但分析极难,有反常现象)。<strong>实践中,安全关键的实时系统倾向"分区+绑核"(CPU affinity,第八卷)</strong>:把关键实时任务固定绑到专用核(甚至隔离该核 isolcpus 不让别的任务用),牺牲灵活性换来可预测性和可分析性。<strong>这再次体现实时的信条:宁可保守(不充分利用多核),也要确定性。</strong>车企在多核 SoC 上做实时,绑核隔离是常规操作。</p>
+
+<h2 id="s11">52.11 回扣 FreeRTOS 与工程</h2>
+<p>本章理论和你的实践连接:</p>
+<table>
+<tr><th>本章概念</th><th>连接到</th></tr>
+<tr><td>固定优先级抢占(RMS)</td><td>第17章 FreeRTOS 调度器</td></tr>
+<tr><td>周期短=优先级高</td><td>你给控制任务设高优先级的直觉</td></tr>
+<tr><td>SCHED_FIFO/DEADLINE</td><td>第30章 Linux 调度类</td></tr>
+<tr><td>可调度性分析</td><td>WCET(第54章,C 的来源)</td></tr>
+<tr><td>绑核隔离</td><td>第八卷 CPU affinity/isolcpus</td></tr>
+</table>
+<blockquote><p><strong>本章把你"凭经验给任务排优先级"的做法,升级成"有理论依据、可数学证明"的实时调度设计。</strong>你在 FreeRTOS 里给姿态控制设最高优先级、给日志设最低——现在你知道这是 RMS(周期短的优先),而且它是最优的固定优先级方案,还能用 Liu-Layland 判据证明"这组任务在 XX 利用率下一定不误点"。<strong>这种"可证明"的能力是硬实时系统的科学基础</strong>:飞控不能靠"测试没出事"来保证,而要靠可调度性分析<strong>证明</strong>最坏情况也安全。<strong>工程实践的完整链条是:①用 WCET(第54章)确定每个任务的 C;②按 RMS 分配优先级(或用 EDF/SCHED_DEADLINE);③用可调度性判据证明可调度;④处理优先级反转(第53章)、多核绑核;⑤用 cyclictest(第51章)验证实际延迟。</strong>掌握这套方法论,你就能<strong>设计并论证一个满足 deadline 的实时系统</strong>,而不只是"调调优先级看看行不行"——这正是车企实时工程师的核心竞争力,面试也常围绕"如何保证一组任务都满足 deadline"展开。</p></blockquote>
+
+<h2 id="s12">52.12 面试常问问题</h2>
+<p><strong>Q1:实时调度和普通调度(CFS)的目标区别?</strong><br>CFS 追求公平/吞吐;实时调度追求保证每个任务在 deadline 前完成(不是公平)。实时调度还能做可调度性分析,设计时证明不误点。</p>
+<p><strong>Q2:RMS 是什么?规则?</strong><br>Rate Monotonic,固定优先级:周期越短优先级越高。是最优的固定优先级算法——RMS 调度不了的,没有固定优先级方案能调度。</p>
+<p><strong>Q3:RMS 的可调度性判据?利用率上限?</strong><br>Liu-Layland:U ≤ n(2^(1/n)−1) 则一定可调度(充分条件),n→∞ 时约 69.3%。即用 RMS 保守保证到约 69% 利用率。超过要用响应时间分析(RTA)精确判。</p>
+<p><strong>Q4:EDF 是什么?判据?和 RMS 比?</strong><br>Earliest Deadline First,动态优先级:deadline 最近的优先。判据 U≤1 即可调度(单核 D=T),利用率上限 100%(vs RMS 69%),是最优动态算法。但实现复杂、过载时可能雪崩。</p>
+<p><strong>Q5:为什么飞控等安全系统多用固定优先级(RMS)而非 EDF?</strong><br>EDF 利用率高但过载时多任务连环误点(雪崩),不可预测;RMS 过载时只有低优先级任务受损,高优先级关键任务不受影响,行为可控。安全系统重可预测性胜过利用率。</p>
+<p><strong>Q6:Linux 的实时调度策略有哪些?</strong><br>SCHED_FIFO(固定优先级不轮转)、SCHED_RR(固定优先级时间片轮转)、SCHED_DEADLINE(EDF)。实时优先级高于所有 CFS 任务,实时任务死循环会卡死系统(有 RT throttling)。</p>
+<p><strong>Q7:多核实时调度为什么难?</strong><br>单核定理(EDF U≤1)在多核不成立,有反常现象。分区调度(绑核,可分析)vs 全局调度(灵活难分析)。安全系统多用分区+绑核隔离,牺牲灵活换可预测。</p>
+
+<h2 id="s13">52.13 常见误区</h2>
+<ol>
+  <li><strong>"实时调度追求公平"</strong>——追求满足 deadline,不是公平(那是 CFS)。</li>
+  <li><strong>"RMS 能用满 100% CPU"</strong>——保证上限约 69%(n 多时),超过要精确分析。</li>
+  <li><strong>"EDF 全面优于 RMS"</strong>——EDF 利用率高但复杂、过载雪崩、不可预测;各有适用。</li>
+  <li><strong>"总利用率≤100% 就一定可调度"</strong>——EDF 单核是,RMS 不是(约 69% 才保证);多核都不成立。</li>
+  <li><strong>"给任务设高优先级就实时了"</strong>——还要可调度性分析证明、处理反转、控制 WCET。</li>
+  <li><strong>"单核实时理论直接用于多核"</strong>——多核有反常,不能照搬,常用绑核。</li>
+</ol>
+
+<h2 id="s14">52.14 本章总结</h2>
+<ul>
+  <li>实时调度目标:<strong>保证每个任务满足 deadline</strong>(非公平);珍贵能力=<strong>可调度性分析</strong>(设计时数学证明不误点)。</li>
+  <li>周期任务模型:<strong>周期 T、执行时间 C、截止期 D</strong>;利用率 U=C/T,总利用率 ΣCi/Ti。</li>
+  <li><strong>RMS</strong>(固定优先级):<strong>周期短=优先级高</strong>;是最优固定优先级算法。判据 <strong>U ≤ n(2^(1/n)−1)</strong>(约 69%)则可调度(充分条件)。</li>
+  <li><strong>EDF</strong>(动态优先级):<strong>deadline 近=优先级高</strong>;判据 <strong>U≤1</strong> 可调度(利用率上限 100%),最优动态算法。</li>
+  <li>对比:<strong>EDF 利用率高(100%)但复杂、过载雪崩;RMS 利用率低(69%)但简单、可预测、过载优雅降级</strong>——安全系统多选 RMS 式固定优先级。</li>
+  <li>Linux 实时策略:<strong>SCHED_FIFO / SCHED_RR / SCHED_DEADLINE(EDF)</strong>;实时优先级高于 CFS,死循环会卡死(RT throttling)。</li>
+  <li>多核实时难(单核定理失效);安全系统用<strong>分区+绑核隔离</strong>,牺牲灵活换可预测。</li>
+  <li>工程链条:WCET(C)→ RMS/EDF 分优先级 → 可调度性证明 → 处理反转/绑核 → cyclictest 验证。</li>
+</ul>
+
+<h2 id="s15">52.15 思维导图 / 课后题</h2>
+<pre><code>实时调度:优先级/RMS/EDF
+├─ 一、目标:保证deadline(非公平) + ★可调度性分析(设计时证明)
+├─ 二、周期任务模型:T周期/C执行时间/D截止期; U=C/T
+├─ 三、两类:固定优先级(RMS) vs 动态优先级(EDF)
+├─ 四、★RMS:周期短=优先级高; 最优固定优先级算法
+│      └─ 判据 U≤n(2^(1/n)−1) ≈69% 则可调度(充分条件)
+├─ 五、★EDF:deadline近=优先级高; 判据U≤1(利用率100%), 最优动态
+├─ 六、★对比:EDF利用率高但过载雪崩不可预测; RMS低但可控优雅降级
+│      └─ 安全系统(飞控)多选RMS固定优先级
+├─ 七、Linux:SCHED_FIFO/RR/DEADLINE(EDF); 实时优先级>CFS(死循环卡死)
+├─ 八、多核难:单核定理失效; 安全系统用分区+绑核隔离
+└─ 九、工程链:WCET(C)→RMS/EDF分优先级→可调度证明→处理反转→cyclictest
+        回扣:FreeRTOS优先级(17)就是RMS思想</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>三个任务:T1=4ms C1=1ms, T2=5ms C2=1ms, T3=10ms C3=2ms。算总利用率,用 Liu-Layland 判据判断 RMS 下是否可调度;再判断 EDF 下(U≤1)。</li>
+  <li>给上题按 RMS 分配优先级(周期短的高),画出前 20ms 的调度时序(甘特图),验证都不误点。</li>
+  <li>在 Linux 上用 <code>chrt -f 80 ./prog</code> 把程序设为 SCHED_FIFO,<code>chrt -p pid</code> 查看;体会实时优先级抢占普通任务(小心别死循环)。</li>
+  <li>构造一个 U 略超 69% 但 EDF 可调度(U&lt;1)的任务集,说明为什么 RMS 判据不保证而 EDF 可以。</li>
+  <li>研究 Linux SCHED_DEADLINE 的用法(sched_setattr 设 runtime/period/deadline),理解它如何用 EDF 保证。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>实时调度和 CFS 的目标区别?什么是可调度性分析?</li>
+  <li>RMS 的规则?为什么是最优固定优先级算法?</li>
+  <li>RMS 的可调度性判据?利用率上限为什么只有约 69%?</li>
+  <li>EDF 的规则和判据?相对 RMS 的优劣?</li>
+  <li>为什么安全关键系统多用 RMS 而非 EDF?</li>
+  <li>Linux 有哪些实时调度策略?用实时优先级要注意什么?</li>
+  <li>给一组任务的 T 和 C,怎么判断能否满足 deadline?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第五十二章 完 · 下一章《第五十三章 优先级反转与继承》</p>
+<div class="nav">
+  <a href="第51章-延迟Latency的来源.html">← 第五十一章</a>
+  <a href="index.html">目录</a>
+  <a href="第53章-优先级反转与继承.html">第五十三章 →</a>
+</div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第卅六章 中断与 SoftIRQ</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第35章-Linux-Epoll与IO多路复用.html">← 第卅五章</a>
+  <a href="index.html">目录</a>
+  <a href="第37章-Linux-并发同步.html">第卅七章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第五卷 · Linux 内核</div>
+  <h1>第卅六章 中断与 SoftIRQ</h1>
+  <div class="sub">上半部要快、下半部干活——中断的"分身术"</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">中断处理的两难</a></li>
+    <li><a href="#s2">生活例子:接电话记便签</a></li>
+    <li><a href="#s3">上半部与下半部</a></li>
+    <li><a href="#s4">Linux 中断处理全流程</a></li>
+    <li><a href="#s5">下半部三种机制</a></li>
+    <li><a href="#s6">SoftIRQ 软中断</a></li>
+    <li><a href="#s7">Tasklet</a></li>
+    <li><a href="#s8">Workqueue 工作队列</a></li>
+    <li><a href="#s9">ksoftirqd 内核线程</a></li>
+    <li><a href="#s10">三者怎么选</a></li>
+    <li><a href="#s11">回扣 STM32/FreeRTOS/网络</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:第七章你学了中断的硬件原理,第34章你看到网卡接收用"硬中断+软中断"两段处理。这一章把 Linux 的中断处理机制讲透:<strong>为什么要拆成"上半部/下半部",SoftIRQ / Tasklet / Workqueue 三种下半部机制各是什么、怎么选</strong>。这是你在 STM32 里"中断只置 flag,主循环处理"那个朴素做法的系统化、工业级版本。</p></blockquote>
+
+<h2 id="s1">36.1 中断处理的两难</h2>
+<p>回顾第七章的核心原则:<strong>中断处理函数(ISR)要短要快。</strong>为什么?因为处理中断时通常要<strong>关闭(屏蔽)中断</strong>——如果 ISR 里干很久,这段时间别的中断都被挡着(丢事件、延迟飙升)。想象网卡收包 ISR 里把整个 TCP/IP 协议栈跑完(几十微秒),这期间别的中断全被压着,系统就"卡"了。</p>
+<p>但矛盾来了:<strong>有些中断确实有很多活要干</strong>(网卡收包要拆协议栈、磁盘完成要处理数据)。<strong>又要响应快(ISR 短),又有很多活要干</strong>——怎么办?Linux 的解法是"<strong>分身</strong>":把中断处理拆成两半——<strong>紧急的一小部分立刻在中断里做(上半部),不紧急的大部分推迟到中断外做(下半部)。</strong></p>
+
+<h2 id="s2">36.2 生活例子：接电话记便签</h2>
+<p>你在专心工作,电话响了(中断)。<strong>笨做法</strong>:接起电话当场把对方要的事全办完(可能要查资料、打印、跑腿,半小时),这期间电话线一直占着,别人打不进来(中断被屏蔽,别的事件进不来)。</p>
+<p><strong>聪明做法</strong>:接起电话,<strong>快速记下"谁、要什么"到便签上,说"知道了我稍后处理",挂断</strong>(上半部:极短,几秒,立刻释放电话线)。然后<strong>等手头忙完,再照便签一件件办</strong>(下半部:慢慢干,不占电话线)。<strong>关键:接电话(响应中断)必须快,好让电话线尽快空出来;真正费时的活挪到"挂断后"做。</strong>这就是上半部/下半部的精髓。</p>
+
+<h2 id="s3">36.3 上半部与下半部</h2>
+<p>把这套术语和职责固定下来:</p>
+<table>
+<tr><th></th><th>上半部(Top Half)</th><th>下半部(Bottom Half)</th></tr>
+<tr><td>别名</td><td>硬中断处理、ISR</td><td>软中断处理、延后处理</td></tr>
+<tr><td>何时执行</td><td>中断发生时立刻,<strong>关中断</strong>环境</td><td>稍后,<strong>开中断</strong>环境</td></tr>
+<tr><td>要求</td><td>极短极快</td><td>可以耗时</td></tr>
+<tr><td>能否睡眠/阻塞</td><td>❌ 绝对不能</td><td>看机制(softirq/tasklet 不能,workqueue 能)</td></tr>
+<tr><td>典型工作</td><td>应答硬件、存数据、标记"有活"、触发下半部</td><td>真正的数据处理(拆协议栈等)</td></tr>
+</table>
+<blockquote><p>分工原则:<strong>上半部只做"必须立刻做且做不了多久会出事"的最小工作</strong>——比如读走网卡里的数据(不读硬件缓冲会溢出)、应答硬件、然后<strong>触发下半部并立刻返回</strong>。<strong>下半部做"能等一等的重活"。</strong>判断依据:这件事推迟几十微秒会不会出问题?不会→放下半部;会(如硬件缓冲要溢出)→放上半部。<strong>这个"紧急最小化 + 重活延后"的拆分,你在 STM32 写"中断里只把数据丢进队列/置 flag,主循环慢慢处理"时早就用过——Linux 只是给了它三种工业级的"下半部"实现。</strong></p></blockquote>
+
+<h2 id="s4">36.4 Linux 中断处理全流程</h2>
+<p>串一遍一次中断在 Linux 里的完整旅程(结合第13章 GIC):</p>
+<pre><code>一次设备中断的完整流程:
+  ① 设备拉中断线 → GIC(第13章)仲裁 → 送给某个CPU
+  ② CPU跳到内核的中断入口(异常向量, 第12章)
+  ③ 内核保存现场, 查中断号 → 找到注册的handler
+  ④ 【上半部】执行设备的ISR(request_irq注册的):
+        - 极短: 应答设备、读走紧急数据、
+        - 触发下半部(raise softirq / schedule tasklet/work)
+        - 返回
+  ⑤ 中断返回前, 检查有没有待处理的软中断 → 有就执行【下半部】
+  ⑥ 【下半部】(softirq/tasklet)在此处理, 或推给ksoftirqd线程
+  ⑦ 恢复现场, 返回被打断的代码</code></pre>
+<p>注意第⑤步:<strong>下半部(softirq/tasklet)通常在"中断返回时"顺便执行</strong>——此时已经开中断了,可以慢慢干,还能被更高优先级中断打断。如果下半部太多处理不完,推给专门的内核线程 <code>ksoftirqd</code>(36.9)。整个流程把第12章异常入口、第13章 GIC、第七章中断原则都串起来了。</p>
+
+<h2 id="s5">36.5 下半部三种机制</h2>
+<p>Linux 提供三种下半部机制,这是本章重点。先总览再逐个讲:</p>
+<table>
+<tr><th>机制</th><th>运行上下文</th><th>能否睡眠</th><th>并发特点</th><th>典型用途</th></tr>
+<tr><td><strong>SoftIRQ</strong></td><td>中断上下文</td><td>❌ 不能</td><td>同类型可多核并行</td><td>网络收发、块设备(高性能核心)</td></tr>
+<tr><td><strong>Tasklet</strong></td><td>中断上下文</td><td>❌ 不能</td><td>同一 tasklet 不会并行(串行化)</td><td>一般驱动的下半部</td></tr>
+<tr><td><strong>Workqueue</strong></td><td>进程上下文(内核线程)</td><td>✅ 能</td><td>可调度、可阻塞</td><td>需要睡眠/耗时长的下半部</td></tr>
+</table>
+<p><strong>核心分野是"运行在什么上下文":SoftIRQ/Tasklet 运行在"中断上下文"(不能睡眠),Workqueue 运行在"进程上下文"(内核线程里,能睡眠)。</strong>这个区别决定了一切:能不能睡眠、能不能调用可能阻塞的函数(如某些内存分配、等锁)。下面逐个看。</p>
+
+<h2 id="s6">36.6 SoftIRQ 软中断</h2>
+<p><strong>SoftIRQ</strong> 是最底层、性能最高的下半部机制,但也最"硬核"(限制多):</p>
+<pre><code>SoftIRQ 特点:
+  ├─ 类型是【静态编译时定的】, 数量固定(如NET_RX/NET_TX/TIMER/BLOCK等)
+  ├─ 运行在中断上下文, 【不能睡眠】
+  ├─ 同一种softirq可以【在多个CPU上并行】运行 ★
+  │    → 高性能, 但要自己处理并发(用per-CPU数据或锁, 第37章)
+  └─ 一般驱动【不直接用】, 主要给网络/块设备等核心子系统
+
+  cat /proc/softirqs  ← 看各类softirq在各CPU的计数</code></pre>
+<p><strong>SoftIRQ 的杀手锏是"同类型可多核并行"</strong>:两个 CPU 可以同时跑 NET_RX 软中断处理两个网卡的包——这对高吞吐网络至关重要(第34章接收就走 NET_RX)。但代价是<strong>你得自己处理并发安全</strong>(多核同时跑,共享数据要保护,第37章)。因为限制多、易出错,SoftIRQ 类型是内核编译时固定的,<strong>普通驱动不直接用</strong>,只有网络、块设备、定时器这些核心子系统用。普通驱动用它的"友好封装"——Tasklet。</p>
+
+<h2 id="s7">36.7 Tasklet</h2>
+<p><strong>Tasklet</strong> 是建立在 SoftIRQ 之上的"更好用的下半部",给普通驱动用:</p>
+<pre><code>Tasklet 特点(底层就是一种softirq):
+  ├─ 运行在中断上下文, 【不能睡眠】(和softirq一样)
+  ├─ 动态创建, 用起来简单(驱动常用)
+  ├─ ★同一个tasklet【不会在多核并行】(自动串行化)
+  │    → 你不用担心自己这个tasklet的并发, 省心
+  └─ 不同tasklet可以在不同CPU并行
+
+  用法: tasklet_init(&t, func, data);  在ISR里 tasklet_schedule(&t);</code></pre>
+<p><strong>Tasklet 相比 SoftIRQ 的关键便利:同一个 tasklet 保证不会在两个 CPU 上同时运行(自动串行化)。</strong>这意味着你写 tasklet 处理函数时,<strong>不用担心它自己和自己并发</strong>——省去很多加锁的麻烦。代价是同一 tasklet 不能并行(损失一点并行度),但对普通驱动够用了。<strong>所以选择很清晰:要极致并行性能(网络)→SoftIRQ 但自己管并发;普通驱动图省心→Tasklet。</strong>两者都不能睡眠——要睡眠得用 Workqueue。</p>
+
+<h2 id="s8">36.8 Workqueue 工作队列</h2>
+<p>前两者都不能睡眠,但有些下半部工作<strong>必须能睡眠</strong>(比如要申请可能阻塞的资源、要等一个锁、要做慢速 IO)。<strong>Workqueue</strong> 就是为此而生:</p>
+<pre><code>Workqueue 特点:
+  ├─ ★运行在【进程上下文】(内核线程里, 如kworker)
+  ├─ ★【可以睡眠、可以阻塞、可以被调度】 ← 关键区别!
+  ├─ 因为在内核线程, 受调度器管理(第30章)
+  └─ 用法: 定义work → schedule_work(&work) → kworker线程稍后执行
+
+  代价: 有线程切换开销, 延迟比softirq/tasklet大一点</code></pre>
+<blockquote><p><strong>Workqueue 和前两者的本质区别:它把下半部工作交给一个内核线程(kworker)去执行,所以运行在"进程上下文",能睡眠、能阻塞、受调度器调度(第30章)。</strong>SoftIRQ/Tasklet 是"借中断返回的时机顺便执行"(中断上下文,不能睡);Workqueue 是"派个工人线程慢慢干"(进程上下文,能睡)。<strong>判断用哪个的黄金标准:下半部里需不需要睡眠?</strong>需要(等锁、慢 IO、可能阻塞的分配)→ 只能 Workqueue;不需要且要快 → SoftIRQ/Tasklet。代价是 Workqueue 有线程调度开销,延迟略大。<code>ps aux | grep kworker</code> 能看到这些工人线程。</p></blockquote>
+
+<h2 id="s9">36.9 ksoftirqd 内核线程</h2>
+<p>一个补充但重要的机制。SoftIRQ 通常在中断返回时执行,但如果<strong>软中断来得太猛</strong>(比如网络流量暴涨,NET_RX 软中断一个接一个),在中断返回时一直处理软中断,会导致<strong>用户进程饿死</strong>(CPU 全在处理软中断,没空跑进程)。</p>
+<pre><code>ksoftirqd 解决"软中断太多饿死进程":
+  正常: 软中断在中断返回时就地处理(快)
+  但若软中断处理不完(反复来):
+    → 内核不再无限就地处理, 而是唤醒【ksoftirqd内核线程】
+    → 剩下的软中断交给这个线程, 让它和普通进程【一起被调度】
+    → 这样软中断不会完全抢占进程, 系统保持响应
+
+  每个CPU一个: ksoftirqd/0, ksoftirqd/1, ...</code></pre>
+<p><strong>ksoftirqd 是"软中断"和"调度公平"之间的平衡阀</strong>:平时软中断就地快速处理;一旦量大到威胁进程运行,就把它降级成一个受调度器管理的内核线程,和普通进程公平竞争 CPU。<strong>这解释了实际现象:高网络负载时你会看到 ksoftirqd 占很高 CPU</strong>——那是内核在用线程化的方式消化海量软中断,同时不让进程完全饿死。诊断"网络高负载下系统卡顿"时,ksoftirqd 的 CPU 占用是关键线索。</p>
+
+<h2 id="s10">36.10 三者怎么选(决策)</h2>
+<p>把下半部选择做成决策流程,面试和实战都用得上:</p>
+<pre><code>下半部选哪个? 决策树:
+
+  下半部里需要睡眠/阻塞吗?
+   ├─ 需要(等锁/慢IO/可能阻塞的操作)
+   │     → 用 Workqueue (进程上下文, 能睡)
+   │
+   └─ 不需要(纯计算/搬数据, 要快)
+        │
+        需要同类型多核并行的极致性能吗?
+         ├─ 是(网络/块设备核心) → SoftIRQ(自己管并发)
+         └─ 否(普通驱动) → Tasklet(串行化, 省心)</code></pre>
+<p><strong>一句话记忆:要睡眠用 Workqueue;不睡眠图省心用 Tasklet;不睡眠要极致并行(核心子系统)用 SoftIRQ。</strong>90% 的普通驱动开发用 Tasklet 或 Workqueue 就够了,SoftIRQ 是内核核心子系统的专属。</p>
+
+<h2 id="s11">36.11 回扣 STM32 / FreeRTOS / 网络</h2>
+<p>把这套机制和你已有的经验对齐:</p>
+<table>
+<tr><th>概念</th><th>你熟悉的对应</th></tr>
+<tr><td>上半部要短</td><td>STM32 里"ISR 只置 flag/丢队列"(第七章)</td></tr>
+<tr><td>下半部延后处理</td><td>STM32 里"主循环 while(1) 处理 flag"</td></tr>
+<tr><td>Workqueue(线程化)</td><td>FreeRTOS 里"中断给任务发通知,任务处理"(第22章 EventGroup / 任务通知)</td></tr>
+<tr><td>SoftIRQ 处理网络</td><td>第34章网卡 NET_RX 软中断拆协议栈</td></tr>
+<tr><td>不能睡眠的上下文</td><td>第七章"ISR 里不能阻塞"</td></tr>
+</table>
+<blockquote><p><strong>你其实早就在用"上半部/下半部"思想了。</strong>在 STM32 裸机里,你写"串口中断只把字节存进环形缓冲区,主循环再解析协议"——这就是上半部(存字节)/下半部(解析)!在 FreeRTOS 里,你写"中断里 <code>xTaskNotifyFromISR</code> 通知任务,任务被唤醒后处理"——这就是 Workqueue 式的"中断触发、线程处理"(第22章)!<strong>Linux 的 SoftIRQ/Tasklet/Workqueue,只是把这个你早已在用的朴素思想,做成了三种正规、可复用、考虑了多核的机制。</strong>理解了这层对应,你不是在学一个陌生的新东西,而是在给已有直觉配上专业工具和术语。这正是本书从 RTOS 通向 Linux 的意义。</p></blockquote>
+
+<h2 id="s12">36.12 面试常问问题</h2>
+<p><strong>Q1:为什么中断要分上半部和下半部?</strong><br>ISR 要短(处理时常关中断,久了丢事件、延迟大),但有些中断有重活。所以拆:上半部在中断里做紧急最小工作并触发下半部;下半部延后做重活(开中断环境,可耗时)。</p>
+<p><strong>Q2:上半部有什么限制?</strong><br>极短、不能睡眠/阻塞、通常关中断。只做应答硬件、读走紧急数据、触发下半部。</p>
+<p><strong>Q3:下半部三种机制及区别?</strong><br>SoftIRQ(中断上下文,不能睡,同类型可多核并行,自管并发,核心子系统用);Tasklet(基于 softirq,不能睡,同一 tasklet 串行化省心,普通驱动用);Workqueue(进程上下文/内核线程,能睡能阻塞,受调度)。</p>
+<p><strong>Q4:怎么选下半部机制?</strong><br>需要睡眠→Workqueue;不睡且要极致并行(网络)→SoftIRQ;不睡且图省心(普通驱动)→Tasklet。</p>
+<p><strong>Q5:SoftIRQ 和 Tasklet 最大区别?</strong><br>同一 SoftIRQ 类型可在多核并行(高性能但要自己处理并发),同一 Tasklet 不会并行(自动串行化,省心)。Tasklet 底层就是一种 softirq。</p>
+<p><strong>Q6:ksoftirqd 是什么?什么时候出现?</strong><br>处理软中断的内核线程(每核一个)。软中断太多(如网络暴涨)时,内核不再无限就地处理,而唤醒 ksoftirqd 让软中断和进程一起被调度,防止进程饿死。高网络负载时它 CPU 占用高。</p>
+<p><strong>Q7:Workqueue 为什么能睡眠而 tasklet 不能?</strong><br>Workqueue 运行在内核线程(进程上下文),受调度器管理,睡眠就是让出 CPU;tasklet 运行在中断上下文,没有可让出的进程实体,睡眠会导致系统错乱。</p>
+
+<h2 id="s13">36.13 常见误区</h2>
+<ol>
+  <li><strong>"下半部都不能睡眠"</strong>——SoftIRQ/Tasklet 不能,但 Workqueue(进程上下文)能睡。</li>
+  <li><strong>"Tasklet 和 SoftIRQ 完全不同"</strong>——Tasklet 底层就是一种 softirq,是它的易用封装。</li>
+  <li><strong>"同一个 tasklet 会多核并行"</strong>——不会,自动串行化;不同 tasklet 才可并行。</li>
+  <li><strong>"上半部可以做很多工作"</strong>——上半部要极短,重活必须推给下半部。</li>
+  <li><strong>"ksoftirqd 高 CPU 是 bug"</strong>——通常是网络/软中断负载高的正常表现(也可能提示需优化)。</li>
+  <li><strong>"中断上下文能调用可能睡眠的函数"</strong>——不能(如某些 GFP_KERNEL 分配、mutex),会导致内核错误。</li>
+</ol>
+
+<h2 id="s14">36.14 本章总结</h2>
+<ul>
+  <li>矛盾:<strong>ISR 要短</strong>(处理时关中断,久了误事)vs <strong>有些中断有重活</strong> → 拆成<strong>上半部/下半部</strong>。</li>
+  <li><strong>上半部</strong>(硬中断/ISR):极短、不能睡、应答硬件+读紧急数据+触发下半部。<strong>下半部</strong>:延后做重活。</li>
+  <li>下半部三机制:<strong>SoftIRQ</strong>(中断上下文,不睡,同类型多核并行,自管并发,核心子系统);<strong>Tasklet</strong>(基于 softirq,不睡,同一个串行化省心,普通驱动);<strong>Workqueue</strong>(进程上下文/内核线程,<strong>能睡</strong>,受调度)。</li>
+  <li>选择:<strong>要睡→Workqueue;不睡要极致并行→SoftIRQ;不睡图省心→Tasklet</strong>。核心分野是"运行在中断上下文还是进程上下文"。</li>
+  <li><strong>ksoftirqd</strong>:软中断太多时线程化处理,让软中断和进程公平调度,防饿死;高网络负载时 CPU 占用高。</li>
+  <li>回扣:这就是 STM32"ISR 置 flag / 主循环处理"、FreeRTOS"中断通知任务"的系统化版本;网络 NET_RX 走 SoftIRQ(第34章)。</li>
+</ul>
+
+<h2 id="s15">36.15 思维导图 / 课后题</h2>
+<pre><code>中断与 SoftIRQ
+├─ 一、矛盾:ISR要短(关中断) vs 有重活 → 拆两半
+├─ 二、★上半部(ISR):极短/不能睡/应答硬件+触发下半部
+├─ 三、★下半部:延后做重活
+├─ 四、全流程:GIC→异常入口→上半部→中断返回时跑下半部
+├─ 五、★三种下半部:
+│   ├─ SoftIRQ  中断上下文/不睡/同类型多核并行/自管并发/核心子系统
+│   ├─ Tasklet  基于softirq/不睡/同一个串行化省心/普通驱动
+│   └─ Workqueue 进程上下文(内核线程)/★能睡/受调度
+├─ 六、★选择:要睡→WQ; 不睡极致并行→SoftIRQ; 不睡省心→Tasklet
+├─ 七、ksoftirqd:软中断太多→线程化, 与进程公平调度防饿死
+└─ 八、回扣:STM32"ISR置flag/主循环处理"、FreeRTOS"中断通知任务"的正规版</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li><code>cat /proc/softirqs</code> 看各类软中断计数(NET_RX/TIMER 等);跑网络流量(如大文件下载)再看 NET_RX 增长。</li>
+  <li><code>ps aux | grep -E 'ksoftirqd|kworker'</code> 看这些内核线程;网络压测时 <code>top</code> 观察 ksoftirqd 的 CPU。</li>
+  <li>写一个简单内核模块驱动,在中断 handler 里 <code>tasklet_schedule</code>,tasklet 里打印,理解上/下半部分工(进阶,需内核环境)。</li>
+  <li>把上面的 tasklet 改成 workqueue,在 work 函数里调用可能睡眠的操作(如 <code>msleep</code>),体会 workqueue 能睡而 tasklet 不能。</li>
+  <li>读内核 <code>kernel/softirq.c</code>:找 <code>__do_softirq</code>(处理软中断)、<code>wakeup_softirqd</code>(何时唤醒 ksoftirqd),对照 36.9。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>为什么中断要分上半部/下半部?各自职责和限制?</li>
+  <li>SoftIRQ、Tasklet、Workqueue 的区别?运行上下文各是什么?</li>
+  <li>SoftIRQ 和 Tasklet 在并发上的关键区别?</li>
+  <li>什么情况下必须用 Workqueue?为什么它能睡眠?</li>
+  <li>ksoftirqd 的作用?它高 CPU 说明什么?</li>
+  <li>怎么给一个新驱动选下半部机制?</li>
+  <li>把 Linux 下半部机制和 STM32/FreeRTOS 的中断处理做对比。</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第卅六章 完 · 下一章《第卅七章 并发同步:原子/SpinLock/Mutex》</p>
+<div class="nav">
+  <a href="第35章-Linux-Epoll与IO多路复用.html">← 第卅五章</a>
+  <a href="index.html">目录</a>
+  <a href="第37章-Linux-并发同步.html">第卅七章 →</a>
+</div>
+
+</div>
+</body>
+</html>

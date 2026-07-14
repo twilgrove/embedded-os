@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第十五章 TrustZone 安全世界</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13.5px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第14章-Cache一致性.html">← 第十四章</a>
+  <a href="index.html">目录</a>
+  <a href="第16章-FreeRTOS-Task任务.html">第十六章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第二卷 · ARM 架构</div>
+  <h1>第十五章 TrustZone 安全世界</h1>
+  <div class="sub">在同一颗芯片里，隔出一个连操作系统都进不去的保险柜</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么需要 TrustZone</a></li>
+    <li><a href="#s2">生活类比：银行的金库</a></li>
+    <li><a href="#s3">两个世界：Normal 与 Secure</a></li>
+    <li><a href="#s4">NS 位：一根决定命运的信号线</a></li>
+    <li><a href="#s5">TrustZone 与异常等级的关系</a></li>
+    <li><a href="#s6">Secure Monitor 与 SMC 调用</a></li>
+    <li><a href="#s7">世界切换的完整流程</a></li>
+    <li><a href="#s8">硬件隔离不止 CPU：内存与外设</a></li>
+    <li><a href="#s9">TEE 与 OP-TEE</a></li>
+    <li><a href="#s10">安全启动(Secure Boot)信任链</a></li>
+    <li><a href="#s11">ARM Trusted Firmware 与 RK3588 启动</a></li>
+    <li><a href="#s12">攻击面与局限</a></li>
+    <li><a href="#s13">面试常问</a></li>
+    <li><a href="#s14">常见误区</a></li>
+    <li><a href="#s15">本章总结</a></li>
+    <li><a href="#s16">思维导图</a></li>
+    <li><a href="#s17">课后练习与面试题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第十二章提到 EL3 和"安全世界",这一章把它讲透。TrustZone 是 ARM 的硬件安全隔离技术——它在<strong>同一颗 CPU、同一块内存</strong>里,用硬件劈出两个互相隔离的"世界",让指纹、密钥、支付这些最敏感的代码,跑在一个<strong>连 Linux 内核都看不见、碰不到</strong>的地方。这是手机安全、DRM、车规安全、可信执行的基石,也是理解 RK3588 完整启动流程的最后一块拼图。学完你要能讲清"两个世界怎么隔离、怎么切换、安全启动如何建立信任"。</p></blockquote>
+
+<h2 id="s1">15.1 为什么需要 TrustZone</h2>
+<p>先想一个尖锐的问题:<strong>你敢把指纹、银行密钥、DRM 解密密钥,交给 Linux/安卓内核保管吗?</strong></p>
+<p>不敢。因为:</p>
+<ul>
+  <li>操作系统内核有<strong>几千万行代码</strong>,难免有漏洞。一旦内核被攻破(提权、内核漏洞),攻击者就能读走内核能访问的一切——包括你的密钥、指纹。</li>
+  <li>安卓上用户会 root、会装各种来路不明的 App、内核会加载第三方驱动模块。这个环境<strong>本质上不可信</strong>。</li>
+  <li>可前几章讲的隔离(MMU、EL0/EL1),都是"在操作系统管辖范围内"的隔离——<strong>内核自己是最高权威,它能看到所有进程的内存。</strong>如果连内核都不可信,MMU 那套就不够了。</li>
+</ul>
+<p>核心矛盾:<strong>我们需要一个连"操作系统内核"都无法访问的、更高级别的保护区,来存放最敏感的秘密。</strong>第一章的隔离思想(进程隔离)、第十二章的分级(EL0-EL3),到这里要升级到终极形态:<strong>把整个系统劈成"可信"和"不可信"两半,用硬件保证不可信的一半(哪怕是它的内核)绝对进不了可信的一半。</strong>这就是 TrustZone。</p>
+
+<h2 id="s2">15.2 生活类比：银行的金库</h2>
+<p>把一颗芯片想象成一家银行大楼。</p>
+<ul>
+  <li><strong>普通世界(Normal World)</strong>=银行的营业大厅。员工、客户、保安都在这活动,人来人往,相对开放。你的 Linux/安卓和所有 App 都住在这里。</li>
+  <li><strong>安全世界(Secure World)</strong>=地下金库。里面放着最值钱的东西(密钥、指纹模板)。<strong>营业大厅里的任何人——包括银行行长(内核)——都不能直接进金库。</strong></li>
+  <li>两个区域之间只有<strong>唯一一道戒备森严的闸门(Secure Monitor)</strong>,由最高级别的守卫把守。想从大厅办理金库业务,必须走到这道闸门前,提交合规的申请,由守卫代你进金库办、再把结果拿出来。你本人进不去。</li>
+</ul>
+<p>妙处:金库和大厅在<strong>同一栋楼</strong>(同一颗芯片、共享 CPU 和内存),但用硬件的墙和唯一的闸门,保证大厅的混乱永远波及不到金库。<strong>哪怕大厅被劫匪(黑客)完全占领(内核被攻破),金库依然安全。</strong>这就是 TrustZone 的价值:<strong>安全不依赖于"操作系统没被攻破"这个脆弱假设。</strong></p>
+
+<h2 id="s3">15.3 两个世界：Normal 与 Secure</h2>
+<p>TrustZone 把 CPU 的所有状态劈成两个平行世界:</p>
+<table>
+<tr><th></th><th>普通世界 Normal World(非安全)</th><th>安全世界 Secure World</th></tr>
+<tr><td>跑什么</td><td>Linux/安卓 + 所有普通 App</td><td>安全 OS(如 OP-TEE)+ 可信应用(TA)</td></tr>
+<tr><td>能访问安全内存吗</td><td>不能(硬件禁止)</td><td>能(安全世界能看两边)</td></tr>
+<tr><td>典型内容</td><td>你的桌面、浏览器、游戏</td><td>指纹匹配、密钥运算、支付、DRM</td></tr>
+<tr><td>信任级别</td><td>不可信(代码多、开放)</td><td>可信(代码少、经严格审计)</td></tr>
+</table>
+<p>一个关键的不对称:<strong>安全世界能访问普通世界的内存,反过来不行。</strong>就像金库守卫可以去大厅(为了取放东西),但大厅的人进不了金库。这个不对称是设计的——安全世界要能读普通世界传来的请求参数,但绝不能让普通世界窥探安全世界。</p>
+<blockquote><p><strong>"世界(World)"是 TrustZone 独有的一个维度,它和第十二章的"异常等级(EL)"是<strong>正交</strong>的两个概念。</strong>EL 是"权限高低"(垂直的楼层),World 是"可信与否"(水平的两栋楼)。一个 CPU 在任一时刻,既处于某个 EL,又处于某个 World——它们组合起来才完整描述 CPU 的状态。下面几节把这个组合讲清。</p></blockquote>
+
+<h2 id="s4">15.4 NS 位：一根决定命运的信号线</h2>
+<p>两个世界的隔离,物理上靠一个比特——<strong>NS 位(Non-Secure bit)</strong>。它存在一个安全配置寄存器(<code>SCR_EL3</code>)里,标记"CPU 现在处于哪个世界":</p>
+<ul>
+  <li>NS = 0:CPU 当前在<strong>安全世界</strong>。</li>
+  <li>NS = 1:CPU 当前在<strong>普通世界</strong>。</li>
+</ul>
+<p>神奇的是,<strong>这个 NS 位不只 CPU 自己看,它会随着每一次内存/外设访问"广播"出去。</strong>当 CPU 发起一次总线访问(读写内存或外设),NS 位作为地址信号的一部分一起发到总线上。总线上的硬件(内存控制器、外设)看到 NS 位,就知道"这次访问来自哪个世界",从而决定放不放行。</p>
+<pre><code>CPU 访问内存 0x1000:
+  访问信号 = { 地址0x1000, 读/写, NS位 }
+                                    │
+                                    ▼
+              内存控制器看NS位:
+              这块内存被配置为"安全内存"吗?
+                ┌──────┴──────┐
+            是(安全内存)    否(普通内存)
+                │              │
+          NS=0才放行      两个世界都能访问
+          NS=1(普通世界)
+          访问→被硬件拒绝!</code></pre>
+<blockquote><p>这是 TrustZone 最精妙的一点:<strong>安全隔离不只在 CPU 核里,而是贯穿整个总线和所有硬件。</strong>NS 位像给每次访问盖了个"来自哪个世界"的钢印,内存和外设凭这个钢印决定是否服务。所以普通世界的内核想读安全内存,总线硬件直接拒绝——不是软件检查,是<strong>物理上的门禁</strong>。这也是为什么 TrustZone 比纯软件的安全方案强:攻破软件没用,墙是硬件砌的。</p></blockquote>
+
+<h2 id="s5">15.5 TrustZone 与异常等级的关系</h2>
+<p>把 World 和 EL 组合起来看完整图景(ARMv8.4 之前的经典模型):</p>
+<pre><code>            普通世界(NS=1)          安全世界(NS=0)
+          ┌──────────────┐      ┌──────────────┐
+   EL0    │ 普通App       │      │ 可信应用 TA   │
+          ├──────────────┤      ├──────────────┤
+   EL1    │ Linux内核     │      │ 安全OS(OP-TEE)│
+          ├──────────────┤      ├──────────────┤
+   EL2    │ Hypervisor    │      │ (安全EL2,较新) │
+          └──────────────┘      └──────┬───────┘
+                    │                   │
+                    └─────────┬─────────┘
+                              ▼
+                    ┌──────────────────┐
+              EL3   │  Secure Monitor   │ ← 唯一的闸门, 无世界之分
+                    │  (安全监控固件ATF) │   两个世界都从这切换
+                    └──────────────────┘</code></pre>
+<p>关键点:</p>
+<ul>
+  <li>普通世界有自己的 EL0/EL1(/EL2),安全世界也有自己的 EL0/EL1——<strong>两个世界各有一套特权分级</strong>。</li>
+  <li><strong>EL3 是特殊的:它不属于任何世界,凌驾于两个世界之上,是唯一能切换世界的"闸门"。</strong>跑在 EL3 的就是 Secure Monitor(安全监控固件)。</li>
+  <li>所以世界切换必然经过 EL3——从普通世界 EL1 想进安全世界,得先陷入 EL3,由 Monitor 切换 NS 位、再进安全世界。</li>
+</ul>
+<p>这就把第十二章的"EL3 最高、管安全世界切换"落实了。EL3 是四层楼的顶楼,而 TrustZone 让它成为"两栋楼之间唯一的天桥"。</p>
+
+<h2 id="s6">15.6 Secure Monitor 与 SMC 调用</h2>
+<p>普通世界怎么请求安全世界的服务(比如"帮我用密钥签个名")?通过一条专门的指令——<strong>SMC(Secure Monitor Call)</strong>,第十二章见过它。</p>
+<p>类比系统调用:第十二章里,用户态(EL0)用 <code>SVC</code> 请求内核(EL1)服务。这里更高一层——普通世界内核(EL1)用 <code>SMC</code> 请求安全监控(EL3),再转到安全世界服务。<strong>SVC 是"员工找经理",SMC 是"经理找金库守卫"。</strong></p>
+<pre><code>三级"往上求助"的指令(对称之美):
+  EL0 → EL1:  SVC   (系统调用, 应用求内核)
+  EL1 → EL2:  HVC   (虚拟化调用, 内核求Hypervisor)
+  EL1/EL2 → EL3: SMC (安全监控调用, 求安全世界)
+
+普通世界发起 SMC:
+  内核(NS=1, EL1) 执行 SMC 指令
+    → 陷入 EL3 的 Secure Monitor
+    → Monitor 保存普通世界现场, 切 NS 位(1→0), 恢复安全世界现场
+    → 进入安全世界处理请求
+    → 处理完, Monitor 再切回来(NS: 0→1), 返回普通世界</code></pre>
+<p>SMC 有标准的调用约定(SMCCC,ARM SMC Calling Convention),规定用哪些寄存器传功能号和参数,让普通世界的 Linux 和安全世界的固件能对接——这又是"约定/ABI"思想(第六章)在世界之间的应用。</p>
+
+<h2 id="s7">15.7 世界切换的完整流程</h2>
+<p>把一次完整的世界切换走一遍。场景:安卓要做指纹匹配(指纹模板在安全世界,绝不出金库)。</p>
+<pre><code>① 安卓App(普通世界EL0)想验证指纹
+   → 调用普通世界的 TEE 客户端库
+② 库触发系统调用进 Linux 内核(普通世界EL1)
+③ 内核的 TEE 驱动执行 SMC 指令
+   → 陷入 EL3 Secure Monitor
+④ Monitor:
+   - 保存普通世界的完整现场(寄存器等)到安全存储
+   - 把 NS 位从 1 改成 0(切到安全世界)
+   - 恢复安全世界之前保存的现场
+   - 用 ERET 进入安全世界(OP-TEE, 安全EL1)
+⑤ 安全OS(OP-TEE)找到"指纹匹配"可信应用(TA), 运行它
+   - 从安全内存读出指纹模板(普通世界永远读不到)
+   - 拿普通世界传来的待验证指纹(安全世界能读普通内存)
+   - 在安全世界内完成匹配, 只输出"通过/不通过"这个结果
+⑥ 安全世界执行 SMC 返回
+   → 回到 EL3 Monitor: 保存安全世界现场, NS 0→1, 恢复普通世界现场
+⑦ 回到安卓, 拿到"通过/不通过" —— 全程指纹模板没离开过安全世界</code></pre>
+<blockquote><p>这个流程的安全价值:<strong>最敏感的数据(指纹模板、密钥)从头到尾待在安全世界的内存里,普通世界(包括被 root 的安卓、被攻破的内核)只能拿到最终的"是/否"结果,永远接触不到原始秘密。</strong>就算整个安卓系统烂透了,你的指纹和密钥依然安全。这就是手机能安全存指纹、跑移动支付、播放受 DRM 保护视频的底层原理。</p></blockquote>
+
+<h2 id="s8">15.8 硬件隔离不止 CPU：内存与外设</h2>
+<p>光有 CPU 的两个世界不够——如果普通世界能通过 DMA 绕过 CPU 直接读安全内存,或者安全的指纹传感器能被普通世界的驱动操作,隔离就破了。所以 TrustZone 的隔离贯穿整个 SoC,靠几个配套硬件:</p>
+<table>
+<tr><th>硬件</th><th>作用</th></tr>
+<tr><td><strong>TZASC</strong>(TrustZone Address Space Controller)</td><td>把物理内存划分成安全/非安全区域,按 NS 位控制访问。普通世界连 DMA 都读不了安全内存区。</td></tr>
+<tr><td><strong>TZPC</strong>(TrustZone Protection Controller)</td><td>把外设标记为安全/非安全。比如把指纹传感器标为安全,只有安全世界能操作它。</td></tr>
+<tr><td><strong>NS 位传播到总线</strong></td><td>15.4 讲的,每次访问都带 NS 标记,内存/外设据此放行或拒绝。</td></tr>
+</table>
+<p>还有一个关键点:<strong>连中断都分安全/非安全</strong>(第十三章 GIC 的 FIQ 常留给安全世界、IRQ 给普通世界)。一个来自安全外设(如指纹传感器)的中断,会被路由到安全世界处理,普通世界看不到。<strong>整颗芯片——CPU、内存、外设、中断、DMA——被一致地劈成两个世界,任何一处都不留后门。</strong>这种"全栈式硬件隔离",是 TrustZone 强于任何纯软件方案的根本。</p>
+
+<h2 id="s9">15.9 TEE 与 OP-TEE</h2>
+<p>安全世界里跑的软件栈叫 <strong>TEE(Trusted Execution Environment,可信执行环境)</strong>。它是一套完整的"小型安全操作系统 + 可信应用"体系:</p>
+<ul>
+  <li><strong>TEE OS(安全 OS)</strong>:跑在安全世界 EL1,管理可信应用、安全内存、和普通世界通信。最著名的开源实现是 <strong>OP-TEE</strong>(Linaro 维护,RK3588 就用它)。</li>
+  <li><strong>TA(Trusted Application,可信应用)</strong>:跑在安全世界 EL0 的小程序,每个干一件安全的事(密钥管理、指纹匹配、DRM 解密)。经过签名和审计,代码量小。</li>
+  <li><strong>普通世界侧</strong>:Linux 有 TEE 驱动(<code>/dev/tee0</code>)和客户端库(libteec),App 通过它们和 TEE 通信。标准是 <strong>GlobalPlatform TEE API</strong>。</li>
+</ul>
+<pre><code>完整 TEE 软件栈:
+
+  普通世界                        安全世界
+  ┌─────────────┐               ┌─────────────┐
+  │ App         │               │ TA(可信应用) │ ← EL0-S
+  │ libteec     │               ├─────────────┤
+  ├─────────────┤   SMC/共享内存 │ OP-TEE OS    │ ← EL1-S
+  │ Linux+TEE驱动│ ◀───────────▶ └─────────────┘
+  └─────────────┘   Secure Monitor(EL3)在中间转发</code></pre>
+<p>普通世界和安全世界之间传大块数据,不可能都塞进 SMC 的几个寄存器,所以用<strong>共享内存</strong>(普通世界分配一块非安全内存,双方都能访问,用来传请求/响应的大数据),SMC 只用来传"门铃"信号和小参数。这呼应第八/十章的共享内存思想。</p>
+
+<h2 id="s10">15.10 安全启动(Secure Boot)信任链</h2>
+<p>TrustZone 保护运行时,但还有个更根本的问题:<strong>怎么保证一开机加载的固件本身没被篡改?</strong>如果攻击者替换了 bootloader 或安全 OS,前面的隔离全白搭。答案是<strong>安全启动(Secure Boot)</strong>,建立一条<strong>信任链(Chain of Trust)</strong>。</p>
+<p>核心思想:<strong>每一级启动代码,在加载运行下一级之前,先验证下一级的数字签名。只有签名合法(用固化在芯片里的公钥/哈希验证)才放行。一环扣一环,从一个不可篡改的"信任根"开始。</strong></p>
+<pre><code>信任链(每一级验证下一级才放行):
+
+  信任根 Root of Trust
+  (BootROM: 固化在芯片里的只读代码 + 芯片里烧死的公钥哈希, 无法篡改)
+        │ 验证签名 ✓
+        ▼
+  BL1/BL2 (第一级引导, 在ATF里)
+        │ 验证签名 ✓
+        ▼
+  BL31 (EL3 Secure Monitor 固件)
+        │ 验证签名 ✓
+        ├──────────────┐
+        ▼              ▼
+  BL32(安全OS OP-TEE)  BL33(普通世界bootloader: U-Boot)
+        验证✓            │ 验证✓
+                        ▼
+                     Linux 内核(也可继续验证)</code></pre>
+<blockquote><p>信任链的精髓:<strong>信任从一个"物理上不可篡改的根"(BootROM + 芯片内烧录的密钥)出发,逐级验证、逐级传递。</strong>只要根是可信的、每一级验证都做了,那么整条链上运行的都是未被篡改的正版固件。攻击者想插入恶意代码,签名过不了验证,加载就被拒绝。<strong>安全启动 + TrustZone 运行时隔离,一个保证"开机是干净的",一个保证"运行时秘密不泄露",合起来才是完整的可信系统。</strong>这也是为什么手机 bootloader 上锁、刷机要解锁——就是在动这条信任链。</p></blockquote>
+
+<h2 id="s11">15.11 ARM Trusted Firmware 与 RK3588 启动</h2>
+<p>把上面落到 RK3588 的真实启动流程。ARM 提供了一套标准的安全固件参考实现:<strong>ARM Trusted Firmware(ATF / TF-A)</strong>,它实现了 EL3 的 Secure Monitor、启动流程 BL1-BL31、以及标准的 SMC 服务(如 PSCI——管理 CPU 上下电、休眠的电源接口)。</p>
+<pre><code>RK3588 上电启动流程(简化):
+
+  上电 → 芯片内 BootROM(信任根) 运行
+       → 加载并验证 U-Boot SPL / TF-A 的 BL2
+       → BL31 (TF-A, EL3 Secure Monitor) 就位   ← 从此 EL3 常驻, 管世界切换
+       → 加载 BL32 (OP-TEE, 安全世界)
+       → 加载 BL33 (U-Boot, 普通世界)
+       → U-Boot 加载 Linux 内核(EL1, 普通世界)
+       → Linux 启动, 需要安全服务时通过 SMC 找 EL3/安全世界</code></pre>
+<p>所以你的 RK3588 开机,其实经历了 <strong>EL3(TF-A 安全固件)→ 分别拉起安全世界(OP-TEE)和普通世界(U-Boot→Linux)</strong> 的完整过程。平时你只看到 Linux,但底下 EL3 的 Secure Monitor 一直常驻,随时准备处理 SMC(比如 Linux 调 PSCI 让某个核睡眠、或访问安全服务时)。这就补全了第十二章说的"RK3588 开机走了 EL3→EL1"的完整图景。</p>
+<blockquote><p>实战关联:你做 RK3588 时接触的 <code>trust.img</code>/<code>bl31</code>、rockchip 的 <code>rkbin</code> 仓库里的 TF-A 和 OP-TEE 二进制、U-Boot 的 <code>CONFIG_OPTEE</code>,全是这一章的东西。Linux 里 <code>ls /dev/tee*</code> 能看到 TEE 设备节点,<code>dmesg | grep -i optee</code> 能看到 OP-TEE 初始化日志。这类做安全敏感产品的公司,固件签名、安全启动、密钥保护是必备能力,这一章是入门。</p></blockquote>
+
+<h2 id="s12">15.12 攻击面与局限</h2>
+<p>作为工程师要客观:TrustZone 不是万能保险箱,也有其攻击面和局限,这体现你的深度:</p>
+<ul>
+  <li><strong>安全世界的代码也可能有漏洞</strong>:TA 或 OP-TEE 本身若有 bug(如缓冲区溢出),照样能被攻破。安全世界代码少正是为了减少漏洞,但不等于没有。</li>
+  <li><strong>侧信道攻击</strong>:两个世界共享 CPU、Cache、内存总线,攻击者可通过测量 Cache 时序等侧信道推断安全世界的秘密(如第二章提过的 Spectre 类攻击的变种)。这是"共享硬件"的固有风险。</li>
+  <li><strong>信任根被攻破则全盘皆输</strong>:如果 BootROM 或烧录的密钥出问题,整条信任链崩塌。</li>
+  <li><strong>不防物理攻击</strong>:TrustZone 防的是软件攻击;拆芯片、探针、故障注入等物理攻击是另一个层面(需要额外的防篡改硬件)。</li>
+</ul>
+<p>所以业界还有更强的方案(如独立的安全芯片 SE、ARM 新的 CCA/Realm 机密计算)。TrustZone 是"在通用 SoC 上以较低成本获得相当强的隔离"的实用选择,理解它的能力边界,才不会盲目相信"有 TrustZone 就绝对安全"。</p>
+
+<h2 id="s13">15.13 面试常问问题</h2>
+<p><strong>Q1:TrustZone 解决什么问题?为什么 MMU/EL 隔离不够?</strong><br>让最敏感数据存在连操作系统内核都访问不到的地方。MMU/EL 的隔离都在内核管辖内,内核是最高权威;若内核不可信(有漏洞/被 root),就需要一个凌驾于内核之上、内核也进不去的保护区。</p>
+<p><strong>Q2:两个世界怎么隔离?NS 位是什么?</strong><br>Normal/Secure 两世界靠 NS 位标记,该位随每次总线访问传播,内存(TZASC)/外设(TZPC)据 NS 位放行或拒绝。安全世界能访问普通内存,反之不行。硬件级门禁,非软件检查。</p>
+<p><strong>Q3:World 和 EL 是什么关系?</strong><br>正交:EL 是权限楼层(垂直),World 是可信与否(水平两栋楼)。每世界各有 EL0/EL1,EL3 不属任何世界、是唯一切换世界的闸门。</p>
+<p><strong>Q4:普通世界怎么请求安全服务?世界怎么切换?</strong><br>执行 SMC 指令陷入 EL3 Secure Monitor,Monitor 保存现场、翻转 NS 位、恢复对面现场、ERET 进入。对称于 SVC(EL0→EL1)。</p>
+<p><strong>Q5:什么是 TEE/OP-TEE/TA?</strong><br>TEE 是安全世界的可信执行环境;OP-TEE 是开源 TEE OS(跑安全 EL1);TA 是可信应用(安全 EL0);普通世界通过 TEE 驱动+SMC+共享内存与之通信。</p>
+<p><strong>Q6:安全启动/信任链是什么?</strong><br>从芯片内不可篡改的信任根(BootROM+烧录密钥)开始,每级加载下级前验证其签名,逐级传递信任,保证运行的都是未篡改固件。</p>
+<p><strong>Q7:TrustZone 有哪些局限?</strong><br>安全世界代码本身可能有漏洞;共享硬件有侧信道风险;信任根被破则全崩;不防物理攻击。</p>
+
+<h2 id="s14">15.14 常见误区</h2>
+<ol>
+  <li><strong>"TrustZone 是一块独立的安全芯片"</strong>——不是,它是同一颗 CPU/内存里用硬件劈出的两个世界,共享物理资源。</li>
+  <li><strong>"安全世界是更高的 EL"</strong>——World 和 EL 是正交维度,不是同一回事;两世界各有 EL0/EL1。</li>
+  <li><strong>"普通世界内核权限最高,能访问一切"</strong>——它访问不了安全世界的内存/外设,硬件禁止。</li>
+  <li><strong>"两个世界能互相访问"</strong>——不对称:安全世界能读普通内存,普通世界读不了安全内存。</li>
+  <li><strong>"有了 TrustZone 就绝对安全"</strong>——安全世界也可能有漏洞,有侧信道和物理攻击风险。</li>
+  <li><strong>"世界切换和系统调用没关系"</strong>——机制同源:SVC/HVC/SMC 是同一套"陷入更高层"的指令家族。</li>
+  <li><strong>"安全启动和 TrustZone 是一回事"</strong>——互补但不同:安全启动保证开机固件未篡改,TrustZone 保证运行时隔离。</li>
+</ol>
+
+<h2 id="s15">15.15 本章总结</h2>
+<ul>
+  <li>TrustZone 解决"连操作系统内核都不可信时,如何保护最敏感数据"——在同一芯片里硬件劈出两个隔离世界。</li>
+  <li><strong>Normal World</strong>(Linux/安卓,不可信)vs <strong>Secure World</strong>(安全 OS+可信应用,可信);安全世界能读普通内存,反之不行。</li>
+  <li><strong>NS 位</strong>标记当前世界,并随每次总线访问传播,内存(TZASC)/外设(TZPC)据此硬件门禁——隔离贯穿整个 SoC,非软件检查。</li>
+  <li><strong>World 与 EL 正交</strong>:各世界有自己的 EL0/EL1;<strong>EL3 不属任何世界,是唯一切换世界的闸门(Secure Monitor)</strong>。</li>
+  <li>普通世界用 <strong>SMC</strong> 指令请求安全服务(对称 SVC/HVC/SMC 家族);切换经 EL3 保存/恢复现场、翻转 NS 位;大数据走共享内存。</li>
+  <li><strong>TEE</strong>(OP-TEE + TA)是安全世界软件栈;指纹/密钥全程不出安全世界,普通世界只得结果。</li>
+  <li><strong>安全启动</strong>建立<strong>信任链</strong>:从芯片内不可篡改的信任根逐级验签,保证固件未被篡改。</li>
+  <li>RK3588 用 <strong>ATF/TF-A(EL3)+ OP-TEE</strong>,开机 EL3 常驻管世界切换与 PSCI。</li>
+  <li>局限:安全世界代码漏洞、侧信道、信任根风险、不防物理攻击——非绝对安全。</li>
+  <li><strong>第二卷收官</strong>:从 M/A 到异常等级、GIC、Cache 一致性、TrustZone,ARM 硬件的关键机制已铺完,可以进入第三卷读 RTOS 源码。</li>
+</ul>
+
+<h2 id="s16">15.16 思维导图</h2>
+<pre><code>TrustZone 安全世界
+├─ 一、为何需要:内核也不可信时保护最敏感数据
+├─ 二、类比:银行金库(同栋楼,唯一闸门,行长也进不去)
+├─ 三、两世界:Normal(Linux不可信) vs Secure(TEE可信)
+│  └─ 不对称:安全世界能读普通内存,反之不行
+├─ 四、★NS位:标记世界,随总线访问传播→硬件门禁
+│  └─ TZASC(内存)/TZPC(外设)据NS位放行
+├─ 五、World⊥EL正交:各世界有EL0/EL1;EL3唯一闸门
+├─ 六、SMC指令(EL1→EL3)对称SVC/HVC/SMC家族
+├─ 七、世界切换:陷EL3 Monitor→存现场→翻NS→进对面
+│  └─ 指纹匹配:模板不出安全世界,只出"是/否"
+├─ 八、全栈隔离:CPU+内存+外设+中断(FIQ给安全)+DMA
+├─ 九、TEE软件栈:OP-TEE(安全EL1)+TA(安全EL0)+共享内存
+├─ 十、安全启动信任链:信任根→逐级验签→传递信任
+├─ 十一、RK3588:ATF/TF-A(EL3)+OP-TEE, EL3常驻管切换/PSCI
+└─ 十二、局限:安全世界漏洞/侧信道/信任根/物理攻击(非绝对安全)</code></pre>
+
+<h2 id="s17">15.17 课后练习与面试题</h2>
+<h3>课后练习</h3>
+<ol>
+  <li>RK3588 上 <code>ls /dev/tee*</code> 看 TEE 设备节点,<code>dmesg | grep -i optee</code> 查看 OP-TEE 初始化日志,确认安全世界存在。</li>
+  <li>了解 rockchip 的 <code>rkbin</code> 仓库,找到 <code>bl31</code>(TF-A)和 OP-TEE 的二进制,理解它们在启动中的位置。</li>
+  <li>读 ARM SMCCC 文档,了解 SMC 调用怎么用寄存器传功能号和参数;在 Linux 源码找 <code>arm_smccc_smc</code> 的用法(如 PSCI 调 CPU 上下电)。</li>
+  <li>画一张你自己的图:把某手机"用指纹解锁"的全过程,从 App 到安全世界再返回,标出每一步的 World 和 EL。</li>
+  <li>(概念)对比 TrustZone 和独立安全芯片(SE)、以及 ARM 新的 CCA/Realm,列出各自适用场景。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>为什么已有 MMU 和 EL 隔离,还需要 TrustZone?</li>
+  <li>NS 位是什么?它如何实现贯穿整个 SoC 的隔离?</li>
+  <li>World 和 EL 是什么关系?EL3 的特殊地位?</li>
+  <li>普通世界如何请求安全服务?世界切换经过哪里?</li>
+  <li>TEE、OP-TEE、TA 分别是什么?数据怎么在两世界间传?</li>
+  <li>什么是安全启动和信任链?信任根是什么?</li>
+  <li>TrustZone 有哪些安全局限?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第十五章 完 · <strong>第二卷《ARM 架构》全部完成</strong> · 下一卷《FreeRTOS 源码》(硬核,继续 high)</p>
+<div class="nav">
+  <a href="第14章-Cache一致性.html">← 第十四章</a>
+  <a href="index.html">目录</a>
+  <a href="第16章-FreeRTOS-Task任务.html">第十六章 →</a>
+</div>
+
+</div>
+</body>
+</html>

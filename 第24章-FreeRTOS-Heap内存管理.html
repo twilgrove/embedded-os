@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第廿四章 Heap 内存管理</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第23章-FreeRTOS-SoftwareTimer软件定时器.html">← 第廿三章</a>
+  <a href="index.html">目录</a>
+  <a href="第25章-RTThread总览与内核对象.html">第二十五章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第三卷 · FreeRTOS 源码</div>
+  <h1>第廿四章 Heap 内存管理</h1>
+  <div class="sub">为什么 FreeRTOS 要自己写 5 种 malloc</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么不用标准 malloc</a></li>
+    <li><a href="#s2">碎片化:动态内存的头号敌人</a></li>
+    <li><a href="#s3">pvPortMalloc:统一的接口</a></li>
+    <li><a href="#s4">heap_1:只分配不释放</a></li>
+    <li><a href="#s5">heap_2:能释放但不合并</a></li>
+    <li><a href="#s6">heap_4:能释放且合并相邻块</a></li>
+    <li><a href="#s7">heap_3:包装标准 malloc</a></li>
+    <li><a href="#s8">heap_5:多块非连续内存</a></li>
+    <li><a href="#s9">五种 heap 对比与选型</a></li>
+    <li><a href="#s10">实时系统为什么慎用动态内存</a></li>
+    <li><a href="#s11">面试常问</a></li>
+    <li><a href="#s12">常见误区</a></li>
+    <li><a href="#s13">本章总结</a></li>
+    <li><a href="#s14">思维导图 / 课后题</a></li>
+    <li><a href="#s15">第三卷收束</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第16章起,任务、队列的创建都在调 <code>pvPortMalloc</code>——FreeRTOS 自己的内存分配器。为什么不直接用 C 标准库的 <code>malloc</code>?因为标准 malloc 在嵌入式/实时场景有致命问题。这一章讲清这些问题、以及 FreeRTOS 提供的 5 种不同取舍的 heap 实现(heap_1~5)。这既是第三卷的收官,也是理解"实时系统为什么排斥动态内存"(贯穿全书的主题)的最后一块拼图。学完你要能为不同项目选对 heap。</p></blockquote>
+
+<h2 id="s1">24.1 为什么不用标准 malloc</h2>
+<p>C 标准库有 <code>malloc/free</code>,为什么 FreeRTOS 要自己造轮子?标准 malloc 在嵌入式实时环境有几个硬伤:</p>
+<ul>
+  <li><strong>不确定的执行时间</strong>:标准 malloc 找合适空闲块可能要遍历、可能慢,<strong>执行时间不可预测</strong>——这对实时系统是灾难(第七卷:实时要求时间有上界)。</li>
+  <li><strong>不是线程安全的(默认)</strong>:多任务同时 malloc 会破坏内部数据结构;要线程安全得加锁,标准库的实现未必配合 RTOS 的调度。</li>
+  <li><strong>碎片化</strong>:长期运行后内存被切得七零八落(下节),可能"总空闲很多但没有一块够大",分配失败。</li>
+  <li><strong>占用大、依赖 C 库</strong>:标准 malloc 实现复杂、代码大,小 MCU 吃不消。</li>
+  <li><strong>没有统一的失败处理/统计</strong>:嵌入式需要知道"堆用了多少、还剩多少、失败了怎么办"。</li>
+</ul>
+<p>所以 FreeRTOS 提供自己的 <code>pvPortMalloc/vPortFree</code>,并给出 <strong>5 种实现(heap_1.c ~ heap_5.c)</strong>,让你按项目需求选择不同的取舍。<strong>这本身就是一堂"没有万能方案,只有权衡"的工程课。</strong></p>
+
+<h2 id="s2">24.2 碎片化：动态内存的头号敌人</h2>
+<p>碎片化(Fragmentation)是动态内存最阴险的问题,必须讲透。分两种:</p>
+<pre><code>外部碎片(External Fragmentation):
+  反复 malloc/free 不同大小的块后, 空闲内存被切成很多小段:
+
+  [已用][空16][已用][空8][已用][空24][已用]
+        └─ 空闲总共48字节, 但分散成 16+8+24 三小段
+
+  现在要 malloc(40): 失败! 虽然总空闲48>40, 但没有【连续】的40字节!
+  → 这就是外部碎片: 有空间, 但用不上(不连续)
+
+内部碎片(Internal Fragmentation):
+  分配器按固定块/对齐分配, 你要33字节, 给你48字节(下一个对齐单位)
+  → 多给的15字节浪费了, 藏在已分配块内部</code></pre>
+<blockquote><p>外部碎片是嵌入式长期运行的隐形杀手:<strong>一个设备跑了几天后突然 malloc 失败、崩溃,总内存明明够——就是外部碎片。</strong>它难复现(要长时间特定的分配/释放序列)、难调试。这就是为什么很多 heap 实现在 free 时要"合并相邻空闲块"(heap_4)来对抗碎片,也是为什么安全关键系统干脆<strong>禁止运行时动态分配</strong>(用静态分配,第16章),从根上杜绝碎片。理解碎片化,你就理解了后面 5 种 heap 的核心区别——它们的差异主要就在"怎么处理 free 和碎片"。</p></blockquote>
+
+<h2 id="s3">24.3 pvPortMalloc：统一的接口</h2>
+<p>5 种 heap 实现,对外都提供同一套接口,你的代码不用改:</p>
+<pre><code>void *pvPortMalloc( size_t xWantedSize );   /* 分配 */
+void  vPortFree( void *pv );                /* 释放 */
+size_t xPortGetFreeHeapSize( void );        /* 当前剩余堆 */
+size_t xPortGetMinimumEverFreeHeapSize( void ); /* 历史最低剩余(水位线!) */</code></pre>
+<p>任务创建(<code>xTaskCreate</code>,第16章)、队列创建等内部都调 <code>pvPortMalloc</code>。<strong>换 heap 实现只需在工程里换一个 heap_N.c 文件、不用改任何业务代码</strong>——这就是统一接口的好处。堆的总大小由 <code>configTOTAL_HEAP_SIZE</code> 配置,FreeRTOS 从一个静态大数组 <code>ucHeap[configTOTAL_HEAP_SIZE]</code> 里分配(而不是用 C 库的堆),这样堆大小编译期确定、位置可控。</p>
+<blockquote><p>注意那个 <code>xPortGetMinimumEverFreeHeapSize</code>(历史最低剩余堆)——它是嵌入式调堆大小的利器,类似第16章任务栈的 high water mark。<strong>它告诉你"运行以来堆最紧张时还剩多少",帮你判断 configTOTAL_HEAP_SIZE 设得够不够、有没有内存泄漏(这个值持续下降就是泄漏征兆)。</strong>实战调试必用。</p></blockquote>
+
+<h2 id="s4">24.4 heap_1：只分配不释放</h2>
+<p>最简单的实现。<strong>只能 malloc,不能 free</strong>(<code>vPortFree</code> 是空函数)。</p>
+<pre><code>heap_1 原理:
+  一个大数组 ucHeap[configTOTAL_HEAP_SIZE]
+  一个指针 pucAlignedHeap 记录"下一个可分配位置"
+
+  pvPortMalloc(size):
+    从当前位置切出 size 字节, 指针后移, 返回
+    (就像切香肠, 只往前切, 切完的不回收)
+
+  vPortFree(): 什么都不做!</code></pre>
+<ul>
+  <li><strong>优点</strong>:极简、确定(分配就是移指针,时间恒定 O(1))、<strong>绝无碎片</strong>(因为从不释放)、代码最小。</li>
+  <li><strong>缺点</strong>:不能释放内存。</li>
+  <li><strong>适用</strong>:<strong>任务/队列一次性创建后永不删除</strong>的系统(很多嵌入式产品就是开机建好所有任务,一直跑到关机)。这种场景下 heap_1 是最安全的选择——<strong>没有 free 就没有碎片、没有 free 相关的 bug</strong>。</li>
+</ul>
+<blockquote><p>heap_1 体现了一个反直觉的智慧:<strong>在很多嵌入式系统里,"不支持释放"反而是优点。</strong>因为绝大多数嵌入式产品的对象(任务、队列、信号量)都是启动时创建、永不销毁的。既然不 free,那支持 free 只会带来碎片和复杂性。<strong>heap_1 用"砍掉功能"换来了绝对的确定性和安全性——这正是实时/安全系统的价值观。</strong>飞控这类系统很可能就用 heap_1 或静态分配。</p></blockquote>
+
+<h2 id="s5">24.5 heap_2：能释放但不合并</h2>
+<p>heap_2 支持 free,用<strong>空闲块链表</strong>管理释放的内存,分配时用<strong>最佳适配(best fit)</strong>找最接近大小的空闲块。但它<strong>不合并相邻的空闲块</strong>。</p>
+<pre><code>heap_2:
+  维护一个按大小排序的空闲块链表
+  malloc: 遍历找【最接近且够大】的空闲块(best fit), 切一块给你
+  free: 把释放的块加回空闲链表
+  ★ 但不合并相邻空闲块 → 相邻的两个空闲块永远是分开的两小块</code></pre>
+<p>问题:因为不合并,<strong>如果你反复分配释放<em>不同大小</em>的块,会产生严重外部碎片</strong>。所以 heap_2 已被官方<strong>不推荐</strong>(deprecated),说"用 heap_4 代替"。它只在一种情况安全:<strong>反复分配释放的块都是<em>相同大小</em></strong>(这样释放的块能被同样大小的请求完美复用,不产生碎片)。<strong>heap_2 是"有 free 但没做好"的中间产物,了解它主要是为了理解"为什么合并相邻块很重要"(下节 heap_4)。</strong></p>
+
+<h2 id="s6">24.6 heap_4：能释放且合并相邻块</h2>
+<p><strong>heap_4 是最常用、最推荐的通用实现。</strong>它在 heap_2 基础上,增加了关键的一步:<strong>free 时合并相邻的空闲块(coalescence)</strong>。</p>
+<pre><code>heap_4 核心: free 时把相邻的空闲块合并成一个大块
+
+  free 前: [已用A][空闲X][刚释放的B][空闲Y][已用C]
+  free B 后, 检查左右邻居都空闲 → 合并:
+  free 后: [已用A][──── 空闲 X+B+Y 合成一大块 ────][已用C]
+
+  → 对抗外部碎片! 小碎片被合并回大块, 又能满足大分配了</code></pre>
+<ul>
+  <li><strong>分配策略</strong>:首次适配(first fit)——找到第一个够大的空闲块就用(比 best fit 快)。</li>
+  <li><strong>关键优势:合并相邻空闲块</strong>,大幅减少外部碎片,适合长期运行、分配释放各种大小的通用场景。</li>
+  <li><strong>适用</strong>:绝大多数需要 free 的项目的默认选择。</li>
+</ul>
+<blockquote><p>合并相邻块是 heap_4 对抗碎片的核心武器,也是它和 heap_2 的本质区别。它的实现:每个内存块有个头部(<code>BlockLink_t</code>)记录块大小和指向下一个空闲块的指针;free 时检查"被释放块的物理相邻块是否也空闲",是就把它们的头部信息合并成一个更大的空闲块。<strong>虽然合并让 free 稍慢(要检查邻居、调整链表),但换来了对碎片的长期抵抗力——这个取舍对长期运行的系统非常值。</strong>Linux 内核的伙伴系统(Buddy System,第五卷)也用"合并相邻空闲块"对抗碎片,思想完全一致——heap_4 是它的迷你版。</p></blockquote>
+
+<h2 id="s7">24.7 heap_3：包装标准 malloc</h2>
+<p>heap_3 最简单粗暴:<strong>直接调用 C 标准库的 malloc/free,只是在外面加了一层"挂起调度器"保证线程安全。</strong></p>
+<pre><code>heap_3:
+  pvPortMalloc(size):
+    vTaskSuspendAll();   // 挂起调度器(第17章), 保证线程安全
+    void *p = malloc(size);   // 调标准库malloc
+    xTaskResumeAll();
+    return p;</code></pre>
+<p>它把内存管理甩给了 C 库,自己只负责加锁。<strong>适用</strong>:你已经有一个可靠的、配置好的标准 malloc(比如某些 SDK 提供),想直接用它。<strong>注意</strong>:此时 <code>configTOTAL_HEAP_SIZE</code> 无效(堆由 C 库和链接脚本决定),且继承了标准 malloc 的所有问题(不确定时间、碎片)。<strong>heap_3 是"图省事、复用现成 malloc"的选择,不适合追求确定性的场景。</strong></p>
+
+<h2 id="s8">24.8 heap_5：多块非连续内存</h2>
+<p>heap_5 = heap_4 + <strong>支持从多块<em>不连续</em>的内存区域分配</strong>。前面几种都假设堆是一整块连续内存(<code>ucHeap</code> 数组);但有些芯片(如 RK 系列、带外部 SDRAM 的 MCU)有<strong>多块地址不连续的 RAM</strong>(片内 SRAM + 外部 SDRAM + TCM 等)。</p>
+<pre><code>heap_5: 通过 vPortDefineHeapRegions 登记多块内存
+
+  HeapRegion_t xHeapRegions[] = {
+    { (uint8_t*)0x20000000, 0x8000 },   // 片内SRAM, 32KB
+    { (uint8_t*)0x60000000, 0x80000 },  // 外部SDRAM, 512KB
+    { NULL, 0 }                          // 结束标记
+  };
+  vPortDefineHeapRegions( xHeapRegions );  // 使用前必须先登记!
+
+  之后 pvPortMalloc 可以从这几块内存里分配(逻辑上当成一个堆)</code></pre>
+<p>heap_5 的分配/合并逻辑和 heap_4 一样,只是管理多块内存。<strong>适用</strong>:内存分散在多个不连续地址区的芯片(嵌入式常见,尤其带外部内存的)。<strong>关键:用之前必须先调 <code>vPortDefineHeapRegions</code> 登记</strong>,否则 malloc 会失败——这是 heap_5 的常见坑。</p>
+
+<h2 id="s9">24.9 五种 heap 对比与选型</h2>
+<table>
+<tr><th>实现</th><th>能 free?</th><th>合并碎片?</th><th>多块内存?</th><th>确定性</th><th>适用场景</th></tr>
+<tr><td><strong>heap_1</strong></td><td>❌ 不能</td><td>—</td><td>❌</td><td>最强(无碎片)</td><td>对象只创建不删除(飞控/安全系统首选)</td></tr>
+<tr><td><strong>heap_2</strong></td><td>✅</td><td>❌ 不合并</td><td>❌</td><td>差(碎片)</td><td>已弃用;仅同大小块反复分配安全</td></tr>
+<tr><td><strong>heap_3</strong></td><td>✅</td><td>看 C 库</td><td>看 C 库</td><td>差</td><td>想直接用标准 malloc</td></tr>
+<tr><td><strong>heap_4</strong></td><td>✅</td><td>✅ 合并</td><td>❌</td><td>较好</td><td>★通用首选(需 free 的项目)</td></tr>
+<tr><td><strong>heap_5</strong></td><td>✅</td><td>✅ 合并</td><td>✅ 支持</td><td>较好</td><td>内存分多块不连续区域</td></tr>
+</table>
+<blockquote><p>选型决策树:<strong>①对象只建不删(启动时创建所有任务)→ heap_1(最安全无碎片)。②需要动态创建删除、单块连续内存 → heap_4(合并抗碎片,通用首选)。③内存分多块不连续 → heap_5。④已有可靠的标准 malloc 想复用 → heap_3。heap_2 别用(用 heap_4 代替)。</strong>核心判断:<strong>你到底需不需要释放内存?</strong>不需要→heap_1(把复杂性砍掉);需要→heap_4/5(用合并对抗碎片)。这张表和选型逻辑是面试的高频考点,能答出"heap_4 因为合并相邻块所以抗碎片、heap_1 因为不释放所以最安全"就很到位。</p></blockquote>
+
+<h2 id="s10">24.10 实时系统为什么慎用动态内存</h2>
+<p>这是贯穿全书的主题,在这里做总结(第5、10、16章都提过)。实时/安全关键系统(飞控、汽车、医疗、航空)对动态内存极其谨慎,甚至完全禁止,原因:</p>
+<ul>
+  <li><strong>时间不确定</strong>:malloc 找块/合并的时间不可预测,破坏实时性(WCET 无法界定,第七卷)。</li>
+  <li><strong>碎片导致运行时失败</strong>:长期运行后可能突然分配失败,不可接受(飞行中飞控 malloc 失败=坠机)。</li>
+  <li><strong>难以验证</strong>:安全认证(DO-178C 航空、ISO 26262 汽车、MISRA)要求行为可预测、可穷尽验证,动态内存的行为依赖运行时历史,难验证。</li>
+</ul>
+<p>应对策略:<strong>①用静态分配</strong>(第16章 xTaskCreateStatic,所有内存编译期确定);<strong>②只在启动阶段分配、之后不再动</strong>(用 heap_1);<strong>③用内存池(memory pool)</strong>——预分配固定大小块的池子,分配/释放就是从池子拿/还,时间恒定、无碎片(比通用 malloc 可控得多)。</p>
+<blockquote><p>这就是为什么第16章说安全系统偏爱静态创建、第5章说嵌入式慎用栈上大数组和堆、第10章说实时系统用 mlock 锁内存——<strong>一以贯之的价值观:实时/安全系统宁可牺牲灵活性,也要换取确定性和可验证性。</strong>动态内存代表"灵活但不确定",与这个价值观根本冲突。理解这一点,你就理解了嵌入式实时开发和普通应用开发在内存观念上的根本差异——这也是从"应用工程师"跨向"系统/实时工程师"的一个重要认知转变。</p></blockquote>
+
+<h2 id="s11">24.11 面试常问问题</h2>
+<p><strong>Q1:FreeRTOS 为什么不用标准 malloc,自己实现?</strong><br>标准 malloc 时间不确定(伤实时)、默认非线程安全、易碎片、占用大依赖 C 库、缺乏统计。FreeRTOS 提供 5 种可选实现,统一接口,可控。</p>
+<p><strong>Q2:什么是内存碎片?外部和内部碎片的区别?</strong><br>外部:反复分配释放后空闲内存分散成小段,总量够但没连续大块,大分配失败;内部:按对齐/固定块分配,给多了,浪费在已分配块内部。</p>
+<p><strong>Q3:heap_1 到 heap_5 的区别和选型?</strong><br>heap_1 不能 free(无碎片,对象只建不删用);heap_2 能 free 不合并(弃用);heap_3 包装标准 malloc;heap_4 能 free 且合并相邻块(通用首选);heap_5 = heap_4 + 多块非连续内存。见 24.9。</p>
+<p><strong>Q4:heap_4 如何对抗碎片?</strong><br>free 时合并物理相邻的空闲块成大块,减少外部碎片,适合长期运行、各种大小分配。</p>
+<p><strong>Q5:为什么实时/安全系统慎用或禁用动态内存?</strong><br>时间不确定伤实时、碎片致运行时失败、难验证认证。应对:静态分配、只启动时分配(heap_1)、内存池。</p>
+<p><strong>Q6:怎么判断堆够不够用/有没有泄漏?</strong><br>用 xPortGetMinimumEverFreeHeapSize(历史最低剩余),类似栈的 high water mark;持续下降提示泄漏。</p>
+
+<h2 id="s12">24.12 常见误区</h2>
+<ol>
+  <li><strong>"heap_1 没用,因为不能 free"</strong>——恰恰在"对象只建不删"场景最安全(无碎片),很多产品用它。</li>
+  <li><strong>"碎片就是内存不够"</strong>——碎片是"总量够但不连续",和总量不足不同。</li>
+  <li><strong>"heap_2 和 heap_4 差不多"</strong>——heap_2 不合并空闲块,长期严重碎片,已弃用。</li>
+  <li><strong>"heap_5 可以直接用"</strong>——必须先 vPortDefineHeapRegions 登记内存块,否则失败。</li>
+  <li><strong>"实时系统随便用 malloc"</strong>——慎用/禁用,首选静态分配或内存池。</li>
+  <li><strong>"configTOTAL_HEAP_SIZE 对所有 heap 有效"</strong>——heap_3 用标准库堆,这个配置无效。</li>
+</ol>
+
+<h2 id="s13">24.13 本章总结</h2>
+<ul>
+  <li>标准 malloc 时间不确定、非线程安全、易碎片、占用大——不适合嵌入式实时,故 FreeRTOS 自造 5 种 heap。</li>
+  <li><strong>碎片化</strong>:外部(空闲分散不连续,大分配失败)、内部(对齐浪费);是动态内存头号敌人。</li>
+  <li>统一接口 <code>pvPortMalloc/vPortFree</code>,换 heap 不改业务代码;<code>xPortGetMinimumEverFreeHeapSize</code> 是调优/查泄漏利器。</li>
+  <li><strong>heap_1</strong>:只分配不释放,无碎片、最确定,对象只建不删场景首选。</li>
+  <li><strong>heap_2</strong>:能 free 不合并,碎片严重,已弃用。</li>
+  <li><strong>heap_4</strong>:能 free 且<strong>合并相邻空闲块</strong>抗碎片,<strong>通用首选</strong>。</li>
+  <li><strong>heap_3</strong>:包装标准 malloc + 挂起调度器保线程安全。</li>
+  <li><strong>heap_5</strong>:heap_4 + 支持多块非连续内存(需先 vPortDefineHeapRegions)。</li>
+  <li>实时/安全系统慎用动态内存(时间不确定、碎片、难验证),用<strong>静态分配/heap_1/内存池</strong>。</li>
+</ul>
+
+<h2 id="s14">24.14 思维导图 / 课后题</h2>
+<pre><code>Heap 内存管理
+├─ 一、不用标准malloc:时间不确定/非线程安全/碎片/占用大
+├─ 二、★碎片化:外部(分散不连续) + 内部(对齐浪费)
+├─ 三、统一接口pvPortMalloc; MinimumEverFree查泄漏
+├─ 四、heap_1:只分配不释放(无碎片,对象只建不删首选)
+├─ 五、heap_2:能free不合并(碎片,弃用)
+├─ 六、★heap_4:能free+合并相邻块(抗碎片,通用首选)
+├─ 七、heap_3:包装标准malloc+挂起调度器
+├─ 八、heap_5:heap_4+多块非连续内存(需先登记)
+├─ 九、选型:只建不删→1; 通用→4; 多块→5; 复用malloc→3
+└─ 十、★实时系统慎用动态内存→静态分配/heap_1/内存池</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>对比阅读 heap_1.c 和 heap_4.c 源码,重点看 heap_4 的 <code>prvInsertBlockIntoFreeList</code> 里合并相邻块的逻辑。</li>
+  <li>用 heap_4,写程序反复 malloc/free 不同大小的块,用 xPortGetFreeHeapSize 观察碎片;故意制造碎片让大分配失败。</li>
+  <li>把工程从 heap_4 换成 heap_1,尝试删除任务(vTaskDelete),观察内存不回收的现象,理解 heap_1 的适用边界。</li>
+  <li>用 xPortGetMinimumEverFreeHeapSize 监控一个长期运行程序,人为制造内存泄漏,观察该值持续下降。</li>
+  <li>(有外部 SDRAM 的板子)用 heap_5 + vPortDefineHeapRegions 把片内 SRAM 和外部 SDRAM 都纳入堆管理。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>为什么 FreeRTOS 不用标准 malloc?</li>
+  <li>外部碎片和内部碎片的区别?外部碎片有什么危害?</li>
+  <li>heap_1/heap_4/heap_5 的区别和各自适用场景?</li>
+  <li>heap_4 如何减少碎片?</li>
+  <li>为什么实时/安全系统慎用动态内存?有哪些替代方案?</li>
+  <li>如何监控堆使用和检测内存泄漏?</li>
+</ol>
+
+<hr>
+<h2 id="s15">第三卷收束</h2>
+<p>第三卷《FreeRTOS 源码》到此完结。回望这 9 章,你从一行 <code>xTaskCreate</code> 出发,走完了一个完整的 RTOS 内核:</p>
+<pre><code>第三卷全景:一个 RTOS 内核的完整解剖
+
+  Task(16章) ──→ 任务=函数+栈+TCB, 伪造初始栈
+      │
+  Scheduler(17章) ──→ 位图选任务, pxCurrentTCB
+      │
+  SysTick+PendSV(18章) ──→ 心跳+汇编切换(内核心脏)
+      │
+  ┌───────────── IPC(建立在调度之上) ─────────────┐
+  Queue(19章) ──→ 一切IPC的母体(拷贝+阻塞+等待列表)
+      │
+  Semaphore(20章) ──→ 队列特例(同步/计数)
+      │
+  Mutex(21章) ──→ 信号量+优先级继承(防反转)
+      │
+  EventGroup(22章) ──→ 位图, 多事件与/或
+      │
+  SoftwareTimer(23章) ──→ 守护任务+命令队列
+      │
+  Heap(24章) ──→ 5种内存分配, 抗碎片
+  └────────────────────────────────────────────┘</code></pre>
+<blockquote><p><strong>你现在完整地读懂了一个真实 RTOS 内核的每一个核心部件。</strong>更重要的是,你看到了它们背后反复出现的<strong>统一思想</strong>:侵入式链表、按优先级的等待列表、有序列表+tick 驱动+双列表处理溢出、"一切 IPC 皆队列"的复用、"中断/回调只触发、重活交给任务"、"确定性优先于灵活性"。<strong>这些思想不是 FreeRTOS 独有的——它们会在第四卷 RT-Thread、第五卷 Linux 内核里以更复杂的形式重现。</strong>你在 FreeRTOS 这个"小而透明"的内核里把骨架看清了,接下来读那些"大而复杂"的内核时,就能一眼认出同样的骨架,而不会迷失在细节里。这正是我们"先读 FreeRTOS 再读 Linux"的全部意义。<br><br>下一卷《RT-Thread 源码》,我们会看一个"介于 FreeRTOS 和 Linux 之间"的国产 RTOS,它有更丰富的组件(设备框架、FinSH 命令行),但内核骨架你已经熟悉。</p></blockquote>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第廿四章 完 · <strong>第三卷《FreeRTOS 源码》全部完成</strong> · 下一卷《RT-Thread 源码》</p>
+<div class="nav">
+  <a href="第23章-FreeRTOS-SoftwareTimer软件定时器.html">← 第廿三章</a>
+  <a href="index.html">目录</a>
+  <a href="第25章-RTThread总览与内核对象.html">第二十五章 →</a>
+</div>
+
+</div>
+</body>
+</html>

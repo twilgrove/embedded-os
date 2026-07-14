@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第四十六章 SPI 驱动</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第45章-I2C驱动.html">← 第四十五章</a>
+  <a href="index.html">目录</a>
+  <a href="第47章-CAN总线驱动.html">第四十七章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第六卷 · Linux 驱动</div>
+  <h1>第四十六章 SPI 驱动</h1>
+  <div class="sub">四根线换高速,全双工的板内总线</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">SPI 是什么</a></li>
+    <li><a href="#s2">生活例子:传送带对传</a></li>
+    <li><a href="#s3">四根线与片选</a></li>
+    <li><a href="#s4">全双工:移位寄存器对转</a></li>
+    <li><a href="#s5">时钟极性与相位 CPOL/CPHA</a></li>
+    <li><a href="#s6">SPI vs I2C vs UART 对比</a></li>
+    <li><a href="#s7">Linux SPI 框架</a></li>
+    <li><a href="#s8">spi_transfer 与 spi_message</a></li>
+    <li><a href="#s9">写一个 SPI 设备驱动</a></li>
+    <li><a href="#s10">spidev 与 regmap 复用</a></li>
+    <li><a href="#s11">回扣三大总线与选型</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:SPI 是嵌入式另一大板内总线,和 I2C 定位相似(接传感器/Flash/屏),但<strong>更快、全双工</strong>,代价是线更多。它接高速 IMU、SPI Flash、LCD 屏、ADC。学完 SPI,你就集齐了嵌入式三大通信总线(UART/I2C/SPI),能根据场景<strong>选型</strong>。而且因为第45章的 regmap,你会发现 SPI 驱动和 I2C 驱动能共享大量代码。这是硬件接口岗必备。</p></blockquote>
+
+<h2 id="s1">46.1 SPI 是什么</h2>
+<p><strong>SPI = Serial Peripheral Interface(串行外设接口)。</strong>它是摩托罗拉发明的<strong>高速、全双工、同步</strong>板内总线:</p>
+<ul>
+  <li><strong>四根线</strong>:SCLK(时钟)、MOSI(主出从入)、MISO(主入从出)、CS/SS(片选)。</li>
+  <li><strong>同步</strong>:有时钟线 SCLK(主发),和 I2C 一样同步。</li>
+  <li><strong>全双工</strong>:MOSI 和 MISO 独立,<strong>能同时收和发</strong>(I2C 半双工,一根 SDA 分时收发)。</li>
+  <li><strong>高速</strong>:几 MHz 到几十 MHz,远快于 I2C(400kHz)——这是选 SPI 的主因。</li>
+  <li><strong>片选选设备</strong>:靠 CS 片选线选设备(不像 I2C 靠地址),每个从设备一根 CS。</li>
+</ul>
+<p><strong>SPI 的定位:比 I2C 更快、全双工,代价是线更多(每多一个设备多一根 CS)。</strong>接高速 IMU(如高采样率的陀螺仪)、SPI Flash(存固件)、LCD 显示屏、高速 ADC,都用 SPI。<strong>速度是 SPI 相对 I2C 的核心优势</strong>——飞控里对采样率要求高的 IMU 常走 SPI 而非 I2C。</p>
+
+<h2 id="s2">46.2 生活例子：传送带对传</h2>
+<p>想象主设备和从设备之间有<strong>两条方向相反的传送带</strong>(MOSI 和 MISO),还有一个统一的传送节拍(SCLK)。每走一个节拍,主设备往 MOSI 传送带放一个货物给从设备,<strong>同时</strong>从设备往 MISO 传送带放一个货物给主设备——<strong>一来一回同时发生,这就是全双工。</strong></p>
+<p>对比 I2C:I2C 只有一条传送带(SDA),同一时刻只能单向运货(要么主给从,要么从给主,轮流来,半双工),而且靠"喊学号"选对象。SPI 有专门的"选择开关"(CS):<strong>要和哪个从设备通信,就先按下它的 CS 开关(拉低),那个设备才"上线"参与传送,其余设备 CS 是高、不理会。</strong>选谁用一根专线开关,直接明了(代价是每个设备要一根开关线)。</p>
+
+<h2 id="s3">46.3 四根线与片选</h2>
+<p>细看 SPI 的四根线和多设备连接:</p>
+<pre><code>SPI 一主多从的连接:
+   SCLK ●──────┬──────┬──────  时钟(主发, 所有从共享)
+   MOSI ●──────┼──────┼──────  主→从(所有从共享)
+   MISO ●──────┼──────┼──────  从→主(所有从共享)
+              从1     从2
+   CS1  ●──────┘      │         片选1(每个从设备一根! ★)
+   CS2  ●─────────────┘         片选2
+
+  ★关键: SCLK/MOSI/MISO 三根线所有从设备共享,
+         但每个从设备有【独立的CS片选线】
+  选设备: 把某从设备的CS拉低 → 只有它响应, 其余CS高的"装死"
+  → 加一个设备就要多一根CS线 (设备多时引脚吃紧)</code></pre>
+<p><strong>SPI 用"片选 CS"而非"地址"来选设备:三根信号线共享,每个从设备一根独立 CS。</strong>要和谁通信就拉低谁的 CS。<strong>这是 SPI 和 I2C 的一个关键区别</strong>:I2C 靠地址(软件寻址,不加线),SPI 靠 CS(硬件选择,每设备加一根线)。<strong>后果:SPI 设备多了引脚吃紧</strong>(10 个设备要 10 根 CS),所以 SPI 适合设备不多但要高速的场景,I2C 适合设备多但低速的场景。CS 常用一个 GPIO(第42章)控制。</p>
+
+<h2 id="s4">46.4 全双工：移位寄存器对转</h2>
+<p>SPI 全双工的底层机制很优雅,理解它就懂了 SPI 的本质:</p>
+<pre><code>主从各有一个8位移位寄存器, 首尾相连成一个环:
+
+   主设备移位寄存器  ─MOSI→  从设备移位寄存器
+        [10110010]            [01001101]
+        ↑─────────MISO──────────────┘
+
+  每个SCLK时钟脉冲: 两个寄存器同时移位一位
+   → 主的最高位经MOSI移入从的最低位
+   → 从的最高位经MISO移入主的最低位
+  8个时钟后: 主从的8位数据【完全交换】了!
+   → 主发出去1字节的同时, 也收到了从的1字节 (全双工本质)</code></pre>
+<blockquote><p><strong>SPI 全双工的本质:主从的移位寄存器首尾相连成一个环,每个时钟两边同时移位,8 个时钟后数据完全交换。</strong>所以 SPI 里<strong>"发送"和"接收"是同一个动作的两面</strong>——你发出一个字节,必然同时收到一个字节(哪怕你不关心收到的,它也来了)。<strong>这带来一个重要特性:SPI 传输总是"等长收发"。</strong>你想读从设备 N 个字节,就得发 N 个字节(通常发 dummy 字节 0x00/0xFF)去"换"回来。<strong>这也是为什么 SPI 的 API 里 tx_buf 和 rx_buf 长度总是相等</strong>(46.8)。理解"移位对转"这个机制,SPI 的很多特点(全双工、等长收发、需要 dummy 字节)就都顺理成章了。</p></blockquote>
+
+<h2 id="s5">46.5 时钟极性与相位 CPOL/CPHA</h2>
+<p>SPI 有个初学者必栽的坑——<strong>四种时钟模式</strong>,由 CPOL 和 CPHA 两个参数决定,主从必须一致:</p>
+<table>
+<tr><th>参数</th><th>含义</th></tr>
+<tr><td><strong>CPOL(极性)</strong></td><td>时钟空闲时是高(1)还是低(0)</td></tr>
+<tr><td><strong>CPHA(相位)</strong></td><td>在时钟的第一个边沿(0)还是第二个边沿(1)采样数据</td></tr>
+</table>
+<pre><code>CPOL/CPHA 组合出4种模式:
+  Mode 0: CPOL=0 CPHA=0  (最常见)
+  Mode 1: CPOL=0 CPHA=1
+  Mode 2: CPOL=1 CPHA=0
+  Mode 3: CPOL=1 CPHA=1  (也常见)
+
+  ★主从的模式必须完全一致! 不一致 → 采样时刻错位 → 读到乱数据
+  查从设备(传感器/Flash)的datasheet确定它要哪个模式,
+  在设备树 spi-cpol/spi-cpha 或驱动里设对。</code></pre>
+<p><strong>CPOL 决定时钟空闲电平,CPHA 决定在哪个边沿采样数据,组合成 4 种模式(Mode 0~3)。</strong>主从必须用<strong>同一个模式</strong>,否则采样时刻对不上,读到乱数据。<strong>这是 SPI 调不通的头号原因</strong>(类似 I2C 忘上拉、UART 波特率错)。<strong>解决:查从设备 datasheet 确定它要哪种模式,在设备树里配 <code>spi-cpol</code>/<code>spi-cpha</code> 属性(或驱动里设 <code>spi->mode</code>)。</strong>Mode 0 最常见。记住"SPI 不通先查模式对不对",能省大量调试时间。</p>
+
+<h2 id="s6">46.6 SPI vs I2C vs UART 对比</h2>
+<p>集齐三大总线,横向对比(选型必备,面试爱问):</p>
+<table>
+<tr><th></th><th>UART</th><th>I2C</th><th>SPI</th></tr>
+<tr><td>线数</td><td>2(TX/RX)</td><td>2(SCL/SDA)</td><td>4+(SCLK/MOSI/MISO/CS)</td></tr>
+<tr><td>时钟</td><td>异步(无时钟线)</td><td>同步</td><td>同步</td></tr>
+<tr><td>双工</td><td>全双工</td><td>半双工</td><td>全双工</td></tr>
+<tr><td>多设备</td><td>点对点(1对1)</td><td>地址(软件,不加线)</td><td>片选 CS(每设备加线)</td></tr>
+<tr><td>速度</td><td>低(~几 Mbps)</td><td>低(100k-400k-3.4M)</td><td><strong>高(几十 MHz)</strong></td></tr>
+<tr><td>典型用途</td><td>调试台/GPS/模块</td><td>多个低速传感器/EEPROM</td><td>高速 IMU/Flash/屏/ADC</td></tr>
+</table>
+<blockquote><p><strong>选型口诀:要远距离/接模块用 UART;要省引脚挂多个低速设备用 I2C;要高速用 SPI。</strong>三者各有定位:<strong>UART</strong> 简单、异步、点对点,适合调试和一对一模块通信;<strong>I2C</strong> 省线(2 根挂一串)、靠地址、低速,适合板上一堆低速传感器;<strong>SPI</strong> 高速、全双工、靠片选,适合少量高速设备(Flash、高采样 IMU、屏)。<strong>机器人里三者都用</strong>:飞控通过 UART 接 GPS、通过 I2C 接一堆环境传感器、通过 SPI 接高速 IMU 和存固件的 Flash。<strong>能根据"速度要求、设备数量、引脚预算、距离"选对总线,是嵌入式工程师的基本功</strong>,面试常给场景让你选型并说理由。</p></blockquote>
+
+<h2 id="s7">46.7 Linux SPI 框架</h2>
+<p>SPI 驱动框架和 I2C 几乎一样(都基于第40章总线模型),角色一一对应:</p>
+<table>
+<tr><th>角色</th><th>SPI 结构</th><th>对应 I2C</th></tr>
+<tr><td>控制器(主)</td><td><strong>spi_controller</strong>(旧称 spi_master)</td><td>i2c_adapter</td></tr>
+<tr><td>从设备</td><td><strong>spi_device</strong></td><td>i2c_client</td></tr>
+<tr><td>设备驱动</td><td><strong>spi_driver</strong></td><td>i2c_driver</td></tr>
+<tr><td>一次传输</td><td>spi_transfer / spi_message</td><td>i2c_msg</td></tr>
+</table>
+<p><strong>结构和 I2C 完全平行</strong>:<code>spi_controller</code>(SoC 的 SPI 控制器,厂商写好)、<code>spi_device</code>(挂的从设备)、<code>spi_driver</code>(你写的设备驱动)。<strong>你还是写设备驱动</strong>(spi_driver),调用 SPI 核心的传输函数,不直接操作 SCLK/MOSI 硬件(那由控制器驱动做)。<strong>因为都是同一套"总线-设备-驱动"模型(第40章),你学会 I2C 驱动,SPI 驱动几乎无缝迁移</strong>——这再次印证了总线模型抽象的价值:一套心智模型通吃所有总线。</p>
+
+<h2 id="s8">46.8 spi_transfer 与 spi_message</h2>
+<p>SPI 通信用 <code>spi_transfer</code>(描述一段收发)和 <code>spi_message</code>(打包多段)。注意全双工特性的体现:</p>
+<pre><code>struct spi_transfer t = {
+    .tx_buf = tx,     // 要发送的数据
+    .rx_buf = rx,     // 接收缓冲
+    .len    = n,      // ★长度: tx和rx等长(全双工, 收发同时)
+};
+struct spi_message m;
+spi_message_init(&m);
+spi_message_add_tail(&t, &m);
+spi_sync(spi, &m);    // 同步执行这次传输(会睡眠等完成)
+
+// 便捷封装(常用):
+spi_write(spi, tx, n);              // 只发(收到的忽略)
+spi_read(spi, rx, n);               // 只收(发dummy)
+spi_write_then_read(spi, tx,tn, rx,rn);  // 先发后收(读寄存器常用)</code></pre>
+<p><strong>注意 <code>tx_buf</code> 和 <code>rx_buf</code> 共用一个 <code>len</code>——因为 SPI 全双工,收发同时同长(46.4 移位对转)。</strong>只发不收就把 rx_buf 设 NULL(收到的丢弃),只收不发就 tx_buf 设 NULL(发 dummy)。<strong><code>spi_write_then_read</code> 对应"先发命令/寄存器号,再读数据"</strong>(和 I2C 读寄存器的两段式类似,读传感器/Flash 常用)。<strong><code>spi_sync</code> 是同步传输(会睡眠等完成)</strong>——所以和 I2C 一样,SPI 传输在会睡眠的上下文(进程/线程化中断,第43章),不能在硬中断里做。<code>spi_message</code> 能打包多个 transfer 作为一个原子事务(中间不释放 CS)。</p>
+
+<h2 id="s9">46.9 写一个 SPI 设备驱动</h2>
+<p>SPI 设备驱动骨架(对比 45.8 的 I2C,你会发现几乎一样):</p>
+<pre><code>static int sensor_probe(struct spi_device *spi){    // ★配对成功
+    u8 tx = REG_WHOAMI | 0x80;   // 读命令(常最高位表读, 看datasheet)
+    u8 id;
+    spi->mode = SPI_MODE_0;      // 设时钟模式(或设备树spi-cpol/cpha)
+    spi->max_speed_hz = 10000000;// 设最高频率(或设备树spi-max-frequency)
+    spi_setup(spi);
+
+    spi_write_then_read(spi, &tx, 1, &id, 1);  // 读芯片ID
+    if (id != EXPECTED_ID) return -ENODEV;
+    // 注册iio/字符设备, 供上层读数据...
+    return 0;
+}
+static const struct of_device_id sensor_of[] = {
+    { .compatible = "bosch,bmi088" }, { }
+};
+static struct spi_driver sensor_driver = {
+    .driver = { .name="bmi088", .of_match_table=sensor_of },
+    .probe  = sensor_probe,
+};
+module_spi_driver(sensor_driver);   // ★一行注册
+MODULE_LICENSE("GPL");
+
+// 设备树: 挂在spi控制器下, reg=片选号(不是地址/内存!)
+// &spi0 {
+//     bmi088@0 {
+//         compatible = "bosch,bmi088";
+//         reg = <0>;              ← ★片选CS编号(0=CS0)
+//         spi-max-frequency = <10000000>;
+//         spi-cpol; spi-cpha;     ← 时钟模式(按datasheet)
+//     };
+// };</code></pre>
+<p><strong>和 I2C 驱动几乎同构</strong>:填 spi_driver(probe+of_match_table)、module_spi_driver、设备树描述。<strong>关键区别:①设备树 <code>reg</code> 是片选 CS 编号</strong>(0/1…,不是 I2C 地址、更不是内存地址);<strong>②要配时钟模式(spi-cpol/cpha)和最高频率</strong>(46.5 的坑);③读命令的格式看芯片 datasheet(常用最高位表示读/写)。probe 里同样先读 ID 验证芯片。</p>
+
+<h2 id="s10">46.10 spidev 与 regmap 复用</h2>
+<p>两个实用点:</p>
+<p><strong>① spidev(用户空间用 SPI)</strong>:类似 I2C 的方式,可以在用户空间直接操作 SPI(不写内核驱动):</p>
+<pre><code>// 通过 /dev/spidevX.Y 字符设备, 用ioctl配置+传输
+int fd = open("/dev/spidev0.0", O_RDWR);
+ioctl(fd, SPI_IOC_WR_MODE, &mode);          // 设模式
+ioctl(fd, SPI_IOC_WR_MAX_SPEED_HZ, &speed); // 设速度
+struct spi_ioc_transfer tr = {.tx_buf=.., .rx_buf=.., .len=n};
+ioctl(fd, SPI_IOC_MESSAGE(1), &tr);         // 传输
+// 适合快速原型/上层直接控制(ROS2里也常用)</code></pre>
+<p><strong>② regmap 复用(呼应第45章)</strong>:regmap 让同款传感器的 I2C 版和 SPI 版共享驱动:</p>
+<pre><code>// I2C版驱动 probe:  regmap = devm_regmap_init_i2c(client, &cfg);
+// SPI版驱动 probe:  regmap = devm_regmap_init_spi(spi, &cfg);
+// → 之后的驱动逻辑(regmap_read/write读传感器寄存器)【完全一样】!
+
+  很多IMU(如BMI088)同时有I2C和SPI接口,
+  用regmap → 核心逻辑一份, I2C/SPI各写个薄probe → 代码复用最大化</code></pre>
+<blockquote><p><strong>regmap 在这里兑现了它的价值:第45章说 regmap 屏蔽 I2C/SPI,现在你看到了 SPI 侧——只需把初始化换成 <code>devm_regmap_init_spi</code>,其余读写寄存器的驱动逻辑和 I2C 版一模一样。</strong>很多传感器(尤其 IMU)同时提供 I2C 和 SPI 接口,用 regmap 就能<strong>核心逻辑写一份、I2C/SPI 各配个薄薄的 probe</strong>,代码复用最大化。<strong>这就是"统一抽象"带来的实实在在的工程收益</strong>——少写一半代码、少维护一套逻辑。至此你应该深刻体会到:VFS、GPIO 子系统、regmap、总线模型……这些抽象不是学院派的花架子,而是实打实减少重复、提升复用的工程利器。</p></blockquote>
+
+<h2 id="s11">46.11 回扣三大总线与选型</h2>
+<p>SPI 这章的连接与全卷总线线索:</p>
+<table>
+<tr><th>本章概念</th><th>连接到</th></tr>
+<tr><td>SPI 总线-设备-驱动</td><td>第40章总线模型、第45章 I2C(同构)</td></tr>
+<tr><td>CS 片选用 GPIO</td><td>第42章 GPIO</td></tr>
+<tr><td>spi_sync 会睡眠</td><td>第43章线程化中断、第45章 I2C 同理</td></tr>
+<tr><td>高速 SPI 用 DMA</td><td>第43章 DMA</td></tr>
+<tr><td>regmap 复用 I2C/SPI</td><td>第45章 regmap</td></tr>
+<tr><td>三大总线选型</td><td>第44章 UART、第45章 I2C</td></tr>
+</table>
+<blockquote><p><strong>学完 SPI,你集齐了嵌入式三大板内/板间通信总线(UART/I2C/SPI),更重要的是掌握了它们的"选型判断"。</strong>这三章(44/45/46)其实在讲同一件事的三个变体:<strong>都是让 SoC 和外设通信,区别在速度、双工、多设备方式、线数的权衡。</strong>而在 Linux 驱动层面,I2C 和 SPI 更是几乎同构(总线模型 + regmap),UART 因背负 tty 终端历史而独特。<strong>对机器人工程师,这三大总线是接一切外设(传感器、GPS、Flash、屏、模块)的基础</strong>——飞控/域控上几十个外设,就是靠这三种总线连起来的。<strong>你现在不仅会写每种总线的驱动,更能在设计时判断"这个外设该走哪种总线"</strong>,这是从"会用"到"会设计"的关键一步。下一章 CAN 总线,则会带你进入车载/多节点通信的世界。</p></blockquote>
+
+<h2 id="s12">46.12 面试常问问题</h2>
+<p><strong>Q1:SPI 的特点?和 I2C 比?</strong><br>四线(SCLK/MOSI/MISO/CS)、同步、全双工、高速(几十 MHz)、靠片选选设备。比 I2C:更快、全双工、但线更多(每设备一根 CS),I2C 省线靠地址、半双工、慢。</p>
+<p><strong>Q2:SPI 怎么选设备?和 I2C 有何不同?</strong><br>SPI 靠片选 CS(每从设备一根独立 CS 线,拉低选中);I2C 靠地址(软件寻址,不加线)。所以 SPI 设备多了引脚吃紧,I2C 更省引脚。</p>
+<p><strong>Q3:SPI 为什么是全双工?</strong><br>主从移位寄存器首尾相连成环,每个时钟两边同时移位一位,8 个时钟后数据完全交换——发的同时必然收。所以 SPI 传输总是等长收发。</p>
+<p><strong>Q4:CPOL/CPHA 是什么?为什么重要?</strong><br>CPOL 时钟空闲电平、CPHA 采样边沿,组合成 4 种模式。主从模式必须一致,否则采样错位读到乱数据——是 SPI 调不通的头号原因。查 datasheet 配对。</p>
+<p><strong>Q5:UART/I2C/SPI 怎么选?</strong><br>UART:异步点对点,调试/GPS/模块;I2C:省线挂多个低速传感器;SPI:高速全双工,IMU/Flash/屏/ADC。按速度、设备数、引脚、距离权衡。</p>
+<p><strong>Q6:写 SPI 驱动实现什么?和 I2C 驱动像吗?</strong><br>几乎一样:填 spi_driver(probe+of_match_table)、module_spi_driver、设备树描述(reg=片选号、配 cpol/cpha/频率)。probe 里用 spi_sync/spi_write_then_read 通信。都基于第40章总线模型。</p>
+<p><strong>Q7:同款传感器的 I2C 版和 SPI 版怎么复用代码?</strong><br>用 regmap:核心逻辑用 regmap_read/write,只在初始化用 devm_regmap_init_i2c 或 _spi 指定总线。核心逻辑一份,I2C/SPI 各写薄 probe。</p>
+
+<h2 id="s13">46.13 常见误区</h2>
+<ol>
+  <li><strong>"SPI 靠地址选设备"</strong>——靠片选 CS(每设备一根线);I2C 才靠地址。</li>
+  <li><strong>"SPI 能只收不发"</strong>——全双工等长收发,只收也要发 dummy 字节去换。</li>
+  <li><strong>"CPOL/CPHA 随便设"</strong>——主从必须一致,不对读乱数据,是头号调试坑。</li>
+  <li><strong>"设备树 SPI 设备的 reg 是地址"</strong>——是片选 CS 编号(0/1…)。</li>
+  <li><strong>"SPI 能在硬中断里传输"</strong>——spi_sync 会睡眠,要在进程上下文/线程化中断。</li>
+  <li><strong>"SPI 一定比 I2C 好"</strong>——各有定位:SPI 快但费引脚,I2C 省引脚挂多设备;按场景选。</li>
+</ol>
+
+<h2 id="s14">46.14 本章总结</h2>
+<ul>
+  <li><strong>SPI</strong>:四线(SCLK/MOSI/MISO/CS)、<strong>同步、全双工、高速(几十 MHz)</strong>、靠<strong>片选 CS</strong> 选设备;接高速 IMU/Flash/屏/ADC。</li>
+  <li>连接:三根信号线共享,<strong>每从设备一根独立 CS</strong>(拉低选中);设备多了引脚吃紧。</li>
+  <li>全双工本质:<strong>移位寄存器首尾相连对转</strong>,发的同时必收 → <strong>等长收发</strong>(只收也要发 dummy)。</li>
+  <li><strong>CPOL/CPHA</strong> 组成 4 种时钟模式,<strong>主从必须一致</strong>(否则乱数据,头号调试坑),查 datasheet 配。</li>
+  <li>三大总线选型:<strong>UART</strong>(异步点对点,调试/模块)、<strong>I2C</strong>(省线多设备低速)、<strong>SPI</strong>(高速全双工少设备)。</li>
+  <li>框架和 I2C 同构:<strong>spi_controller / spi_device / spi_driver</strong>;你写 spi_driver,填 probe+of_match_table+module_spi_driver;设备树 reg=<strong>片选号</strong>,配 cpol/cpha/频率。</li>
+  <li>通信:<strong>spi_transfer</strong>(tx/rx 等长)/<strong>spi_message</strong>;spi_write_then_read(先发后收);<strong>spi_sync 会睡眠</strong>;高速配 DMA。</li>
+  <li>复用:<strong>spidev</strong>(用户空间用 SPI)、<strong>regmap</strong>(I2C/SPI 共享驱动核心逻辑)。</li>
+</ul>
+
+<h2 id="s15">46.15 思维导图 / 课后题</h2>
+<pre><code>SPI 驱动
+├─ 一、SPI:SCLK/MOSI/MISO/CS四线·同步·★全双工·高速·片选选设备
+├─ 二、连接:三信号线共享 + ★每设备独立CS(拉低选中), 多设备费引脚
+├─ 三、★全双工本质:移位寄存器对转, 发同时收 → 等长收发(dummy)
+├─ 四、★CPOL/CPHA 4种模式, 主从必须一致(头号调试坑), 查datasheet
+├─ 五、★三总线选型:UART(异步点对点)/I2C(省线多设备)/SPI(高速)
+├─ 六、框架同I2C:spi_controller/spi_device/spi_driver
+├─ 七、你写spi_driver:probe+of_match+module_spi_driver; 设备树reg=片选号
+├─ 八、通信:spi_transfer(tx/rx等长)/spi_write_then_read; spi_sync会睡眠
+└─ 九、复用:spidev(用户空间) + ★regmap(I2C/SPI共享核心逻辑)
+        回扣:总线模型(40)+GPIO(42,CS)+DMA(43)+regmap(45)</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li><code>ls /dev/spidev*</code> 看 SPI 用户设备;找板子设备树 spi 节点,看挂的设备 reg(片选)、spi-max-frequency、cpol/cpha。</li>
+  <li>用 spidev + spi_ioc_transfer 写用户程序读一个 SPI Flash/传感器 ID,体会 tx/rx 等长。</li>
+  <li>照 46.9 写 SPI 传感器驱动骨架,设备树挂载(reg=片选、配模式),probe 里 spi_write_then_read 读 ID 验证芯片。</li>
+  <li>故意把 CPOL/CPHA 设错,观察读到乱数据;设对后正常,理解时钟模式的重要性。</li>
+  <li>找一个同时支持 I2C/SPI 的传感器驱动(如某 IMU),看它如何用 regmap 让两种总线共用核心逻辑,对照 46.10。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>SPI 的特点?和 I2C 的主要区别?</li>
+  <li>SPI 怎么选设备?为什么设备多了费引脚?</li>
+  <li>SPI 为什么是全双工?"等长收发"怎么来的?</li>
+  <li>CPOL/CPHA 是什么?配错会怎样?</li>
+  <li>UART/I2C/SPI 三种总线怎么选型?各自典型场景?</li>
+  <li>SPI 驱动和 I2C 驱动结构像吗?设备树 reg 是什么?</li>
+  <li>regmap 如何让同款传感器的 I2C/SPI 版复用代码?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第四十六章 完 · 下一章《第四十七章 CAN 总线驱动》</p>
+<div class="nav">
+  <a href="第45章-I2C驱动.html">← 第四十五章</a>
+  <a href="index.html">目录</a>
+  <a href="第47章-CAN总线驱动.html">第四十七章 →</a>
+</div>
+
+</div>
+</body>
+</html>

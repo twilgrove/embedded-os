@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第二十章 Semaphore 信号量</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第19章-FreeRTOS-Queue队列.html">← 第十九章</a>
+  <a href="index.html">目录</a>
+  <a href="第21章-FreeRTOS-Mutex与优先级继承.html">第廿一章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第三卷 · FreeRTOS 源码</div>
+  <h1>第二十章 Semaphore 信号量</h1>
+  <div class="sub">不传数据的队列，专门用来"数数"和"打招呼"</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">信号量要解决什么</a></li>
+    <li><a href="#s2">生活类比：停车场的车位牌</a></li>
+    <li><a href="#s3">二值信号量：一把只有 0/1 的钥匙</a></li>
+    <li><a href="#s4">give / take 就是 send / receive</a></li>
+    <li><a href="#s5">源码：信号量如何复用队列</a></li>
+    <li><a href="#s6">同步模式:中断通知任务</a></li>
+    <li><a href="#s7">计数信号量：管理一组资源</a></li>
+    <li><a href="#s8">信号量做互斥的问题</a></li>
+    <li><a href="#s9">任务通知：更轻量的替代</a></li>
+    <li><a href="#s10">信号量 vs 队列 vs 通知怎么选</a></li>
+    <li><a href="#s11">面试常问</a></li>
+    <li><a href="#s12">常见误区</a></li>
+    <li><a href="#s13">本章总结</a></li>
+    <li><a href="#s14">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第19章说"信号量是特殊的队列"。这一章讲清它特殊在哪、怎么用来做<strong>同步</strong>(中断通知任务)和<strong>资源计数</strong>(管理一组相同资源)。信号量是 RTOS 最常用的同步工具,但也最容易误用(尤其拿它当互斥锁)。学完你要能区分二值/计数信号量、讲清 give/take 底层就是队列的 send/receive、理解为什么信号量不该用来做互斥(留给第21章的互斥量)。</p></blockquote>
+
+<h2 id="s1">20.1 信号量要解决什么</h2>
+<p>队列解决"传数据",但很多场景<strong>不需要传数据,只需要传一个"信号"</strong>:</p>
+<ul>
+  <li><strong>同步:</strong>任务 A 要等某件事发生才能继续。比如中断收到数据,想通知处理任务"可以干活了"——不用传数据(数据在别处),只要一个"叮"的信号。</li>
+  <li><strong>资源计数:</strong>有 3 个相同的资源(如 3 个 DMA 通道),多个任务抢用。需要记录"还剩几个可用",没了就等。</li>
+</ul>
+<p>这两种场景,用队列传数据是"杀鸡用牛刀"(还得定义传什么数据)。<strong>信号量就是"退化的队列":不关心传什么,只关心"有没有信号 / 还剩几个"。</strong>它本质是一个受保护的计数器 + 阻塞唤醒机制。</p>
+
+<h2 id="s2">20.2 生活类比：停车场的车位牌</h2>
+<p>信号量就像停车场入口那块<strong>"剩余车位"电子牌</strong>:</p>
+<ul>
+  <li>牌子上的数字 = 信号量的计数值 = 当前可用资源数。</li>
+  <li>一辆车进场(<strong>take/获取</strong>):数字减 1(占用一个资源)。</li>
+  <li>一辆车离场(<strong>give/释放</strong>):数字加 1(归还一个资源)。</li>
+  <li>数字为 0 时(车位满),想进的车<strong>在门口等</strong>(阻塞),直到有车离场(数字变正)。</li>
+</ul>
+<p><strong>二值信号量</strong>就是只有 1 个车位的停车场(数字只能是 0 或 1),常用于"同步"——像一个"事件发生了没"的旗子。<strong>计数信号量</strong>是有 N 个车位的,用于"管理 N 个相同资源"。两者底层是同一个东西,只是最大计数不同。</p>
+
+<h2 id="s3">20.3 二值信号量：一把只有 0/1 的钥匙</h2>
+<p>二值信号量(Binary Semaphore)的计数只有 0 和 1,表示"信号无 / 有"。最经典用途是<strong>中断与任务的同步</strong>(第七章上半部/下半部的标准实现):</p>
+<pre><code>典型模式: 中断给信号, 任务等信号
+
+创建: xSemaphore = xSemaphoreCreateBinary();  // 初始为0(无信号)
+
+中断ISR(上半部, 快):              处理任务(下半部, 慢):
+  收到数据存缓冲                    for(;;) {
+  xSemaphoreGiveFromISR(              xSemaphoreTake(xSemaphore, 永久等);
+    xSemaphore, &woken);             // 拿到信号 → 被唤醒
+  portYIELD_FROM_ISR(woken);         处理刚才中断存的数据;
+                                    }
+
+时序:
+  平时: 任务 Take 时信号量=0 → 任务阻塞睡着(不占CPU)
+  中断来: Give → 信号量 0→1 → 唤醒任务
+  任务醒: Take 成功(信号量 1→0) → 处理数据 → 再次 Take → 又睡</code></pre>
+<blockquote><p>这个"中断 give、任务 take"的模式,是嵌入式最常见的同步范式,完美实现第七章的上半部/下半部:<strong>ISR 只做最少的事(存数据 + give 信号),把耗时处理推给一个专门的任务(take 后处理)。</strong>好处:ISR 极短(实时性好),重活在任务上下文做(可以从容、可以调用会阻塞的 API)。相比第七章那个"ISR 置标志 + 主循环轮询标志"的土办法,信号量让任务能<strong>阻塞睡眠</strong>(不占 CPU),有事才被精确唤醒——这才是 RTOS 的正确姿势。</p></blockquote>
+
+<h2 id="s4">20.4 give / take 就是 send / receive</h2>
+<p>信号量的两个操作,直接对应队列(第19章):</p>
+<table>
+<tr><th>信号量操作</th><th>底层队列操作</th><th>含义</th></tr>
+<tr><td><code>xSemaphoreGive</code>(释放/给信号)</td><td>xQueueSend(队列发送)</td><td>计数+1;若有任务在等,唤醒它</td></tr>
+<tr><td><code>xSemaphoreTake</code>(获取/等信号)</td><td>xQueueReceive(队列接收)</td><td>计数-1;若计数为0,阻塞等待</td></tr>
+</table>
+<p>看头文件里的宏定义,一目了然:</p>
+<pre><code>/* semphr.h —— 信号量 API 全是队列 API 的宏! */
+#define xSemaphoreGive( xSemaphore )  \
+    xQueueGenericSend( ( QueueHandle_t )( xSemaphore ), NULL, 0, queueSEND_TO_BACK )
+
+#define xSemaphoreTake( xSemaphore, xBlockTime )  \
+    xQueueSemaphoreTake( ( xSemaphore ), ( xBlockTime ) )
+
+#define xSemaphoreCreateBinary()  \
+    xQueueGenericCreate( 1, semSEMAPHORE_QUEUE_ITEM_LENGTH, queueQUEUE_TYPE_BINARY_SEMAPHORE )
+    /* 长度=1, itemSize=0(semSEMAPHORE_QUEUE_ITEM_LENGTH=0) */</code></pre>
+<p>看 <code>xSemaphoreGive</code> 传给 <code>xQueueGenericSend</code> 的数据指针是 <strong>NULL</strong>、长度参数隐含 itemSize=0——<strong>它 send 一个"空数据",不拷贝任何东西,只是让队列的 <code>uxMessagesWaiting</code> 从 0 变 1</strong>(表示"有信号了")。take 则让它从 1 变 0。<strong>整个信号量就是"用队列的消息计数当信号计数,但不传实际数据"。</strong>第19章说的"一切 IPC 皆队列",这里是最直接的证据。</p>
+
+<h2 id="s5">20.5 源码：信号量如何复用队列</h2>
+<p>信号量的 take 有个专门的 <code>xQueueSemaphoreTake</code>(和普通 receive 略有不同,因为不用拷贝数据),但骨架完全一样:</p>
+<pre><code>BaseType_t xQueueSemaphoreTake( QueueHandle_t xQueue, TickType_t xTicksToWait )
+{
+    for( ;; )
+    {
+        taskENTER_CRITICAL();
+        {
+            /* 信号量的"消息数"就是计数值 */
+            if( pxQueue->uxMessagesWaiting > 0 )
+            {
+                /* 有信号: 计数-1 (不拷贝数据, 这是和普通队列receive的区别) */
+                pxQueue->uxMessagesWaiting--;
+
+                /* 若是互斥量, 记录持有者(第21章); 普通信号量跳过 */
+                /* 唤醒等待"发送"的任务(如果有) */
+                taskEXIT_CRITICAL();
+                return pdPASS;
+            }
+            else
+            {
+                if( xTicksToWait == 0 ) { taskEXIT_CRITICAL(); return errQUEUE_EMPTY; }
+                /* 计数为0: 准备阻塞 */
+            }
+        }
+        taskEXIT_CRITICAL();
+
+        /* 阻塞在"等接收"列表上, 睡到有人give或超时 */
+        vTaskPlaceOnEventList( &( pxQueue->xTasksWaitingToReceive ), xTicksToWait );
+        portYIELD_WITHIN_API();
+    }
+}</code></pre>
+<p>和第19章的 <code>xQueueReceive</code> 对比,几乎一样,只是<strong>不做数据拷贝</strong>(<code>prvCopyDataFromQueue</code> 那一步省了,因为 itemSize=0)。所以信号量的阻塞、唤醒、优先级等待列表、超时——全部继承自队列,一行新逻辑都不用写。<strong>这就是"信号量是退化的队列"的源码证据:去掉数据拷贝,队列就变成了纯粹的计数信号量。</strong></p>
+
+<h2 id="s6">20.6 同步模式：中断通知任务</h2>
+<p>把 20.3 的模式讲得更完整,包括"多次 give"的行为(面试常问的坑):</p>
+<pre><code>问题: 二值信号量, 如果中断连续 give 两次(任务还没来得及 take), 会怎样?
+
+  信号量=0
+  中断give第1次: 0→1 ✓
+  中断give第2次: 已经是1了, 再give... 队列满(长度1), give失败!
+  → 第2次的"信号"丢失了!
+
+结论: 二值信号量【不累计】。多次give只等于一次。
+      任务take一次就把信号清了, 期间来的多个事件只当一个。</code></pre>
+<blockquote><p>这是二值信号量的重要特性和常见坑:<strong>它不计数,只表示"有没有信号"。</strong>如果中断在任务处理不过来时连续来了 5 次,任务只知道"有信号",不知道来了 5 次——会<strong>丢事件</strong>。如果你需要"来了几次都不丢、任务要处理相应次数",就得用<strong>计数信号量</strong>(20.7):每次 give 计数+1,任务 take 一次减 1,直到处理完所有累积的事件。<strong>"该用二值还是计数信号量"取决于:你在乎"有没有事件"还是"发生了几次事件"。</strong>面试爱问"中断频繁 give 二值信号量会不会丢事件"——答:会,该用计数信号量。</p></blockquote>
+
+<h2 id="s7">20.7 计数信号量：管理一组资源</h2>
+<p>计数信号量(Counting Semaphore)计数值可以是 0 到 N,两大用途:</p>
+<h4>用途一:管理 N 个相同资源</h4>
+<pre><code>场景: 有 3 个 DMA 通道, 多个任务抢用
+
+创建: xSem = xSemaphoreCreateCounting(3, 3);  // 最大3, 初始3(都可用)
+
+任务要用DMA通道:
+  xSemaphoreTake(xSem, 等待);   // 计数-1, 拿到一个通道(没了就等)
+  ... 使用DMA通道 ...
+  xSemaphoreGive(xSem);          // 计数+1, 归还通道
+
+效果: 最多3个任务同时用, 第4个来的会阻塞, 直到有任务归还</code></pre>
+<h4>用途二:事件计数(不丢事件)</h4>
+<pre><code>场景: 中断可能快速连续发生, 任务要处理每一次, 不能丢
+
+创建: xSem = xSemaphoreCreateCounting(255, 0);  // 最大255, 初始0
+
+中断: xSemaphoreGiveFromISR(xSem, ...);  // 每次事件计数+1(累加!)
+任务: for(;;){ xSemaphoreTake(xSem, 等待); 处理一次事件; }
+      // 中断来了几次, 计数就是几, 任务 take 几次, 一个不落</code></pre>
+<p>底层实现:计数信号量就是 <code>xQueueGenericCreate(N, 0, ...)</code>——<strong>长度为 N、itemSize 为 0 的队列</strong>。<code>uxMessagesWaiting</code>(0~N)就是计数值,<code>uxLength</code>(N)就是最大计数。give=send(计数+1,最多到 N),take=receive(计数-1,到 0 就阻塞)。<strong>又是队列,只是长度从 1 变成 N。</strong></p>
+
+<h2 id="s8">20.8 信号量做互斥的问题</h2>
+<p>一个极其重要的知识点,面试高频、也是新手常犯的错。<strong>能不能用二值信号量做互斥锁(保护共享资源)?</strong>看起来可以:</p>
+<pre><code>用二值信号量当"锁"(初始给1):
+  xSemaphoreTake(xSem);   // "加锁"
+  访问共享资源;
+  xSemaphoreGive(xSem);   // "解锁"</code></pre>
+<p>功能上能实现互斥,但有<strong>两个致命问题</strong>:</p>
+<ol>
+  <li><strong>优先级反转(Priority Inversion)</strong>:低优先级任务持有"锁",高优先级任务等这个锁,结果被一个中优先级任务插队,导致高优先级任务被迫等待很久。二值信号量<strong>不解决</strong>这个问题(第21章详讲)。</li>
+  <li><strong>没有所有权概念</strong>:信号量可以被<strong>任何</strong>任务 give(A 加的锁,B 能解),容易出错。真正的互斥锁应该"谁加锁谁解锁"。</li>
+</ol>
+<blockquote><p>核心结论:<strong>信号量用于"同步"(一个任务/中断通知另一个),互斥量用于"互斥"(保护共享资源)。虽然二值信号量和互斥量底层都是长度 1 的队列,但互斥量多了"优先级继承"和"所有权",专门为互斥场景设计。</strong>用信号量做互斥是能跑,但会踩优先级反转的坑——这正是第21章互斥量存在的理由。<strong>记住这个区分:"同步用信号量,互斥用互斥量"</strong>,是 RTOS 编程的基本功,也是面试区分度很高的一问。为什么它俩容易混?因为都能"锁",但设计意图和适用场景不同。</p></blockquote>
+
+<h2 id="s9">20.9 任务通知：更轻量的替代</h2>
+<p>FreeRTOS 后来引入了<strong>任务通知(Task Notification)</strong>,在很多场景可以替代二值/计数信号量,而且<strong>更快、更省内存</strong>。原理:每个 TCB 里内置一个 32 位的通知值和一个通知状态,不用单独创建信号量对象。</p>
+<pre><code>TCB 里内置(不用额外创建对象):
+  volatile uint32_t ulNotifiedValue;      // 通知值
+  volatile uint8_t  ucNotifyState;        // 通知状态
+
+用作二值信号量:
+  发送方: xTaskNotifyGive(任务句柄);       // 相当于 give
+  接收方: ulTaskNotifyTake(pdTRUE, 等待);  // 相当于 take</code></pre>
+<p>优势:</p>
+<ul>
+  <li><strong>快</strong>:直接操作 TCB 内的变量,不走队列那套(不用等待列表插入等),据官方约 45% 更快。</li>
+  <li><strong>省内存</strong>:不用为信号量分配单独的对象。</li>
+</ul>
+<p>限制:<strong>只能"点对点"</strong>(一个特定任务接收),不能像信号量那样多个任务等同一个。所以:<strong>如果是"通知某个特定任务",优先用任务通知(快省);如果是"多个任务等同一事件"或"计数资源被多任务共享",还得用信号量。</strong>这是 FreeRTOS 性能优化的一个重要工具,面试会问"知道任务通知吗,和信号量比有什么优势"。</p>
+
+<h2 id="s10">20.10 信号量 vs 队列 vs 通知怎么选</h2>
+<p>把 IPC 工具的选型总结成决策表(实战和面试都实用):</p>
+<table>
+<tr><th>需求</th><th>推荐</th><th>理由</th></tr>
+<tr><td>传递数据</td><td>队列</td><td>带缓冲、拷贝语义</td></tr>
+<tr><td>纯同步(通知特定任务)</td><td>任务通知</td><td>最快最省</td></tr>
+<tr><td>纯同步(多任务等同一事件)</td><td>二值信号量</td><td>通知做不到多接收方</td></tr>
+<tr><td>事件计数(不丢)</td><td>计数信号量</td><td>累加计数</td></tr>
+<tr><td>管理 N 个相同资源</td><td>计数信号量</td><td>计数=可用资源数</td></tr>
+<tr><td>保护共享资源(互斥)</td><td>互斥量(第21章)</td><td>有优先级继承,防反转</td></tr>
+<tr><td>等多个事件的组合</td><td>事件组(第22章)</td><td>按位标志,可等"与/或"</td></tr>
+</table>
+<blockquote><p>这张表是 RTOS 编程的"工具箱索引"。核心判断逻辑:<strong>①要不要传数据?要→队列。②只是同步?→通知(点对点)或信号量(多接收/计数)。③是保护资源(互斥)?→互斥量,别用信号量。④等多个条件组合?→事件组。</strong>选对工具,代码简洁又正确;选错(比如拿信号量做互斥),就埋下优先级反转的雷。记住:<strong>它们底层大多是队列的变体,但语义和适用场景不同,别混用。</strong></p></blockquote>
+
+<h2 id="s11">20.11 面试常问问题</h2>
+<p><strong>Q1:信号量和队列的关系?二值信号量底层是什么?</strong><br>信号量是退化的队列(不传数据)。二值信号量=长度1、itemSize0 的队列;give=send、take=receive,用消息计数(0/1)表示信号有无。</p>
+<p><strong>Q2:二值信号量和计数信号量的区别?各用于什么?</strong><br>二值只有0/1,表示"有无信号",用于同步(如中断通知任务)、不累计事件;计数0~N,用于管理N个资源或事件计数(累加,不丢事件)。</p>
+<p><strong>Q3:中断频繁 give 二值信号量会怎样?</strong><br>会丢事件——二值不累计,多次give等于一次,任务处理不过来时后续信号被覆盖。要处理每次事件应用计数信号量。</p>
+<p><strong>Q4:中断和任务如何用信号量同步?(上半部/下半部)</strong><br>ISR 里 xSemaphoreGiveFromISR + portYIELD_FROM_ISR(上半部,快);任务 xSemaphoreTake 阻塞等待,拿到后处理(下半部)。ISR 短、重活在任务做。</p>
+<p><strong>Q5:能用信号量做互斥锁吗?为什么不推荐?</strong><br>功能上能,但二值信号量不解决优先级反转、且无所有权(谁都能give)。互斥应该用互斥量(有优先级继承和所有权)。同步用信号量,互斥用互斥量。</p>
+<p><strong>Q6:任务通知是什么?比信号量好在哪?</strong><br>TCB 内置通知值/状态,不用单独对象,更快(约快45%)更省内存。但只能点对点(通知特定任务),多任务等同一事件仍需信号量。</p>
+
+<h2 id="s12">20.12 常见误区</h2>
+<ol>
+  <li><strong>"二值信号量会累计信号"</strong>——不会,多次 give 等于一次,可能丢事件;要累计用计数信号量。</li>
+  <li><strong>"信号量用来保护共享资源最合适"</strong>——那是互斥量的活;信号量做互斥有优先级反转和无所有权问题。</li>
+  <li><strong>"中断里用 xSemaphoreGive"</strong>——要用 xSemaphoreGiveFromISR,并配 portYIELD_FROM_ISR。</li>
+  <li><strong>"信号量和队列是两码事"</strong>——信号量是队列的特例(itemSize=0)。</li>
+  <li><strong>"任务通知能替代所有信号量"</strong>——只适合点对点;多接收方/多任务共享资源仍需信号量。</li>
+  <li><strong>"take 到信号量就一定不阻塞"</strong>——计数为0时会按 xTicksToWait 阻塞或超时返回。</li>
+</ol>
+
+<h2 id="s13">20.13 本章总结</h2>
+<ul>
+  <li>信号量=不传数据的队列,用于<strong>同步</strong>(传信号)和<strong>资源计数</strong>。</li>
+  <li><strong>二值信号量</strong>(0/1):表示"有无信号",用于中断通知任务(上半部/下半部);<strong>不累计,可能丢事件</strong>。</li>
+  <li><strong>计数信号量</strong>(0~N):管理 N 个相同资源,或事件计数(累加不丢)。</li>
+  <li>give=xQueueSend、take=xQueueReceive;<strong>信号量 API 全是队列 API 的宏</strong>,take 不拷贝数据(itemSize=0)。</li>
+  <li>阻塞/唤醒/优先级等待列表/超时全继承自队列,不写新逻辑。</li>
+  <li><strong>别用信号量做互斥</strong>:二值信号量不解决优先级反转、无所有权;互斥用互斥量(第21章)。</li>
+  <li><strong>任务通知</strong>:TCB 内置,点对点,更快更省,可替代很多信号量场景。</li>
+  <li>选型:传数据→队列;点对点同步→通知;多任务同步/计数→信号量;互斥→互斥量;多事件组合→事件组。</li>
+</ul>
+
+<h2 id="s14">20.14 思维导图 / 课后题</h2>
+<pre><code>Semaphore 信号量
+├─ 一、解决:同步(传信号) + 资源计数(不需传数据)
+├─ 二、类比:停车场剩余车位牌(take-1/give+1/满则等)
+├─ 三、二值信号量(0/1):中断通知任务(上半部/下半部)
+│  └─ ★不累计, 频繁give会丢事件
+├─ 四、give=send, take=receive(API全是队列宏)
+├─ 五、源码:take复用队列receive, 只是不拷数据(itemSize0)
+├─ 六、计数信号量(0~N)
+│  ├─ 管理N个相同资源
+│  └─ 事件计数(累加不丢)
+├─ 七、★别用信号量做互斥
+│  └─ 不解决优先级反转 + 无所有权 → 用互斥量
+├─ 八、任务通知:TCB内置, 点对点, 快45%省内存
+└─ 九、选型:数据→队列/点对点→通知/多任务→信号量/互斥→互斥量/组合→事件组</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>在 <code>semphr.h</code> 找到 xSemaphoreGive/Take/CreateBinary/CreateCounting 的宏定义,确认它们全是队列 API;在 queue.c 找 <code>xQueueSemaphoreTake</code> 对比普通 receive。</li>
+  <li>实现"中断 give、任务 take"的同步:定时器中断每 100ms give 二值信号量,任务 take 后翻转 LED。用逻辑分析仪确认任务被精确唤醒而非轮询。</li>
+  <li>让中断快速连续 give 二值信号量(比任务处理快),统计任务实际处理次数,验证"丢事件";改用计数信号量,验证不丢。</li>
+  <li>用计数信号量(初始3)模拟 3 个资源,建 5 个任务抢用,观察最多 3 个同时运行、其余阻塞。</li>
+  <li>把一个二值信号量同步改写成任务通知(xTaskNotifyGive/ulTaskNotifyTake),对比代码和性能。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>信号量底层是什么?give/take 对应队列的什么操作?</li>
+  <li>二值和计数信号量的区别与各自适用场景?</li>
+  <li>中断频繁 give 二值信号量会丢事件吗?怎么办?</li>
+  <li>为什么不推荐用信号量做互斥?</li>
+  <li>任务通知相比信号量的优劣?什么时候不能用它?</li>
+  <li>描述中断与任务用信号量同步的完整流程。</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第二十章 完 · 下一章《第廿一章 Mutex 与优先级继承》</p>
+<div class="nav">
+  <a href="第19章-FreeRTOS-Queue队列.html">← 第十九章</a>
+  <a href="index.html">目录</a>
+  <a href="第21章-FreeRTOS-Mutex与优先级继承.html">第廿一章 →</a>
+</div>
+
+</div>
+</body>
+</html>

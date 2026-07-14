@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第廿七章 RT-Thread 内存管理、FinSH 与 BSP</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:27px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第26章-RTThread-IPC与设备框架.html">← 第廿六章</a>
+  <a href="index.html">目录</a>
+  <a href="第28章-Linux内核总览与task_struct.html">第二十八章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第四卷 · RT-Thread 源码</div>
+  <h1>第廿七章 RT-Thread 内存管理、FinSH 与 BSP</h1>
+  <div class="sub">内存池、命令行 shell，和让代码跑起来的板级支持</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">RT-Thread 的内存管理:小堆/SLAB/memheap</a></li>
+    <li><a href="#s2">内存池:确定性分配的利器</a></li>
+    <li><a href="#s3">FinSH:一个能敲命令的 RTOS</a></li>
+    <li><a href="#s4">FinSH 如何把 C 函数变成命令</a></li>
+    <li><a href="#s5">MSH 模式与命令导出</a></li>
+    <li><a href="#s6">BSP:板级支持包</a></li>
+    <li><a href="#s7">启动流程:从上电到 main</a></li>
+    <li><a href="#s8">自动初始化机制详解</a></li>
+    <li><a href="#s9">第四卷总结:RTOS 到 Linux 的桥</a></li>
+    <li><a href="#s10">面试常问</a></li>
+    <li><a href="#s11">常见误区</a></li>
+    <li><a href="#s12">本章总结</a></li>
+    <li><a href="#s13">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：收尾 RT-Thread。三件事:①内存管理(和 FreeRTOS 的 heap 对照,加内存池)②<strong>FinSH 命令行</strong>——RT-Thread 最好玩的组件,让你能像 Linux shell 一样敲命令调试③BSP 与启动流程——代码怎么从上电跑到你的 main。这一章把 RT-Thread 收完,然后进入本书最重、最关键的第五卷 Linux 内核。</p></blockquote>
+
+<h2 id="s1">27.1 RT-Thread 的内存管理：小堆/SLAB/memheap</h2>
+<p>RT-Thread 提供三种堆算法,和 FreeRTOS 的 5 种 heap(第24章)是同类东西,思想相通:</p>
+<table>
+<tr><th>算法</th><th>特点</th><th>对应 FreeRTOS</th><th>适用</th></tr>
+<tr><td><strong>小内存算法(small memory)</strong></td><td>简单,首次适配+合并相邻块</td><td>≈ heap_4</td><td>小内存 MCU(默认)</td></tr>
+<tr><td><strong>SLAB</strong></td><td>按大小分类的对象缓存,快、少碎片</td><td>(FreeRTOS 无)</td><td>内存较大、分配频繁</td></tr>
+<tr><td><strong>memheap</strong></td><td>管理多块不连续内存</td><td>≈ heap_5</td><td>多块内存区</td></tr>
+</table>
+<p>接口统一:<code>rt_malloc</code>/<code>rt_free</code>(对应 <code>pvPortMalloc</code>)。<strong>核心问题和第24章完全一样:碎片化、确定性、线程安全。</strong>你在第24章学的"外部碎片、合并相邻块抗碎片、实时系统慎用动态内存"全部适用。<strong>SLAB 是 RT-Thread 从 Linux 借来的算法</strong>(第五卷会详讲 Linux 的 SLAB/SLUB)——按对象大小分类缓存,分配同大小对象时几乎无碎片、速度快。RT-Thread 用它,又一次预习了 Linux 的机制。</p>
+
+<h2 id="s2">27.2 内存池：确定性分配的利器</h2>
+<p>RT-Thread 有个 FreeRTOS 通用 heap 没有、但对实时很重要的东西:<strong>内存池(Memory Pool,<code>rt_mempool</code>)</strong>。第24章末尾提过内存池的概念,这里看它:</p>
+<pre><code>内存池 = 预先分配一大块, 切成 N 个【固定大小】的小块
+
+  rt_mp_create("mp", 块数=10, 块大小=32);
+  → 预分配 10 个 32 字节的块, 串成空闲链表
+
+  rt_mp_alloc(mp, 超时):  从空闲链表摘一个块 → O(1), 恒定时间!
+  rt_mp_free(block):       把块还回空闲链表 → O(1)
+
+对比通用 malloc:
+  通用malloc: 大小任意, 要找合适块, 时间不定, 会碎片
+  内存池:     大小固定, 拿链表头一个, 时间恒定, 零碎片(块大小统一)</code></pre>
+<blockquote><p>内存池是<strong>实时系统的"标准动态内存方案"</strong>:因为所有块大小相同,分配就是"从空闲链表摘一个"、释放就是"还回去",<strong>时间恒定(O(1))、绝无碎片</strong>(块大小统一,不存在"有空间但不连续"的外部碎片)。代价是不灵活(只能分配固定大小)。<strong>但实时系统恰恰要的就是确定性,不是灵活性。</strong>典型用法:网络数据包缓冲(每个包一个固定大小块)、消息缓冲。这呼应第24章"实时系统用内存池代替 malloc"——RT-Thread 直接内置了它。第五卷 Linux 的 SLAB 分配器本质上就是一堆按大小分类的内存池,思想同源。<strong>内存池是"用固定大小换确定性和零碎片"的经典权衡,理解它就理解了一大类实时内存方案。</strong></p></blockquote>
+
+<h2 id="s3">27.3 FinSH：一个能敲命令的 RTOS</h2>
+<p>FinSH 是 RT-Thread 的<strong>命令行 shell</strong>——通过串口/网络,你能像操作 Linux 终端一样,敲命令查看和控制运行中的系统。这是 FreeRTOS 没有、RT-Thread 特别实用的组件。</p>
+<pre><code>通过串口连上 RT-Thread, 你能敲:
+  msh> list_thread        # 列出所有线程及状态(用了对象容器!)
+  msh> list_sem           # 列出所有信号量
+  msh> list_device        # 列出所有设备
+  msh> free               # 查看内存使用
+  msh> ps                 # 类似Linux的ps
+  msh> 你自己导出的命令 参数...
+
+就像在设备上开了个"调试终端", 不用重新编译烧录就能查看/控制系统</code></pre>
+<p>FinSH 的价值:<strong>运行时调试和交互。</strong>不用连仿真器、不用重新编译,直接敲命令就能看线程状态、内存、调用你自己的测试函数。对开发和现场排障极其有用。<strong>它让 RTOS 有了"操作系统"的交互体验</strong>——你在 Linux 终端敲 <code>ps</code>/<code>free</code>/<code>ls</code> 的感觉,FinSH 在 MCU 上提供了迷你版。</p>
+
+<h2 id="s4">27.4 FinSH 如何把 C 函数变成命令</h2>
+<p>最神奇的问题:你写个普通 C 函数,加一行宏,它就变成能在 shell 里敲的命令。怎么做到的?</p>
+<pre><code>/* 写个普通函数 */
+void hello(int argc, char **argv)
+{
+    rt_kprintf("Hello, argc=%d\n", argc);
+}
+/* 加一行宏, 导出成命令 */
+MSH_CMD_EXPORT(hello, say hello);
+
+/* 之后在 msh 里就能: */
+msh> hello a b c
+Hello, argc=4</code></pre>
+<p>原理(巧妙,和第26.9 自动初始化同源):<strong><code>MSH_CMD_EXPORT</code> 宏把函数的信息(函数名、函数指针、帮助字符串)打包成一个结构体,放到一个<em>专门的链接段</em>里。FinSH 启动时遍历这个段,就得到了所有导出命令的表。你敲命令时,FinSH 在这个表里按名字查找,找到就调用对应函数指针,把你敲的参数当 argc/argv 传进去。</strong></p>
+<pre><code>MSH_CMD_EXPORT(hello, ...) 展开后大致:
+  把 { "hello", hello函数指针, "say hello" } 这个结构体
+  用编译器属性放到名为 "FSymTab" 的特殊段里
+
+FinSH 运行:
+  遍历 FSymTab 段 → 得到所有命令的 {名字, 函数指针}
+  用户敲 "hello a b c" → 解析出命令名"hello"和参数
+  → 在表里查到"hello" → 调用其函数指针(argc=4, argv=["hello","a","b","c"])</code></pre>
+<blockquote><p>这个"用链接段收集分散注册的东西"的技巧,你已经在第26.9 的自动初始化(<code>INIT_*_EXPORT</code>)见过——<strong>同一个技巧的复用:把分散在各处的注册信息,通过编译器的"段属性"收集到一个连续的段里,运行时遍历这个段。</strong>好处是<strong>解耦</strong>:添加新命令/新驱动,只要加个宏,不用修改任何中心列表——中心列表由链接器自动生成。<strong>这是 C 语言里非常优雅的"插件式注册"手法,Linux 内核大量使用(initcall、各种 __attribute__((section)))。</strong>你在 RT-Thread 看懂了它,Linux 里再见就是老朋友。</p></blockquote>
+
+<h2 id="s5">27.5 MSH 模式与命令导出</h2>
+<p>FinSH 有两种模式,了解即可:</p>
+<ul>
+  <li><strong>MSH 模式(module shell)</strong>:类似 Linux shell 的用法——<code>命令 参数1 参数2</code>,这是现在的主流。用 <code>MSH_CMD_EXPORT</code> 导出。</li>
+  <li><strong>传统 C-style 模式</strong>:像调用 C 函数——<code>func(1, 2)</code>,可以直接调用函数、访问变量。用 <code>FINSH_FUNCTION_EXPORT</code> 导出。功能强但用起来不像 shell。</li>
+</ul>
+<p>还能导出变量(<code>MSH_CMD_EXPORT</code> 的变体),甚至在 shell 里读写全局变量。<strong>实战建议:用 MSH 模式,给每个功能模块导出几个调试命令(如 <code>motor_test</code>、<code>sensor_read</code>),现场就能敲命令测试,不用改代码重烧——这是 RT-Thread 开发效率的一大来源。</strong></p>
+
+<h2 id="s6">27.6 BSP：板级支持包</h2>
+<p><strong>BSP(Board Support Package,板级支持包)</strong>是"让 RT-Thread 在你这块具体板子上跑起来"的那部分代码。RTOS 内核是通用的,但每块板子的芯片、时钟、引脚、外设都不同,BSP 负责这些板子相关的适配:</p>
+<ul>
+  <li><strong>芯片启动代码</strong>:上电后初始化时钟、中断向量表、内存等(startup 文件)。</li>
+  <li><strong>板级初始化</strong>:配置系统时钟、初始化 UART(给 FinSH 用)、初始化基本外设。</li>
+  <li><strong>驱动移植</strong>:把芯片厂商的 HAL 库对接到 RT-Thread 的设备框架(第26章)。</li>
+  <li><strong>链接脚本</strong>:规定代码/数据/栈/堆在内存里的布局(第五章的内存布局!还有第26/27章的自动初始化段就定义在这)。</li>
+</ul>
+<p>RT-Thread 官方为大量开发板提供了现成 BSP(<code>bsp/</code> 目录),你选一个接近的板子改改就能用。<strong>BSP = 通用内核和具体硬件之间的适配层</strong>,对应第一卷说的"移植层"扩大版(移植层是 CPU 相关,BSP 是整块板子相关)。</p>
+
+<h2 id="s7">27.7 启动流程：从上电到 main</h2>
+<p>把 RT-Thread 从上电到跑起来的完整流程串一遍(和 FreeRTOS 类似但更完整):</p>
+<pre><code>上电
+  │
+① 芯片BootROM → 跳到复位向量 Reset_Handler(BSP启动代码)
+  │
+② Reset_Handler: 初始化栈/时钟/BSS段清零/data段拷贝 → 调 main 之前的 entry
+  │
+③ rtthread_startup()  ← RT-Thread 的启动总入口
+  │  ├─ rt_hw_board_init()    板级初始化(时钟, UART, 堆) → BSP
+  │  ├─ rt_system_scheduler_init()  调度器初始化(就绪表清空)
+  │  ├─ rt_system_timer_init()      定时器初始化
+  │  ├─ rt_application_init()        创建 main 线程!
+  │  │     └─ 自动调用 INIT_*_EXPORT 注册的初始化函数(27.8)
+  │  ├─ rt_system_scheduler_start()  ★启动调度器(不返回)
+  │
+④ 调度器启动 → 切换到最高优先级线程 → 通常是 main 线程
+  │
+⑤ 你的 main() 在一个【线程】里执行!
+     (注意: RT-Thread的main是一个线程, 不是裸机的main)</code></pre>
+<blockquote><p>一个重要认知:<strong>RT-Thread 里你的 <code>main()</code> 是跑在一个线程里的</strong>(<code>main线程</code>),不是裸机那个"永不返回的 main"。这意味着你可以在 main 里正常地创建其他线程、然后 main 线程自己也可以结束(第25章说 RT-Thread 线程可 return)。这和裸机、也和 FreeRTOS(main 里调 vTaskStartScheduler 后不返回)略有不同——RT-Thread 帮你把"启动调度器"这些藏在了 <code>rtthread_startup</code> 里,你只管在 main 线程里写应用逻辑。<strong>这种"让 main 成为一个普通线程"的设计,更接近 Linux(Linux 的 main 也是在一个进程/线程里),又降低了新手的心智负担。</strong></p></blockquote>
+
+<h2 id="s8">27.8 自动初始化机制详解</h2>
+<p>第26.9 提过自动初始化,这里讲全。RT-Thread 用<strong>分级自动初始化</strong>——不同的宏对应不同的初始化时机:</p>
+<pre><code>各级初始化宏(按调用顺序):
+  INIT_BOARD_EXPORT(fn)      最早, 板级(时钟/串口), 调度器启动前
+  INIT_PREV_EXPORT(fn)       纯软件, 无依赖的组件
+  INIT_DEVICE_EXPORT(fn)     外设驱动初始化
+  INIT_COMPONENT_EXPORT(fn)  组件初始化(文件系统/网络...)
+  INIT_ENV_EXPORT(fn)        系统环境(如 shell)
+  INIT_APP_EXPORT(fn)        最后, 应用初始化
+
+原理: 每个宏把函数指针放到不同优先级的链接段;
+      启动时按段的顺序(优先级)依次遍历调用 → 保证初始化顺序正确</code></pre>
+<p>好处:<strong>每个模块/驱动自己声明"我在哪一级初始化",系统启动时自动按级调用,不用在某个中心的 <code>init_all()</code> 里手动列出所有初始化——加个模块只需加个宏,零侵入。</strong>这解决了大型系统"初始化函数越来越多、顺序越来越难管"的问题。<strong>这就是第26章说的"驱动即插即用"的实现,也是 Linux <code>initcall</code> 机制(<code>core_initcall</code>、<code>device_initcall</code> 等分级)的直接对应</strong>——第五卷讲 Linux 启动时你会看到几乎一样的设计。</p>
+
+<h2 id="s9">27.9 第四卷总结：RTOS 到 Linux 的桥</h2>
+<p>第四卷读完,RT-Thread 的价值和它作为"桥梁"的意义,值得总结:</p>
+<table>
+<tr><th>RT-Thread 的设计</th><th>它预习了 Linux 的什么</th></tr>
+<tr><td>内核对象 rt_object + 容器(第25章)</td><td>kobject、统一对象管理</td></tr>
+<tr><td>C 继承(基类作第一成员)</td><td>container_of、内核的"面向对象"</td></tr>
+<tr><td>设备框架 rt_device(第26章)</td><td>file_operations、设备模型、一切皆文件</td></tr>
+<tr><td>control</td><td>ioctl</td></tr>
+<tr><td>SLAB 分配器(本章)</td><td>Linux SLAB/SLUB</td></tr>
+<tr><td>内存池</td><td>固定大小对象缓存</td></tr>
+<tr><td>自动初始化 INIT_EXPORT(本章)</td><td>initcall 分级初始化</td></tr>
+<tr><td>FinSH 命令导出(段收集)</td><td>内核的段属性注册技巧</td></tr>
+</table>
+<blockquote><p><strong>RT-Thread 是精心设计的"从 RTOS 到 Linux 的桥"</strong>:它比 FreeRTOS 多出的每一样东西(对象模型、设备框架、SLAB、分级初始化、段收集),几乎都是 Linux 核心机制的<strong>简化清晰版</strong>。你在这个"小而完整、清晰可读"的系统里,提前理解了 Linux 那些最容易让人迷失的抽象。<strong>现在,你带着 FreeRTOS 的"内核骨架"和 RT-Thread 的"操作系统组件设计",终于可以去啃第五卷 Linux 内核了——那些在 Linux 里看起来吓人的东西(kobject、file_operations、SLAB、initcall、container_of),你都已经见过它们的"预习版",不会再感到陌生。</strong>这正是"FreeRTOS→RT-Thread→Linux"三级台阶的完整意义。</p></blockquote>
+
+<h2 id="s10">27.10 面试常问问题</h2>
+<p><strong>Q1:RT-Thread 有哪些内存管理算法?内存池的优势?</strong><br>小内存算法(≈heap_4)、SLAB(按大小缓存,借自 Linux)、memheap(多块)。内存池预分配固定大小块,分配释放 O(1) 恒定时间、零碎片,是实时系统首选。</p>
+<p><strong>Q2:FinSH 是什么?怎么把 C 函数变成命令?</strong><br>命令行 shell,运行时敲命令调试。MSH_CMD_EXPORT 宏把函数信息放进专门链接段,FinSH 遍历该段建命令表,敲命令时查表调用函数指针。</p>
+<p><strong>Q3:自动初始化机制怎么工作的?</strong><br>INIT_*_EXPORT 宏把初始化函数指针按级放进不同链接段,启动时按段顺序遍历调用。加模块只需加宏,零侵入。对应 Linux initcall。</p>
+<p><strong>Q4:BSP 是什么?包含哪些内容?</strong><br>板级支持包,让内核在具体板子上跑:启动代码、时钟/外设初始化、驱动移植、链接脚本。是通用内核和硬件间的适配层。</p>
+<p><strong>Q5:RT-Thread 的 main 和裸机 main 有什么不同?</strong><br>RT-Thread 的 main 跑在一个 main 线程里(可创建其他线程、可 return),不是裸机那个永不返回的 main;启动调度器等被封装在 rtthread_startup 里。</p>
+<p><strong>Q6:为什么说 RT-Thread 是通往 Linux 的桥?</strong><br>它的对象模型/设备框架/SLAB/分级初始化/段收集,都是 Linux 核心机制的简化版,概念一一对应,学它为读 Linux 内核铺路。</p>
+
+<h2 id="s11">27.11 常见误区</h2>
+<ol>
+  <li><strong>"内存池和普通 malloc 一样"</strong>——内存池块大小固定、O(1)、零碎片,专为确定性设计。</li>
+  <li><strong>"FinSH 命令要在中心列表注册"</strong>——用宏导出,链接器自动收集,不用改中心列表。</li>
+  <li><strong>"自动初始化没有顺序"</strong>——分级(BOARD→PREV→DEVICE→COMPONENT→ENV→APP),按级有序。</li>
+  <li><strong>"BSP 是可有可无的"</strong>——没 BSP 内核跑不起来,它是硬件适配的必需层。</li>
+  <li><strong>"RT-Thread 的 main 是裸机 main"</strong>——它是一个线程,可 return。</li>
+  <li><strong>"SLAB 是 RT-Thread 独创"</strong>——借自 Linux,思想是按大小分类的对象缓存。</li>
+</ol>
+
+<h2 id="s12">27.12 本章总结</h2>
+<ul>
+  <li>内存管理:小内存算法(≈heap_4)、<strong>SLAB</strong>(借自 Linux)、memheap(多块);接口 rt_malloc/rt_free。</li>
+  <li><strong>内存池</strong>:固定大小块,分配释放 O(1)、零碎片,实时系统动态内存首选。</li>
+  <li><strong>FinSH</strong>:命令行 shell,运行时调试(list_thread/free/自定义命令);<code>MSH_CMD_EXPORT</code> 用<strong>链接段收集</strong>把 C 函数变命令。</li>
+  <li><strong>自动初始化</strong>:INIT_*_EXPORT 分级(BOARD→...→APP),段收集+遍历调用,零侵入(≈Linux initcall)。</li>
+  <li><strong>BSP</strong>:板级支持包(启动代码/时钟外设初始化/驱动移植/链接脚本),通用内核与硬件的适配层。</li>
+  <li>启动:rtthread_startup → 板级初始化 → 调度器/定时器初始化 → 创建 <strong>main 线程</strong> → 启动调度器;main 是个线程。</li>
+  <li><strong>第四卷收束</strong>:RT-Thread 的对象模型/设备框架/SLAB/分级初始化/段收集,都是 <strong>Linux 核心机制的简化预习版</strong>,是 RTOS 到 Linux 的桥。</li>
+</ul>
+
+<h2 id="s13">27.13 思维导图 / 课后题</h2>
+<pre><code>RT-Thread 内存/FinSH/BSP
+├─ 一、内存算法:小内存(≈heap4)/SLAB(借自Linux)/memheap
+├─ 二、★内存池:固定块, O(1), 零碎片(实时首选)
+├─ 三、FinSH:命令行shell, 运行时调试
+├─ 四、★MSH_CMD_EXPORT: 段收集把C函数变命令
+├─ 五、MSH模式 vs C-style; 导出命令/变量
+├─ 六、BSP:启动码/时钟外设/驱动移植/链接脚本
+├─ 七、启动:rtthread_startup→板级→调度器→main线程
+│  └─ main是一个线程(可return)
+├─ 八、自动初始化:INIT_EXPORT分级(≈Linux initcall)
+└─ 九、★第四卷总结:RT-Thread是RTOS到Linux的桥
+    对象/设备框架/SLAB/initcall/段收集 全是Linux预习</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>用 rt_mp_create 创建内存池,多线程反复 alloc/free,对比 rt_malloc,理解 O(1) 和零碎片。</li>
+  <li>写一个函数用 MSH_CMD_EXPORT 导出成命令,在 msh 里敲它并传参数,验证 argc/argv。</li>
+  <li>查链接脚本(如 <code>link.lds</code>),找到 FSymTab(命令段)和 rti_fn(初始化段)的定义,理解段收集。</li>
+  <li>给某模块加一个 INIT_APP_EXPORT 初始化函数,加打印,验证它开机被自动调用,及调用顺序。</li>
+  <li>在一个 BSP 里找 rt_hw_board_init 和链接脚本,理解板级初始化和内存布局。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>内存池相比通用 malloc 的优势?为什么适合实时系统?</li>
+  <li>FinSH 如何把一个 C 函数变成 shell 命令?</li>
+  <li>自动初始化机制的原理?为什么能"零侵入"添加模块?</li>
+  <li>BSP 包含哪些内容?它的作用?</li>
+  <li>RT-Thread 的 main 和裸机 main 有何不同?</li>
+  <li>举例说明 RT-Thread 的哪些设计是 Linux 机制的预习。</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第廿七章 完 · <strong>第四卷《RT-Thread 源码》全部完成</strong> · 下一卷《Linux 内核》(本书重头戏)</p>
+<div class="nav">
+  <a href="第26章-RTThread-IPC与设备框架.html">← 第廿六章</a>
+  <a href="index.html">目录</a>
+  <a href="第28章-Linux内核总览与task_struct.html">第二十八章 →</a>
+</div>
+
+</div>
+</body>
+</html>

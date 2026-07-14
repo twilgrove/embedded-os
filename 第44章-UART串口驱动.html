@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第四十四章 UART 串口驱动</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第43章-中断驱动与DMA.html">← 第四十三章</a>
+  <a href="index.html">目录</a>
+  <a href="第45章-I2C驱动.html">第四十五章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第六卷 · Linux 驱动</div>
+  <h1>第四十四章 UART 串口驱动</h1>
+  <div class="sub">最古老可靠的通信,和 tty 这层厚抽象</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">UART 是什么</a></li>
+    <li><a href="#s2">生活例子:一根线上打摩斯电码</a></li>
+    <li><a href="#s3">帧格式与波特率</a></li>
+    <li><a href="#s4">UART 硬件:寄存器与 FIFO</a></li>
+    <li><a href="#s5">tty 子系统:串口之上的厚抽象</a></li>
+    <li><a href="#s6">tty 的分层</a></li>
+    <li><a href="#s7">line discipline:规范模式与原始模式</a></li>
+    <li><a href="#s8">serial 驱动框架:uart_driver/uart_port</a></li>
+    <li><a href="#s9">收发流程串联</a></li>
+    <li><a href="#s10">用户空间用串口(termios)</a></li>
+    <li><a href="#s11">回扣分层思想与实战</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:UART(串口)是嵌入式最常用、最"接地气"的通信方式——调试打印、接 GPS/传感器/无线模块都靠它。你在 STM32 上用过 UART。这章讲 <strong>Linux 的串口驱动</strong>,重点是理解串口之上那层出乎意料"厚"的抽象——<strong>tty 子系统</strong>(为什么 <code>cat /dev/ttyS0</code> 能用、Ctrl+C 怎么变成信号)。这是"分层抽象"思想在驱动里最丰富的一个例子。</p></blockquote>
+
+<h2 id="s1">44.1 UART 是什么</h2>
+<p><strong>UART = Universal Asynchronous Receiver/Transmitter(通用异步收发器)。</strong>它实现最简单的串行通信:<strong>用两根线(TX 发送、RX 接收)一位一位地传数据。</strong></p>
+<ul>
+  <li><strong>串行</strong>:数据一个 bit 接一个 bit 地传(不像并行用多根线同时传多位),省线。</li>
+  <li><strong>异步</strong>:收发双方<strong>没有共享时钟线</strong>,靠事先约定的速率(波特率)各自计时。这是它和 SPI/I2C(有时钟线)的关键区别。</li>
+  <li><strong>全双工</strong>:TX 和 RX 独立,能同时收和发。</li>
+</ul>
+<p><strong>UART 的特点是简单、可靠、线少(TX/RX/GND 三根)。</strong>缺点是速率不高(通常几百 Kbps 到几 Mbps)、点对点(一对一,不像 I2C 能挂多个设备)。<strong>它是嵌入式的"万金油":几乎所有板子都有串口做调试控制台(printk 输出、shell),GPS、4G 模块、很多传感器也用 UART。</strong>飞控和很多模块间通信都有 UART。</p>
+
+<h2 id="s2">44.2 生活例子：一根线上打摩斯电码</h2>
+<p>想象两个人隔墙用一根绳子传消息:约定好"一秒拉一下代表一个信号"(波特率)。发送方按约定的节奏拉绳子(TX 发 bit),接收方按同样的节奏数拉动次数解读(RX 收 bit)。<strong>关键:没有第三根"节拍绳"(时钟线),双方全靠事先约好的节奏(波特率)各自计时——这就是"异步"。</strong></p>
+<p>如果双方节奏对不上(波特率不一致),接收方就会数错、解读出乱码——<strong>这就是串口调试时最常见的问题"波特率设错=满屏乱码"。</strong>为了让接收方知道"一个字符从哪开始",约定每个字符前先拉一下特殊的"起始信号"(起始位),字符后拉一下"结束信号"(停止位)。这套约定就是 UART 的帧格式(下一节)。</p>
+
+<h2 id="s3">44.3 帧格式与波特率</h2>
+<p>UART 传一个字符,包成一个"帧",格式固定(串口配置就是配这些):</p>
+<pre><code>UART 一个字符帧:
+   空闲(高)  起始位  数据位(5-8, 常8)      校验位  停止位  空闲
+   ─────┐  ┌──────────────────────┐      ┌──┐  ┌────────
+        └──┘ D0 D1 D2 D3 D4 D5 D6 D7 └──┘...
+        起始   低电平一位, 通知"要开始了"      可选   1-2位高
+
+  配置串口 = 约定这几项(双方必须一致):
+   ① 波特率 baud: 每秒多少bit (9600/115200/...) ★最易错
+   ② 数据位: 通常8
+   ③ 校验位: 无/奇/偶 (parity)
+   ④ 停止位: 1 或 2
+  常写作 "115200 8N1" = 波特率115200, 8数据位, 无校验(N), 1停止位</code></pre>
+<p><strong>波特率是最关键、最易错的参数</strong>:它决定每个 bit 持续多久,收发双方必须完全一致,差一点就解读错位、满屏乱码。<strong>"115200 8N1" 是最常见配置</strong>(115200 波特、8 数据位、无校验、1 停止位)。起始位让接收方知道"字符开始了"(从空闲的高电平跳到低),停止位标志字符结束。理解帧格式,你就明白串口配置每一项的含义,调串口不再靠蒙。</p>
+
+<h2 id="s4">44.4 UART 硬件：寄存器与 FIFO</h2>
+<p>UART 控制器在硬件上也是一组寄存器(和 STM32 类似):</p>
+<pre><code>UART控制器核心寄存器(简化):
+  ├─ 数据寄存器(TX/RX): 写=发一个字节, 读=收一个字节
+  ├─ 波特率寄存器: 设波特率(由时钟分频得到)
+  ├─ 控制寄存器: 数据位/校验/停止位, 使能中断
+  ├─ 状态寄存器: 发送空?接收有数据?出错?
+  └─ ★FIFO: 收/发各一个小硬件缓冲队列(如16/32字节)
+
+  FIFO的作用: 硬件先缓冲几个字节, 不用每收到1字节就中断CPU一次
+             → 收满一批(或超时)才中断, 大大减少中断次数(减负)</code></pre>
+<p><strong>FIFO 是 UART 性能的关键</strong>:没有 FIFO,每收发 1 字节就要中断 CPU 一次(115200 波特每秒上万次中断,CPU 吃不消)。有了 FIFO(硬件小队列),<strong>攒够一批字节(如 16 个)或超时才中断一次</strong>,中断次数降低十几倍。<strong>这是第43章"减少中断开销"思想的硬件体现</strong>——用硬件缓冲批量化,减少中断。更大数据量还会配 DMA(第43章),FIFO+DMA 让高速串口几乎不占 CPU。这些寄存器操作,在 Linux 里被封装在 serial 驱动框架里(44.8)。</p>
+
+<h2 id="s5">44.5 tty 子系统：串口之上的厚抽象</h2>
+<p>这是本章最重要、最容易让人惊讶的部分。你 <code>cat /dev/ttyS0</code> 读串口,看似简单,但请求经过了一层<strong>非常厚</strong>的抽象——<strong>tty 子系统</strong>。</p>
+<blockquote><p><strong>为什么串口的抽象这么厚?因为历史上"终端"(terminal,tty=teletypewriter 电传打字机)是人机交互的核心</strong>——早期用户通过串口连接的终端(键盘+屏幕)登录使用 Unix。所以串口不只是"传字节",还要处理一大堆<strong>终端交互</strong>的事:你按 <kbd>Ctrl+C</kbd> 要变成 SIGINT 信号(第33章)杀掉程序、按退格键要删字符、输入的字符要"回显"到屏幕、按回车要换行……<strong>这些"终端行为"都由 tty 子系统处理,它夹在串口硬件和应用之间。</strong>结果就是:一个简单的串口设备,上面盖了 tty 这层为"终端交互"服务的厚抽象。即使你只是用串口传数据(不当终端),数据也要穿过这层(可以配置成"原始模式"让它少插手,见 44.7)。理解 tty,才明白为什么串口驱动比 GPIO 复杂得多——它背负着 Unix 终端的历史。</p></blockquote>
+
+<h2 id="s6">44.6 tty 的分层</h2>
+<p>tty 子系统内部也是分层的,把一次串口读写的路径画出来:</p>
+<pre><code>应用 (cat / 你的程序)
+   │ read/write (VFS, 第32章)
+   ▼
+┌──────────────────────────────────┐
+│ tty 核心 (tty_core)                │  统一的tty设备管理
+├──────────────────────────────────┤
+│ line discipline (线路规程) ★        │  处理终端行为:
+│   规范模式: 行编辑、回显、Ctrl+C→信号  │  ← "字符怎么解释"
+│   原始模式: 原样透传                  │
+├──────────────────────────────────┤
+│ tty driver (串口驱动 serial)         │  真正操作UART硬件
+├──────────────────────────────────┤
+│      UART 硬件 (FIFO/寄存器)          │
+└──────────────────────────────────┘</code></pre>
+<p><strong>三层:tty 核心(设备管理)、line discipline(线路规程,处理终端行为)、tty driver(具体硬件驱动)。</strong>数据从应用往下穿过每一层。<strong>最关键、最独特的是中间的 line discipline 层</strong>——它决定"字符怎么被解释"(是当命令行编辑,还是原样透传)。你写串口驱动,主要实现最底层的 tty driver(操作 UART 硬件);上面 tty 核心和 line discipline 是内核通用的,你复用即可。<strong>这个分层让"终端逻辑"和"硬件驱动"解耦</strong>——同一套 line discipline 逻辑能用在串口、伪终端、USB 转串口等各种 tty 设备上。</p>
+
+<h2 id="s7">44.7 line discipline：规范模式与原始模式</h2>
+<p>line discipline(线路规程)是 tty 的灵魂,它有两种主要模式,决定串口的行为(嵌入式必懂):</p>
+<table>
+<tr><th></th><th>规范模式 canonical(默认)</th><th>原始模式 raw</th></tr>
+<tr><td>处理方式</td><td>按"行"处理:行编辑、回显、特殊键解释</td><td>字符原样透传,不加工</td></tr>
+<tr><td>回车/退格</td><td>退格删字符、回车才把整行交给应用</td><td>不处理,原样给应用</td></tr>
+<tr><td>Ctrl+C</td><td>转成 SIGINT 信号(第33章)</td><td>当普通字符 0x03 传过去</td></tr>
+<tr><td>回显</td><td>输入的字符自动显示到屏幕</td><td>不回显</td></tr>
+<tr><td>适合</td><td>人交互的命令行/控制台</td><td><strong>传二进制数据/接模块</strong>(GPS/传感器)</td></tr>
+</table>
+<blockquote><p><strong>这两种模式是嵌入式串口开发最重要的知识点:</strong><strong>规范模式</strong>为"人用命令行"设计——你在串口控制台敲命令,退格能删、按回车整行提交、Ctrl+C 能中断程序、输入有回显。<strong>原始模式</strong>为"程序传数据"设计——原样透传每个字节,不做任何加工。<strong>关键坑:如果你用串口接 GPS 或传感器(传二进制数据),必须切到原始模式!</strong>否则规范模式会把数据里恰好等于 0x03(Ctrl+C)的字节变成信号、把 0x0D 当回车处理、把 0x7F 当退格删掉——<strong>数据被"终端逻辑"篡改,导致协议解析全乱。</strong>无数人栽在"串口收传感器数据总是丢字节/错乱",原因就是没切原始模式。<strong>用 termios(44.10)的 <code>cfmakeraw()</code> 切原始模式,是嵌入式串口传数据的必备操作。</strong>理解这两种模式,你就避开了串口开发最大的坑。</p></blockquote>
+
+<h2 id="s8">44.8 serial 驱动框架：uart_driver / uart_port</h2>
+<p>写 UART 硬件驱动,用内核的 <strong>serial 驱动框架</strong>(serial_core),它已经帮你接好了 tty 层,你只需实现操作硬件的部分:</p>
+<pre><code>serial驱动的核心结构:
+  struct uart_driver  —— 代表这个串口驱动(注册一次)
+  struct uart_port    —— 代表一个具体串口(每个ttyS一个)
+  struct uart_ops     —— ★你要实现的硬件操作函数集:
+      .startup    打开串口(使能、申请中断)
+      .shutdown   关闭
+      .set_termios 配置波特率/数据位/校验(应用改配置时调)
+      .start_tx   开始发送(把数据写进FIFO)
+      .tx_empty   发送是否完成
+      // 接收通常在中断里: 从FIFO读数据 → 交给tty层
+
+  你实现uart_ops + 注册 → tty层自动创建/dev/ttySx</code></pre>
+<p><strong>serial 框架是又一个"填操作函数表"的驱动模型</strong>(和第39章 file_operations、第42章 gpiod 同理):你实现 <code>uart_ops</code> 里那些操作硬件的函数(开关串口、配波特率、发数据、收数据),注册给框架,框架自动接上 tty 层、创建 <code>/dev/ttySx</code> 设备节点。<strong>你不用管 tty 核心和 line discipline(框架/内核已实现),只管操作你这款 UART 硬件的寄存器/FIFO/中断/DMA。</strong>这就是子系统框架的价值:通用的复杂部分(tty 整套)内核包了,你只填硬件相关的一小块。<code>set_termios</code> 尤其重要——应用改波特率时框架调它,你在里面写波特率寄存器。</p>
+
+<h2 id="s9">44.9 收发流程串联</h2>
+<p>把一次串口收发从应用到硬件走通,串起前面所有:</p>
+<pre><code>发送 write("/dev/ttyS0", "hi"):
+  应用write → VFS → tty核心 → line discipline(加工或透传)
+  → serial框架 → 你的.start_tx → 写UART FIFO寄存器 → TX线发出
+
+接收 (串口来数据):
+  RX线收到数据 → UART FIFO攒够/超时 → 触发【中断】(第43章)
+  → 你的ISR: 从FIFO读字节 → tty_insert_flip_...交给tty层
+  → line discipline加工(规范模式行编辑/原始模式透传)
+  → 放tty读缓冲 → 唤醒阻塞在read的应用(第30章)
+  → 应用read拿到数据</code></pre>
+<p><strong>这条链把全卷串起来</strong>:VFS(第32章)→ tty 分层(本章)→ serial 框架 → 硬件寄存器/FIFO → 中断(第43章)→ line discipline 加工 → 唤醒进程(第30章)。<strong>接收走中断</strong>(数据异步到来),<strong>发送通常应用主动触发</strong>。高速时收发都可配 DMA(第43章)减少中断和 CPU 占用。看懂这条链,你就理解了"敲一个字符从键盘到程序、程序打印到串口"的完整旅程。</p>
+
+<h2 id="s10">44.10 用户空间用串口（termios）</h2>
+<p>实际工程中,你多数时候是在<strong>用户空间</strong>用串口(不写内核驱动),通过 <code>/dev/ttySx</code> + <strong>termios</strong> 配置:</p>
+<pre><code>#include &lt;termios.h&gt;
+int fd = open("/dev/ttyS0", O_RDWR | O_NOCTTY);
+struct termios tio;
+tcgetattr(fd, &tio);
+cfsetispeed(&tio, B115200);      // 设波特率
+cfsetospeed(&tio, B115200);
+cfmakeraw(&tio);                 // ★切原始模式(传数据必做!)
+tcsetattr(fd, TCSANOW, &tio);
+
+write(fd, "AT\r\n", 4);          // 发命令(如给4G模块)
+char buf[64];
+int n = read(fd, buf, sizeof(buf));  // 收数据</code></pre>
+<p><strong><code>termios</code> 是用户空间配置串口的标准接口</strong>:设波特率(<code>cfsetispeed</code>)、数据位/校验/停止位、以及<strong>最关键的模式</strong>——<code>cfmakeraw()</code> 一键切到原始模式。<strong>再强调:接 GPS/传感器/模块传数据,一定要 <code>cfmakeraw</code> 切原始模式</strong>(44.7 的坑)。配置好后就 <code>read</code>/<code>write</code> 收发。<strong>这是嵌入式/ROS2 里最常见的串口用法</strong>——接模块、读传感器,很多是这样在应用层用 termios 操作串口,不用写内核驱动。掌握 termios + 原始模式,你就能搞定绝大多数串口通信任务。</p>
+
+<h2 id="s11">44.11 回扣分层思想与实战</h2>
+<p>UART 这章的知识连接:</p>
+<table>
+<tr><th>本章概念</th><th>连接到</th></tr>
+<tr><td>UART 帧/波特率/FIFO</td><td>STM32 UART 经验</td></tr>
+<tr><td>tty 多层抽象</td><td>第32章 VFS 分层、第34章网络分层</td></tr>
+<tr><td>Ctrl+C → SIGINT</td><td>第33章信号</td></tr>
+<tr><td>接收走中断/FIFO/DMA</td><td>第43章中断与 DMA</td></tr>
+<tr><td>serial 框架填 uart_ops</td><td>第39章 file_operations、第42章 gpiod(填表模型)</td></tr>
+<tr><td>唤醒阻塞的 read</td><td>第30章调度、进程唤醒</td></tr>
+</table>
+<blockquote><p><strong>UART 是理解"Linux 驱动为什么比裸机复杂"最好的案例。</strong>在 STM32 里,你几行代码就配好 UART 收发(直接操作寄存器)。在 Linux 里,同样的串口盖了 tty 这么厚一层——但这层不是白加的:<strong>它让串口能同时服务"人机交互终端"(需要行编辑、信号、回显)和"数据传输"(原始模式),让同一套上层逻辑(shell、cat、termios)适配所有 tty 设备(硬件串口、USB 转串口、伪终端、网络终端)。</strong>代价是复杂,收益是通用和功能丰富。<strong>而对你实际工作最有用的一条:传数据务必用原始模式(cfmakeraw)</strong>——这一条能帮你避开嵌入式串口开发 90% 的坑。<strong>tty 也是本书"分层抽象"主题最极致的一个例子:一层套一层,每层解决一类问题,是理解复杂系统设计的绝佳教材。</strong></p></blockquote>
+
+<h2 id="s12">44.12 面试常问问题</h2>
+<p><strong>Q1:UART 的特点?和 SPI/I2C 的关键区别?</strong><br>通用异步收发,TX/RX 两线串行传输、全双工、简单可靠线少。关键区别:UART <strong>异步</strong>(无共享时钟线,靠波特率各自计时);SPI/I2C 有时钟线(同步)。</p>
+<p><strong>Q2:串口配置有哪些参数?哪个最易错?</strong><br>波特率、数据位、校验位、停止位(如 115200 8N1)。波特率最易错——收发必须一致,否则乱码。</p>
+<p><strong>Q3:UART 的 FIFO 有什么用?</strong><br>硬件缓冲队列,攒够一批字节或超时才中断一次,大幅减少中断次数,减轻 CPU 负担。高速再配 DMA。</p>
+<p><strong>Q4:tty 子系统是什么?为什么串口抽象这么厚?</strong><br>tty 是终端子系统,处理终端交互(行编辑、回显、Ctrl+C→信号等)。因历史上终端是 Unix 人机交互核心,串口要承担终端职责,故抽象厚。分三层:tty 核心、line discipline、tty driver。</p>
+<p><strong>Q5:规范模式和原始模式的区别?接传感器该用哪个?★</strong><br>规范模式:行编辑、回显、Ctrl+C 转信号、按行提交(适合人用命令行)。原始模式:字符原样透传不加工。接传感器/模块传二进制数据必须用原始模式(cfmakeraw),否则数据里的特殊字节被终端逻辑篡改致错乱。</p>
+<p><strong>Q6:写 UART 驱动实现什么?</strong><br>用 serial 框架,实现 uart_ops(startup/shutdown/set_termios/start_tx 等操作硬件的函数),注册后框架自动接 tty 层、建 /dev/ttySx。tty 核心和 line discipline 复用内核的。</p>
+<p><strong>Q7:用户空间怎么用串口?</strong><br>open /dev/ttySx，用 termios 配波特率和模式(cfmakeraw 切原始模式),再 read/write。接模块/传感器常这样在应用层用。</p>
+
+<h2 id="s13">44.13 常见误区</h2>
+<ol>
+  <li><strong>"UART 有时钟线"</strong>——没有,靠波特率异步计时;有时钟线的是 SPI/I2C。</li>
+  <li><strong>"波特率随便设"</strong>——收发必须一致,否则乱码。</li>
+  <li><strong>"串口就是简单传字节"</strong>——默认经 tty 规范模式,会做行编辑/信号等加工。</li>
+  <li><strong>"接传感器用默认模式没问题"</strong>——大坑!必须 cfmakeraw 切原始模式,否则数据被篡改。</li>
+  <li><strong>"每收一字节中断一次"</strong>——用 FIFO 批量中断,高速再加 DMA。</li>
+  <li><strong>"写 UART 驱动要自己实现 tty 逻辑"</strong>——只实现 uart_ops 操作硬件,tty 层复用内核的。</li>
+</ol>
+
+<h2 id="s14">44.14 本章总结</h2>
+<ul>
+  <li><strong>UART</strong>:TX/RX 两线<strong>串行、异步(无时钟线,靠波特率)、全双工</strong>;简单可靠线少,嵌入式万金油(调试台、GPS、模块)。</li>
+  <li>帧格式:起始位+数据位+校验+停止位;配置=<strong>波特率(最易错)</strong>+数据位+校验+停止位(如 115200 8N1)。</li>
+  <li>硬件:数据/波特率/控制/状态寄存器 + <strong>FIFO</strong>(批量缓冲减中断);高速配 DMA。</li>
+  <li><strong>tty 子系统</strong>:串口之上的厚抽象(历史上终端是人机交互核心)。三层:<strong>tty 核心 / line discipline / tty driver</strong>。</li>
+  <li><strong>line discipline 两模式★</strong>:<strong>规范模式</strong>(行编辑/回显/Ctrl+C→信号,人用命令行)vs <strong>原始模式</strong>(原样透传,<strong>传数据必用</strong>)。</li>
+  <li>驱动:用 <strong>serial 框架</strong>,实现 <strong>uart_ops</strong>(startup/set_termios/start_tx…),框架自动接 tty 层建 /dev/ttySx。</li>
+  <li>收发链:应用 read/write → tty 分层 → serial → 硬件 FIFO;接收走中断,唤醒进程。</li>
+  <li>用户空间:<strong>termios</strong> 配波特率和模式,<strong><code>cfmakeraw</code> 切原始模式(避串口传数据最大坑)</strong>,再 read/write。</li>
+</ul>
+
+<h2 id="s15">44.15 思维导图 / 课后题</h2>
+<pre><code>UART 串口驱动
+├─ 一、UART:TX/RX串行·★异步(无时钟线,靠波特率)·全双工
+├─ 二、帧:起始+数据+校验+停止; 配置=★波特率+8N1
+├─ 三、硬件:数据/波特率/状态寄存器 + ★FIFO(批量减中断)+DMA
+├─ 四、★tty子系统(厚抽象, 因终端是Unix人机交互核心)
+│      三层:tty核心 / line discipline / tty driver
+├─ 五、★★line discipline两模式:
+│      规范(行编辑/回显/Ctrl+C→信号) vs 原始(透传, 传数据必用)
+├─ 六、serial框架:实现uart_ops(startup/set_termios/start_tx)→自动建ttySx
+├─ 七、收发链:应用read/write→tty分层→serial→FIFO; 接收走中断
+├─ 八、用户空间:termios配波特率+★cfmakeraw原始模式→read/write
+└─ 九、回扣:tty=分层抽象最极致例; 传数据用原始模式避90%坑</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li><code>ls /dev/ttyS* /dev/ttyUSB*</code> 看串口设备;<code>dmesg | grep tty</code> 看串口注册和控制台。</li>
+  <li>用两个 USB 转串口对接(或 loopback 短接 TX-RX),<code>stty -F /dev/ttyUSB0 115200</code> 配波特率,一端 <code>cat</code> 一端 <code>echo >`,收发数据。</li>
+  <li>写 44.10 的 termios 程序:分别用默认模式和 cfmakeraw 收发含 0x03/0x0D/0x7F 的二进制数据,观察默认模式下数据被篡改,理解为什么传数据要原始模式。</li>
+  <li><code>stty -F /dev/ttyUSB0 -a</code> 查看当前串口的所有 termios 设置(波特率、模式、各特殊字符),对照规范/原始模式。</li>
+  <li>读内核 <code>drivers/tty/serial/8250/</code> 或 <code>serial-rockchip</code>,找到 uart_ops 的实现(start_tx/set_termios)和中断里收数据交给 tty 的代码。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>UART 的特点?为什么说它是"异步"?和 SPI/I2C 的区别?</li>
+  <li>串口配置参数有哪些?为什么波特率不一致会乱码?</li>
+  <li>FIFO 的作用?怎么减少中断?</li>
+  <li>tty 子系统是什么?为什么串口抽象这么厚?分几层?</li>
+  <li>规范模式和原始模式的区别?接传感器该用哪个?为什么?</li>
+  <li>写 UART 驱动主要实现什么?tty 层要自己写吗?</li>
+  <li>用户空间怎么配置和使用串口?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第四十四章 完 · 下一章《第四十五章 I2C 驱动》</p>
+<div class="nav">
+  <a href="第43章-中断驱动与DMA.html">← 第四十三章</a>
+  <a href="index.html">目录</a>
+  <a href="第45章-I2C驱动.html">第四十五章 →</a>
+</div>
+
+</div>
+</body>
+</html>

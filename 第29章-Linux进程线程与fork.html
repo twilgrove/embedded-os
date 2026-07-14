@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第廿九章 进程、线程与 fork/exec/clone</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第28章-Linux内核总览与task_struct.html">← 第廿八章</a>
+  <a href="index.html">目录</a>
+  <a href="第30章-Linux调度器与CFS.html">第三十章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第五卷 · Linux 内核</div>
+  <h1>第廿九章 进程、线程与 fork/exec/clone</h1>
+  <div class="sub">一个进程如何"分裂"出另一个，又如何"变身"成别的程序</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">进程从哪来:一切进程的祖先</a></li>
+    <li><a href="#s2">fork:进程的"分裂繁殖"</a></li>
+    <li><a href="#s3">fork 一次返回两次</a></li>
+    <li><a href="#s4">写时复制:fork 快的秘密</a></li>
+    <li><a href="#s5">exec:进程的"灵魂替换"</a></li>
+    <li><a href="#s6">fork + exec:shell 启动程序的真相</a></li>
+    <li><a href="#s7">clone:fork 和线程的统一底层</a></li>
+    <li><a href="#s8">线程创建:pthread_create → clone</a></li>
+    <li><a href="#s9">copy_process:创建的核心</a></li>
+    <li><a href="#s10">进程退出与回收:exit 与 wait</a></li>
+    <li><a href="#s11">回扣 RTOS:创建任务的对比</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：RTOS 里创建任务是 <code>xTaskCreate</code>——直接给个函数和栈。Linux 完全不同:它用 <strong>fork(分裂出一个自己的副本)+ exec(把副本变成别的程序)</strong> 这套独特机制。这一章讲清 fork/exec/clone 三个系统调用、写时复制、以及"线程和进程底层都是 clone"的统一。这是 Linux 进程管理最核心、面试最高频的部分。学完你要能讲清"shell 敲一个命令,系统怎么把程序跑起来"。</p></blockquote>
+
+<h2 id="s1">29.1 进程从哪来：一切进程的祖先</h2>
+<p>RTOS 里任务凭空 <code>xTaskCreate</code> 出来。Linux 不一样:<strong>Linux 里新进程只能由已有进程"分裂"产生</strong>(除了开机时内核手工造的第一个)。所以所有进程构成一棵树:</p>
+<pre><code>进程树(所有进程的家谱):
+
+  内核启动 → 手工创建 PID 1 (init/systemd)  ← 树根, 一切进程的祖先
+                │ fork
+      ┌─────────┼─────────┐
+    getty     sshd      各种服务
+      │fork      │fork
+    login     bash(你的shell)
+                │fork
+              你敲的命令(ls, gcc...)</code></pre>
+<p>PID 1(init/systemd)是内核唯一"凭空造"的进程,之后所有进程都是通过 <strong>fork</strong> 从已有进程分裂出来的。<strong>"进程只能由进程创建"是 Linux 的基本模型</strong>——这和 RTOS "任务随便建"不同,也带来了进程树、父子关系、回收等一整套语义(第28章的 parent/children)。</p>
+
+<h2 id="s2">29.2 fork：进程的"分裂繁殖"</h2>
+<p><code>fork()</code> 是 Linux 创建进程的核心,行为很反直觉:<strong>它把当前进程完整复制一份,产生一个几乎一模一样的子进程。</strong>就像细胞分裂——一个变两个,两个几乎相同。</p>
+<pre><code>pid_t pid = fork();
+
+fork 做的事: 复制父进程, 产生子进程
+  子进程复制了父进程的:
+    - 地址空间(代码/数据/堆/栈的内容) —— 但用写时复制(29.4)
+    - 打开的文件描述符
+    - 当前工作目录、信号处理设置、环境变量...
+  子进程有自己新的:
+    - PID(不同的进程号)
+    - parent 指向父进程
+    - 独立的地址空间(逻辑上, 物理上先共享)</code></pre>
+<p>复制出来的子进程,<strong>从 fork 返回的下一行开始执行</strong>(不是从头!),拥有和父进程当时几乎相同的状态。这就是"分裂繁殖":不是造一个空白进程,而是克隆一个现有的。<strong>为什么这么设计?</strong>因为这样简单而强大——子进程继承了父进程的一切环境(打开的文件、变量),配合 exec 能实现极灵活的进程创建(29.6)。</p>
+
+<h2 id="s3">29.3 fork 一次返回两次</h2>
+<p>fork 最让新手困惑、面试最爱考的一点:<strong>fork 调用一次,却返回两次</strong>——在父进程里返回一次,在子进程里返回一次。返回值用来区分你是谁:</p>
+<pre><code>pid_t pid = fork();
+if (pid > 0) {
+    // ★ 父进程执行这里: fork 返回【子进程的PID】(正数)
+    printf("我是父进程, 我的孩子是 %d\n", pid);
+} else if (pid == 0) {
+    // ★ 子进程执行这里: fork 返回 【0】
+    printf("我是子进程\n");
+} else {
+    // fork 失败(返回-1)
+}
+// 父子进程都会执行到这里(各自独立)</code></pre>
+<p>为什么一次调用返回两次?因为 <strong>fork 之后,内存里有了两个进程</strong>,它们都从 fork 返回处继续跑。fork 在<strong>父进程</strong>里返回子进程的 PID(让父进程知道孩子是谁),在<strong>子进程</strong>里返回 0(子进程想知道父进程用 <code>getppid()</code>)。<strong>同一行 <code>pid = fork()</code>,在两个进程里给 pid 赋了不同的值,于是 if/else 让父子走了不同的分支——这就是"一次调用,两个进程,两种返回"。</strong></p>
+<blockquote><p>理解这点的关键:<strong>fork 后就是两个独立的进程在各自的地址空间里跑同一份代码</strong>,只是 fork 的返回值不同。它们之后互不影响(改各自的变量,对方看不到,因为地址空间独立——第九、十章的隔离)。这和 RTOS 完全不同(RTOS 任务共享地址空间)。<strong>"fork 一次返回两次"是理解 Unix 进程模型的第一道坎,跨过去就豁然开朗。</strong></p></blockquote>
+
+<h2 id="s4">29.4 写时复制：fork 快的秘密</h2>
+<p>fork 要"复制整个地址空间",如果父进程用了 2GB 内存,复制 2GB 岂不很慢?<strong>这里正是第十章讲的写时复制(COW)大显身手的地方!</strong>回顾第十章 10.7:</p>
+<pre><code>fork 时【不真正复制内存】:
+  父子进程的页表都指向【同一批物理页】, 标记为只读
+
+  父进程页表 ─┐
+              ├→ 同一批物理页(只读)   ← 不复制! 共享!
+  子进程页表 ─┘
+
+任何一方要【写】某页时:
+  → 写只读页 → 触发缺页异常(第九章权限位)
+  → 内核这时才复制那一页, 给写的人一份私有可写副本
+  → 只复制"被修改的页", 没改的一直共享</code></pre>
+<p>所以 <strong>fork 几乎瞬间完成</strong>(只复制页表,不复制数据),内存也极省(大量只读页父子共享,尤其代码段永远共享)。这就是第十章埋的伏笔在进程创建里的落地。<strong>COW 让"复制整个进程"这个昂贵操作变得廉价——这是 Unix fork 模型能高效工作的技术基石。</strong>如果没有 COW,fork 这种"先完整复制再可能立刻 exec 替换掉"的模型会浪费巨大,根本不实用。</p>
+
+<h2 id="s5">29.5 exec：进程的"灵魂替换"</h2>
+<p>fork 造出的子进程是父进程的副本,跑的还是父进程的代码。但我们通常想让子进程跑<strong>别的程序</strong>(比如 shell fork 后想跑 <code>ls</code>)。这就要 <strong><code>exec</code></strong>——它<strong>把当前进程的"内容"整个换成另一个程序,但进程本身(PID 等)不变。</strong></p>
+<pre><code>execl("/bin/ls", "ls", "-l", NULL);   // 把当前进程变成 ls 程序
+
+exec 做的事:
+  - 丢弃当前进程的地址空间(旧代码、数据、堆、栈全扔掉)
+  - 加载新程序(/bin/ls)的代码和数据到地址空间
+  - 从新程序的入口开始执行
+  - 但保留: PID、父子关系、打开的文件描述符(默认)、...
+
+关键: exec 成功后【不返回】! 因为原来的代码已经被替换掉了,
+      "返回到哪"的那个"哪"已经不存在了。</code></pre>
+<p>形象比喻:<strong>fork 是"生了个和你一样的孩子",exec 是"给这个孩子做了灵魂替换,让他变成完全不同的一个人,但还是你的孩子(PID/父子关系不变)"。</strong>exec 有一族函数(execl/execv/execlp/execvp...),区别只是参数传递方式,核心一样。<strong>exec 成功不返回</strong>是个重要特性——因为进程的代码都被换了,没有"原路"可回。</p>
+
+<h2 id="s6">29.6 fork + exec：shell 启动程序的真相</h2>
+<p>现在揭晓:<strong>你在 shell 里敲 <code>ls -l</code>,系统到底怎么把它跑起来?答案是 fork + exec 的经典组合。</strong></p>
+<pre><code>你在 bash 敲: ls -l
+
+bash 做的事:
+① fork()  ─────→ 分裂出一个子进程(bash的副本)
+      │
+   ┌──┴──────────────┐
+父进程(bash)        子进程(bash副本)
+   │                  │
+② wait(子进程)     ③ exec("/bin/ls", "ls", "-l")
+   等孩子干完           把自己变成 ls 程序, 开始执行 ls
+   │                  │
+   │              ④ ls 执行完 exit
+   │                  │
+⑤ wait 返回 ←─────────┘ 回收子进程
+   bash 打印提示符, 等你下一条命令</code></pre>
+<p>拆解这个"fork 生孩子 → 孩子 exec 变身目标程序 → 父亲 wait 收尸"的三步舞:</p>
+<ul>
+  <li><strong>fork</strong>:bash 先复制一个自己(子进程),这样不影响 bash 本身。</li>
+  <li><strong>exec</strong>:子进程把自己替换成 <code>ls</code>——现在这个子进程就是 ls 了。</li>
+  <li><strong>wait</strong>:bash(父进程)等 ls 跑完,回收它(避免僵尸,第28章),然后继续等你的下条命令。</li>
+</ul>
+<blockquote><p><strong>"fork + exec" 是 Unix/Linux 启动新程序的标准范式,理解它就理解了整个系统怎么运转。</strong>为什么要分成 fork 和 exec 两步,而不像 Windows 的 <code>CreateProcess</code> 一步到位?因为<strong>在 fork 之后、exec 之前的那个空隙,子进程可以做很多定制</strong>——比如重定向输入输出(把 stdout 接到文件,实现 <code>ls > out.txt</code>)、设置环境变量、改变工作目录。这个"两步之间可插入定制"的灵活性,是 Unix 进程模型的精妙之处,也是 shell 能实现管道、重定向的基础(<code>|</code>、<code>&gt;</code>、<code>&lt;</code> 都在这个空隙里设置)。面试常问"fork 和 exec 为什么分开",这就是标准答案。</p></blockquote>
+
+<h2 id="s7">29.7 clone：fork 和线程的统一底层</h2>
+<p>第28章说"线程是共享资源的进程,fork 和 pthread_create 底层都是 clone"。现在揭晓 <code>clone</code>。它是比 fork 更底层、更灵活的系统调用:<strong>fork 是"复制一切",而 clone 让你<em>精确指定</em>子进程和父进程<em>共享哪些资源</em>。</strong></p>
+<pre><code>clone(flags, ...) 用 flags 控制共享什么:
+
+  CLONE_VM      共享地址空间(内存)  ← 关键!
+  CLONE_FILES   共享打开的文件表
+  CLONE_FS      共享文件系统信息(工作目录)
+  CLONE_SIGHAND 共享信号处理
+  CLONE_THREAD  同一个线程组(共享tgid)
+  ...
+
+不同的 flags 组合 = 不同的"创建":
+  ┌────────────────────────────────────────┐
+  │ 什么都不共享(各自独立)   = fork(创建进程) │
+  │ 共享VM+FILES+FS+SIGHAND  = 创建线程        │
+  └────────────────────────────────────────┘</code></pre>
+<p>这就是第28章那个深刻设计的实现:<strong>进程和线程的区别,不是"两种东西",而是"clone 时共享了多少资源"。</strong></p>
+<ul>
+  <li><strong>fork</strong> = clone(几乎不共享)→ 子进程有独立的一切 → 这是"进程"。</li>
+  <li><strong>创建线程</strong> = clone(CLONE_VM | CLONE_FILES | CLONE_THREAD | ...)→ 新任务和创建者<strong>共享地址空间、文件、信号</strong> → 这是"线程"。</li>
+</ul>
+<blockquote><p><strong>clone 用一组开关,把"进程"和"线程"统一成了一个连续谱系。</strong>你甚至可以创建"介于两者之间"的东西(共享一部分资源)。这种设计的优雅在于:内核不需要为进程和线程写两套代码,只需一个 clone,用 flags 区分共享程度。<strong>关键洞察:共享 CLONE_VM(地址空间)与否,是进程和线程最根本的分界</strong>——共享地址空间(同一个 mm,第28章)就是线程(能直接访问彼此的变量),不共享(各自的 mm)就是进程(隔离)。这完美呼应第一章"进程=独立操作台,线程=共享操作台"的比喻,现在你看到了它在 clone flags 里的精确实现。</p></blockquote>
+
+<h2 id="s8">29.8 线程创建：pthread_create → clone</h2>
+<p>你写多线程用 <code>pthread_create</code>,它底层就是 clone。链条:</p>
+<pre><code>pthread_create(&tid, NULL, thread_func, arg)
+    │ (glibc 的 pthread 库)
+    ▼
+clone(CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND |
+      CLONE_THREAD | CLONE_SETTLS | ..., ...)
+    │ (系统调用)
+    ▼
+内核 copy_process(): 创建一个新 task_struct,
+    但它的 mm 指向【和创建者同一个 mm】(因为CLONE_VM)
+    → 新线程和主线程共享地址空间
+    → 它们能访问同一批全局变量(所以多线程要加锁, 第37章!)</code></pre>
+<p>关键结论:<strong>Linux 的线程,在内核里就是一个 task_struct(和进程一样),只是它的 mm 等字段指向和同组线程共享的对象。</strong>所以:</p>
+<ul>
+  <li>内核调度的基本单位是 task_struct——<strong>线程和进程被一视同仁地调度</strong>(第30章)。这就是"Linux 线程是内核级线程"的含义:每个线程内核都知道、都单独调度(不像某些用户级线程库,内核只看到一个进程)。</li>
+  <li>同进程的线程共享地址空间,能直接读写彼此的全局变量——<strong>方便但危险(数据竞争),所以需要第37章的锁</strong>。这就是第14章"多核内存序"、第37章"并发同步"要解决的问题的来源。</li>
+</ul>
+
+<h2 id="s9">29.9 copy_process：创建的核心</h2>
+<p>fork/clone 最终都进入内核的 <code>copy_process</code>(<code>kernel/fork.c</code>)——真正创建 task_struct 的地方。骨架:</p>
+<pre><code>static struct task_struct *copy_process(...unsigned long clone_flags...)
+{
+    /* ① 分配新的 task_struct 和内核栈 */
+    struct task_struct *p = dup_task_struct(current);
+
+    /* ② 根据 clone_flags, 决定"复制"还是"共享"各种资源 */
+    copy_files(clone_flags, p);    /* 文件表: 共享 or 复制 */
+    copy_fs(clone_flags, p);       /* 文件系统信息 */
+    copy_sighand(clone_flags, p);  /* 信号处理 */
+    copy_mm(clone_flags, p);       /* ★地址空间: CLONE_VM则共享, 否则复制(COW) */
+    copy_thread(clone_flags, p);   /* 架构相关: 设置新任务的内核栈和寄存器 */
+
+    /* ③ 分配 PID */
+    p->pid = alloc_pid(...);
+
+    /* ④ 设置父子关系, 加入进程链表 */
+    /* ⑤ 返回新任务(还没运行, 由调用者唤醒加入运行队列) */
+    return p;
+}</code></pre>
+<p>看那些 <code>copy_*</code> 函数:<strong>每一个都根据 clone_flags 决定"共享还是复制"某类资源。</strong><code>copy_mm</code> 是关键——如果 CLONE_VM 就让新任务的 mm 指向同一个(线程),否则复制一份(进程,用 COW)。<code>copy_thread</code> 是架构相关的,它<strong>设置新任务的内核栈和初始寄存器现场</strong>——这不就是第16章 FreeRTOS 的 <code>pxPortInitialiseStack</code> 吗?<strong>它同样要"伪造"一个初始现场,让新任务第一次被调度时能正确开始运行。</strong>Linux 和 FreeRTOS 在这里做的是同一件事(伪造初始栈现场),只是 Linux 更复杂。<strong>你在第16章学的东西,直接迁移到了 Linux。</strong></p>
+
+<h2 id="s10">29.10 进程退出与回收：exit 与 wait</h2>
+<p>进程结束和回收(呼应第28章僵尸进程):</p>
+<ul>
+  <li><strong>exit</strong>(<code>do_exit</code>):进程主动结束(调 <code>exit()</code> 或 main 返回)或被信号杀死。内核释放它的大部分资源(地址空间、文件等),但<strong>保留 task_struct 和退出状态</strong>,进程进入<strong>僵尸(ZOMBIE)</strong>状态。</li>
+  <li><strong>wait</strong>(<code>wait/waitpid</code>):父进程调用它来"收尸"——读取子进程的退出状态,然后内核才彻底释放子进程的 task_struct。</li>
+</ul>
+<pre><code>进程生命周期:
+  fork/clone → 运行 → exit(变僵尸, 留退出码) → 父进程wait(读退出码) → 彻底释放
+
+  若父进程不wait: 子进程一直是僵尸(占PID)
+  若父进程先死:  子进程变孤儿, 被PID 1(init)收养, init会wait它们</code></pre>
+<p><strong>为什么要留个僵尸阶段,不直接彻底删除?</strong>因为父进程可能想知道子进程"怎么死的"(正常退出?退出码几?被信号杀?)。这个信息必须保留到父进程来读。所以进程死后不能立即完全消失,要留个"尸体"(僵尸)带着退出信息,等父进程 wait 来读取和确认。<strong>这是 Unix 进程模型的一部分,也是为什么写多进程程序必须处理 wait(否则堆积僵尸)。</strong></p>
+
+<h2 id="s11">29.11 回扣 RTOS：创建任务的对比</h2>
+<p>把 Linux 和 RTOS 创建执行流的方式对照,理解各自的取舍:</p>
+<table>
+<tr><th></th><th>RTOS(xTaskCreate)</th><th>Linux(fork+exec / clone)</th></tr>
+<tr><td>怎么创建</td><td>直接给函数+栈,凭空建</td><td>从已有进程分裂(fork)或指定共享(clone)</td></tr>
+<tr><td>地址空间</td><td>共享(所有任务一个)</td><td>进程独立(fork)/线程共享(clone)</td></tr>
+<tr><td>创建开销</td><td>小(分配栈+TCB)</td><td>较大(但 COW 让 fork 不算太慢)</td></tr>
+<tr><td>初始现场</td><td>pxPortInitialiseStack 伪造</td><td>copy_thread 伪造(同思想)</td></tr>
+<tr><td>回收</td><td>vTaskDelete(简单)</td><td>exit→僵尸→父进程 wait(有语义)</td></tr>
+</table>
+<blockquote><p>核心差异还是那句话:<strong>RTOS 任务共享地址空间、创建简单直接;Linux 进程要隔离(独立地址空间),所以有 fork(复制)这套更重但更强大的机制,配合 COW 优化开销。</strong>但底层的"伪造初始栈现场让新执行流能第一次跑起来"是完全一样的(pxPortInitialiseStack vs copy_thread)。<strong>你在 FreeRTOS 学的内核骨架,在 Linux 里全都能找到对应,只是穿了更复杂的外衣。</strong>下一章看 Linux 怎么调度这些进程/线程(CFS)——你会看到,它和 FreeRTOS 的位图调度是同一个问题的两种不同答案。</p></blockquote>
+
+<h2 id="s12">29.12 面试常问问题</h2>
+<p><strong>Q1:fork 做了什么?为什么返回两次?</strong><br>复制当前进程产生子进程(用 COW)。一次调用后内存里有两个进程,都从 fork 返回处继续;父进程里返回子 PID,子进程里返回 0,用返回值区分身份。</p>
+<p><strong>Q2:fork 为什么快?写时复制原理?</strong><br>不真复制内存,父子页表共享同一批物理页并标只读;谁写触发缺页异常才复制那一页。只复制被改的页,故快而省(第十章)。</p>
+<p><strong>Q3:exec 做了什么?为什么不返回?</strong><br>把当前进程的地址空间换成新程序(代码/数据全替换),PID 等不变,从新程序入口执行。原代码已被替换,没有"返回处",故成功不返回。</p>
+<p><strong>Q4:为什么 shell 用 fork+exec 而不是一步创建?</strong><br>fork 和 exec 之间的空隙可做定制(重定向 stdin/stdout、设环境变量、改目录),这是管道/重定向的实现基础,灵活性高。</p>
+<p><strong>Q5:进程和线程的区别?底层如何统一?</strong><br>底层都是 clone,用 flags 区分共享哪些资源。进程 clone 几乎不共享(独立地址空间);线程 clone 共享地址空间(CLONE_VM)、文件、信号等。共享 mm 与否是根本分界。</p>
+<p><strong>Q6:僵尸进程和孤儿进程?</strong><br>僵尸:进程 exit 后 task_struct 留着(存退出码)等父进程 wait 回收;父不 wait 就成僵尸占 PID。孤儿:父进程先死,子进程被 PID 1 收养,init 会 wait 它们。</p>
+<p><strong>Q7:pthread_create 底层是什么?线程共享和独立哪些资源?</strong><br>底层是 clone(CLONE_VM|CLONE_FILES|CLONE_THREAD...)。共享地址空间/文件/信号,独立栈和寄存器现场。内核把线程当 task_struct 独立调度。</p>
+
+<h2 id="s13">29.13 常见误区</h2>
+<ol>
+  <li><strong>"fork 会立即复制全部内存"</strong>——用 COW,只复制页表,写时才复制被改的页。</li>
+  <li><strong>"fork 返回值是新进程还是老进程决定的"</strong>——同一 fork,父进程得子 PID,子进程得 0,是两个进程的两次返回。</li>
+  <li><strong>"exec 会创建新进程"</strong>——不,exec 替换当前进程的内容,PID 不变,不创建新进程。</li>
+  <li><strong>"进程和线程是内核里两种不同的东西"</strong>——都是 task_struct,clone flags 区分。</li>
+  <li><strong>"exec 成功后会返回继续执行原代码"</strong>——不返回,原代码已被替换。</li>
+  <li><strong>"僵尸进程占用大量内存"</strong>——主要占 PID 和一个 task_struct,危害是耗尽 PID。</li>
+  <li><strong>"多线程共享栈"</strong>——线程共享地址空间但各有独立栈;共享的是全局/堆。</li>
+</ol>
+
+<h2 id="s14">29.14 本章总结</h2>
+<ul>
+  <li>Linux 进程只能由已有进程分裂产生,构成以 PID 1 为根的<strong>进程树</strong>。</li>
+  <li><strong>fork</strong>:复制当前进程产生子进程,<strong>一次调用返回两次</strong>(父得子 PID,子得 0)。</li>
+  <li><strong>写时复制</strong>让 fork 快而省:父子共享只读页,写时才复制(第十章)。</li>
+  <li><strong>exec</strong>:把当前进程内容换成新程序(PID 不变),<strong>成功不返回</strong>。</li>
+  <li><strong>fork+exec</strong> 是启动新程序的标准范式;两步之间的空隙可做重定向/环境定制(shell 管道/重定向的基础)。</li>
+  <li><strong>clone</strong> 是统一底层:用 flags 指定共享哪些资源。<strong>fork=不共享(进程),线程=共享地址空间等(CLONE_VM)</strong>。</li>
+  <li>pthread_create 底层是 clone;线程是内核级的、被独立调度的 task_struct。</li>
+  <li><code>copy_process</code> 按 flags 复制/共享资源;<code>copy_thread</code> 伪造初始栈现场(同 FreeRTOS pxPortInitialiseStack)。</li>
+  <li>退出回收:<strong>exit(变僵尸留退出码)→ 父进程 wait(读退出码并释放)</strong>;不 wait 成僵尸,父先死成孤儿被 init 收养。</li>
+</ul>
+
+<h2 id="s15">29.15 思维导图 / 课后题</h2>
+<pre><code>进程线程与 fork/exec/clone
+├─ 一、进程树:PID 1(init)为根, 进程只能由进程分裂
+├─ 二、fork:复制当前进程产生子进程
+├─ 三、★fork返回两次:父得子PID, 子得0
+├─ 四、★写时复制:fork快而省(第十章COW)
+├─ 五、exec:换成新程序(PID不变), 成功不返回
+├─ 六、★fork+exec:shell启动程序; 空隙做重定向/定制
+├─ 七、★clone:flags指定共享资源
+│  ├─ 不共享=fork(进程)
+│  └─ 共享CLONE_VM等=线程
+├─ 八、pthread_create→clone; 线程=内核级task_struct
+├─ 九、copy_process:按flags复制/共享; copy_thread伪造现场
+├─ 十、退出回收:exit(僵尸)→wait; 孤儿被init收养
+└─ 十一、对比RTOS:xTaskCreate直接建 vs fork分裂(但骨架同)</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>写 fork 程序,父子进程各打印自己的 PID 和 fork 返回值,验证"返回两次"、父得子 PID/子得 0。</li>
+  <li>写 fork+exec:子进程 exec 执行 <code>/bin/ls</code>,父进程 wait;观察子进程"变身"成 ls。</li>
+  <li>用 <code>strace -f ./a.out</code> 跟踪一个 fork+exec 程序,找出 clone(fork)和 execve 系统调用。</li>
+  <li>写多线程程序,用 <code>strace -f</code> 观察 pthread_create 触发的 clone 调用及其 flags(找 CLONE_VM 等)。</li>
+  <li>在 fork 前后改一个全局变量,验证父子进程各改各的(地址空间独立);再用线程做同样的事,验证线程共享(需加锁)。</li>
+  <li>读内核 <code>kernel/fork.c</code> 的 copy_process 和 copy_mm,看 CLONE_VM 如何决定共享还是复制 mm。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>fork 的行为?为什么返回两次?怎么区分父子?</li>
+  <li>fork 为什么高效?详述写时复制。</li>
+  <li>exec 做什么?为什么不返回?</li>
+  <li>为什么 shell 用 fork+exec 两步而非一步?</li>
+  <li>进程和线程在内核底层如何统一?clone 的关键 flag?</li>
+  <li>僵尸进程和孤儿进程的产生与处理?</li>
+  <li>pthread_create 底层做了什么?线程共享和独立什么?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第廿九章 完 · 下一章《第三十章 进程调度与 CFS》</p>
+<div class="nav">
+  <a href="第28章-Linux内核总览与task_struct.html">← 第廿八章</a>
+  <a href="index.html">目录</a>
+  <a href="第30章-Linux调度器与CFS.html">第三十章 →</a>
+</div>
+
+</div>
+</body>
+</html>

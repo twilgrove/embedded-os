@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第十七章 FreeRTOS 调度器</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第16章-FreeRTOS-Task任务.html">← 第十六章</a>
+  <a href="index.html">目录</a>
+  <a href="第18章-FreeRTOS-SysTick与PendSV.html">第十八章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第三卷 · FreeRTOS 源码</div>
+  <h1>第十七章 FreeRTOS 调度器</h1>
+  <div class="sub">谁来决定下一个跑哪个任务——store 店长的源码</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">调度器要回答的两个问题</a></li>
+    <li><a href="#s2">pxCurrentTCB：当前任务的指针</a></li>
+    <li><a href="#s3">选任务：taskSELECT_HIGHEST_PRIORITY_TASK</a></li>
+    <li><a href="#s4">vTaskSwitchContext：切换的决策者</a></li>
+    <li><a href="#s5">调度触发的三条路径</a></li>
+    <li><a href="#s6">xTaskIncrementTick：心跳里发生了什么</a></li>
+    <li><a href="#s7">时间片轮转的实现</a></li>
+    <li><a href="#s8">主动让出:taskYIELD 与 portYIELD</a></li>
+    <li><a href="#s9">阻塞与唤醒:延时列表的巧妙设计</a></li>
+    <li><a href="#s10">抢占式 vs 协作式</a></li>
+    <li><a href="#s11">调度锁:vTaskSuspendAll / xTaskResumeAll</a></li>
+    <li><a href="#s12">临界区:关中断的两种粒度</a></li>
+    <li><a href="#s13">回扣与对比 Linux</a></li>
+    <li><a href="#s14">面试常问</a></li>
+    <li><a href="#s15">常见误区</a></li>
+    <li><a href="#s16">本章总结</a></li>
+    <li><a href="#s17">思维导图</a></li>
+    <li><a href="#s18">课后练习与面试题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第16章我们看到任务被创建、挂进就绪列表。这一章看"店长"如何工作——调度器怎么从就绪列表选出下一个任务、什么时候触发切换、时间片怎么轮转、任务怎么阻塞和被唤醒。<strong>注意区分:本章讲"决定切换给谁"(调度决策,C 代码),第18章讲"怎么真正切过去"(上下文切换,汇编)。</strong>两者合起来才是完整的任务切换。这是第一卷"三支柱之调度器"的源码落地。</p></blockquote>
+
+<h2 id="s1">17.1 调度器要回答的两个问题</h2>
+<p>回到第一卷 1.6 的比喻:调度器是店长,厨师(CPU)只管埋头炒,店长决定"下一个炒哪道"。落到代码,调度器只需回答两个问题:</p>
+<ol>
+  <li><strong>什么时候需要重新决策?</strong>(何时调度)——时钟节拍到、任务主动让出、任务阻塞、有更高优先级任务就绪。</li>
+  <li><strong>该选哪个任务?</strong>(选谁)——从就绪列表选最高优先级的。</li>
+</ol>
+<p>FreeRTOS 把这两个问题拆成两个东西:<strong><code>vTaskSwitchContext</code></strong>(回答"选谁",更新 <code>pxCurrentTCB</code>)和<strong>各种触发点</strong>(回答"何时",最终都调用 <code>vTaskSwitchContext</code> + 触发实际切换)。本章逐一拆开。</p>
+
+<h2 id="s2">17.2 pxCurrentTCB：当前任务的指针</h2>
+<p>整个调度系统围着一个全局指针转,它是理解一切的锚点:</p>
+<pre><code>/* tasks.c 里最重要的全局变量 */
+TCB_t * volatile pxCurrentTCB = NULL;
+
+含义: pxCurrentTCB 永远指向"当前正在CPU上运行的那个任务的TCB"。</code></pre>
+<p><strong>整个上下文切换的本质,就是改变 <code>pxCurrentTCB</code> 指向谁,然后让 CPU 的现场变成它指向的那个任务的现场。</strong>第18章的汇编会:①把当前寄存器存进 <code>pxCurrentTCB</code> 指的任务栈;②<code>pxCurrentTCB</code> 被 <code>vTaskSwitchContext</code> 改成新任务;③从新的 <code>pxCurrentTCB</code> 指的栈恢复寄存器。<strong>所以调度器的核心工作,就是正确地更新这一个指针。</strong></p>
+<blockquote><p>为什么它是 <code>volatile</code>?因为它会被中断上下文(SysTick、PendSV)修改,也被普通代码读。<code>volatile</code> 阻止编译器把它缓存进寄存器,保证每次都读真实内存值(第四章讲的 volatile 的用途)。这是 volatile 的<strong>正确</strong>用法——单核下防编译器优化;注意它不解决多核问题,但 Cortex-M 单核 FreeRTOS 够用。</p></blockquote>
+
+<h2 id="s3">17.3 选任务：taskSELECT_HIGHEST_PRIORITY_TASK</h2>
+<p>"选谁"的核心宏。它做两件事:找到最高的有就绪任务的优先级,从那个优先级的链表里取一个。看 CLZ 优化版:</p>
+<pre><code>#define taskSELECT_HIGHEST_PRIORITY_TASK()                              \
+{                                                                       \
+    UBaseType_t uxTopPriority;                                          \
+                                                                        \
+    /* ① 用 CLZ 从位图找最高就绪优先级(第16章的O(1)技巧) */             \
+    portGET_HIGHEST_PRIORITY( uxTopPriority, uxTopReadyPriority );       \
+                                                                        \
+    /* ② 从该优先级的就绪链表取下一个任务(同级轮转的关键) */             \
+    listGET_OWNER_OF_NEXT_ENTRY( pxCurrentTCB,                          \
+                                 &( pxReadyTasksLists[ uxTopPriority ] ) ); \
+}
+
+/* portGET_HIGHEST_PRIORITY 在 ARM Cortex-M 上就是: */
+#define portGET_HIGHEST_PRIORITY( uxTopPriority, uxReadyPriorities ) \
+    uxTopPriority = ( 31UL - ( uint32_t ) __clz( ( uxReadyPriorities ) ) )</code></pre>
+<p>拆解两步:</p>
+<ul>
+  <li><strong>① <code>portGET_HIGHEST_PRIORITY</code></strong>:<code>__clz</code> 是 ARM 的 CLZ 指令(数前导 0),<code>31 - clz(位图)</code> = 最高置 1 位的位置 = 最高就绪优先级。<strong>一条指令,O(1)</strong>(第16章讲过的确定性调度关键)。</li>
+  <li><strong>② <code>listGET_OWNER_OF_NEXT_ENTRY</code></strong>:这个链表是环形的,每次取"下一个"节点(通过 <code>pxIndex</code> 前进),于是同优先级的多个任务会被<strong>轮流</strong>取到——这就是时间片轮转的底层(17.7 详讲)。取出的节点的 owner(嵌在 TCB 里,第16章侵入式链表)就是要运行的 TCB,直接赋给 <code>pxCurrentTCB</code>。</li>
+</ul>
+<p><strong>这两步就是 FreeRTOS 调度算法的全部:严格最高优先级 + 同级环形轮转。</strong>简单、确定、快——完美契合实时系统需求。对比 Linux CFS 的红黑树+虚拟运行时间(第五卷),FreeRTOS 简单得多,因为它追求的是确定性而非公平性。</p>
+
+<h2 id="s4">17.4 vTaskSwitchContext：切换的决策者</h2>
+<p><code>taskSELECT_HIGHEST_PRIORITY_TASK</code> 被包在 <code>vTaskSwitchContext</code> 里。这个函数是"调度决策"的总入口,由汇编切换代码(PendSV)调用:</p>
+<pre><code>void vTaskSwitchContext( void )
+{
+    if( uxSchedulerSuspended != ( UBaseType_t ) 0U )
+    {
+        /* 调度器被挂起(17.11), 现在不能切, 标记"欠一次切换" */
+        xYieldPending = pdTRUE;
+    }
+    else
+    {
+        xYieldPending = pdFALSE;
+
+        /* 检查栈溢出(如果开启了栈溢出检测) */
+        taskCHECK_FOR_STACK_OVERFLOW();
+
+        /* ★ 核心: 选出最高优先级任务, 更新 pxCurrentTCB */
+        taskSELECT_HIGHEST_PRIORITY_TASK();
+
+        /* 运行时间统计等... */
+    }
+}</code></pre>
+<p>注意它<strong>只更新 <code>pxCurrentTCB</code>,不做实际的寄存器保存/恢复</strong>——那是 PendSV 汇编的活(第18章)。这是关键的职责分离:</p>
+<blockquote><p><strong>vTaskSwitchContext = "决定切给谁"(纯 C,改指针);PendSV 汇编 = "真正切过去"(存旧任务寄存器、恢复新任务寄存器)。</strong>为什么分开?因为"选任务"是架构无关的逻辑(所有平台一样),而"存恢复寄存器"是架构强相关的(每个 CPU 寄存器不同)。分开后,<code>vTaskSwitchContext</code> 放在架构无关的 <code>tasks.c</code>,寄存器操作放在架构相关的 <code>port</code>。这就是第16章说的"内核=架构无关+移植层"的体现。</p></blockquote>
+
+<h2 id="s5">17.5 调度触发的三条路径</h2>
+<p>"何时调度"?FreeRTOS 里,重新调度(可能切换任务)由三类事件触发,但<strong>最终都殊途同归到"触发 PendSV 异常 → PendSV 里调 vTaskSwitchContext → 切换"</strong>:</p>
+<table>
+<tr><th>触发路径</th><th>场景</th><th>怎么触发</th></tr>
+<tr><td><strong>① 时钟节拍抢占</strong></td><td>SysTick 中断里发现该换人(时间片到 / 有更高优先级任务就绪)</td><td>xTaskIncrementTick 返回 pdTRUE → 触发 PendSV</td></tr>
+<tr><td><strong>② 任务主动让出</strong></td><td>任务调 taskYIELD()</td><td>直接触发 PendSV</td></tr>
+<tr><td><strong>③ 阻塞/唤醒引起</strong></td><td>任务 vTaskDelay、等队列阻塞;或高优先级任务被唤醒</td><td>相关 API 内部触发 PendSV</td></tr>
+</table>
+<pre><code>三条路径殊途同归:
+
+  SysTick中断 ──┐
+  taskYIELD  ──┼──▶ 触发 PendSV 异常(挂起)
+  阻塞/唤醒   ──┘         │
+                         ▼(等所有中断处理完, 真正要回线程时)
+                  PendSV_Handler(汇编, 第18章)
+                         │
+                         ├─ 保存当前任务寄存器到其栈
+                         ├─ 调 vTaskSwitchContext() ← 更新pxCurrentTCB(本章17.4)
+                         └─ 从新任务栈恢复寄存器
+                         ▼
+                    新任务运行</code></pre>
+<p><strong>为什么统一用 PendSV?</strong>这是 Cortex-M 的一个精妙设计,第18章会详讲:PendSV 是最低优先级异常,把上下文切换<strong>推迟到所有其他中断都处理完、真正要返回线程时才做</strong>,避免在中断嵌套中途切换导致混乱。这里先记住:所有调度最终都通过触发 PendSV 来完成实际切换。</p>
+
+<h2 id="s6">17.6 xTaskIncrementTick：心跳里发生了什么</h2>
+<p>第一卷说"时钟中断是抢占引擎"。这个引擎的核心就是 <code>xTaskIncrementTick</code>,每次 SysTick 中断都调它。它干三件大事:</p>
+<pre><code>BaseType_t xTaskIncrementTick( void )
+{
+    BaseType_t xSwitchRequired = pdFALSE;
+
+    /* ① 节拍计数 +1 */
+    const TickType_t xConstTickCount = xTickCount + 1;
+    xTickCount = xConstTickCount;
+
+    /* ② 检查有没有延时到期的任务, 把它们从"延时列表"移回"就绪列表" */
+    if( xConstTickCount >= xNextTaskUnblockTime )
+    {
+        for( ;; )
+        {
+            /* 遍历延时列表(按到期时间排序), 到期的唤醒 */
+            pxTCB = 取延时列表头任务;
+            if( xConstTickCount < 该任务到期时间 ) break;  /* 没到期, 停止 */
+
+            /* 到期了: 从延时列表和事件列表移除, 加入就绪列表 */
+            listREMOVE_ITEM( &( pxTCB->xStateListItem ) );
+            prvAddTaskToReadyList( pxTCB );
+
+            /* 如果被唤醒的任务优先级 >= 当前任务, 需要切换(抢占!) */
+            if( pxTCB->uxPriority >= pxCurrentTCB->uxPriority )
+                xSwitchRequired = pdTRUE;
+        }
+    }
+
+    /* ③ 时间片轮转: 同优先级还有别的就绪任务? 需要切换 */
+    #if ( configUSE_TIME_SLICING == 1 )
+    {
+        if( listCURRENT_LIST_LENGTH( &pxReadyTasksLists[ pxCurrentTCB->uxPriority ] )
+            > ( UBaseType_t ) 1 )
+        {
+            xSwitchRequired = pdTRUE;
+        }
+    }
+    #endif
+
+    return xSwitchRequired;   /* 返回pdTRUE → SysTick_Handler会触发PendSV */
+}</code></pre>
+<p>三件事对应第一卷的三个概念落地:</p>
+<ul>
+  <li><strong>①节拍计数</strong>:<code>xTickCount</code> 是系统的"时间",<code>vTaskDelay(n)</code> 就是记下"到 xTickCount+n 唤醒我"。</li>
+  <li><strong>②唤醒到期任务</strong>:把睡够了的任务从延时列表移回就绪列表——如果唤醒的任务优先级更高,<strong>标记要切换(这就是"高优先级任务就绪→抢占")</strong>。</li>
+  <li><strong>③时间片</strong>:如果同优先级还有别的就绪任务,标记要切换(轮转,下节)。</li>
+</ul>
+<p>返回 <code>pdTRUE</code> 时,SysTick 中断处理会触发 PendSV,完成切换。<strong>这一个函数,就是第一卷"三支柱之时钟中断"的完整源码。</strong></p>
+
+<h2 id="s7">17.7 时间片轮转的实现</h2>
+<p>同优先级的多个任务怎么公平轮流?靠两个机制配合:</p>
+<ol>
+  <li><strong>触发</strong>:上面 <code>xTaskIncrementTick</code> 的第③步——每个 tick,如果同优先级就绪任务 >1 个,就要求切换。</li>
+  <li><strong>选择</strong>:<code>listGET_OWNER_OF_NEXT_ENTRY</code>(17.3)每次取"下一个"节点。就绪链表是<strong>环形</strong>的,有个 <code>pxIndex</code> 指针每次前进一格,于是同优先级任务被依次取到,循环往复。</li>
+</ol>
+<pre><code>优先级3的就绪链表(环形), pxIndex 每次前进:
+
+   ┌─▶ TaskA ──▶ TaskB ──▶ TaskC ──┐
+   └───────────────────────────────┘
+   pxIndex → 这次取A, 下次取B, 再下次取C, 再回到A...
+
+每个tick切一次(若>1任务) → A跑1个tick, B跑1个tick, C跑1个tick → 公平轮转</code></pre>
+<blockquote><p>注意 FreeRTOS 的时间片是<strong>固定 1 个 tick</strong>(不像 Linux 可变时间片)。<code>configTICK_RATE_HZ</code> 决定 tick 频率(如 1000Hz=1ms/tick),所以同级任务每 1ms 轮换一次。<strong>时间片轮转只在同优先级任务间发生</strong>——不同优先级永远是高的先跑(严格优先级)。这再次体现 FreeRTOS "优先级第一,公平第二"的实时哲学。若关掉 <code>configUSE_TIME_SLICING</code>,同级任务就不轮换,谁先就绪谁一直跑到阻塞,更省切换开销但欠公平。</p></blockquote>
+
+<h2 id="s8">17.8 主动让出:taskYIELD 与 portYIELD</h2>
+<p>任务不想等时间片,想立刻让出 CPU(比如干完活了),调 <code>taskYIELD()</code>:</p>
+<pre><code>#define taskYIELD()  portYIELD()
+
+/* ARM Cortex-M 上 portYIELD 就是"触发PendSV异常": */
+#define portYIELD()                                     \
+{                                                       \
+    /* 往中断控制状态寄存器ICSR的PENDSVSET位写1, 挂起PendSV */ \
+    portNVIC_INT_CTRL_REG = portNVIC_PENDSVSET_BIT;     \
+    __dsb( portSY_FULL_READ_WRITE );  /* 内存屏障(第14章!) */ \
+    __isb( portSY_FULL_READ_WRITE );  /* 指令屏障, 确保PendSV立即生效 */ \
+}</code></pre>
+<p>看,<code>portYIELD</code> 的本质就是<strong>软件挂起 PendSV 异常</strong>——往一个寄存器写一位,CPU 就会在合适时机进入 PendSV 处理程序去切换。注意这里的 <code>__dsb</code>/<code>__isb</code> 就是第14章讲的内存屏障和指令同步屏障:<strong>确保"挂起 PendSV"这个写操作真正生效、后续指令重新取指,让切换立即发生。</strong>第14章的屏障知识在这里派上了用场——这不是理论,是每次任务让出都在用。</p>
+
+<h2 id="s9">17.9 阻塞与唤醒:延时列表的巧妙设计</h2>
+<p><code>vTaskDelay(100)</code> 怎么实现"睡 100 个 tick"?不是傻等,而是把任务从就绪列表移到<strong>延时列表(Delayed Task List)</strong>,让出 CPU,到期再移回:</p>
+<pre><code>void vTaskDelay( const TickType_t xTicksToDelay )
+{
+    vTaskSuspendAll();   /* 锁调度器 */
+    {
+        /* 把当前任务从就绪列表移除, 加入延时列表, 记录唤醒时刻 */
+        prvAddCurrentTaskToDelayedList( xTicksToDelay, ... );
+    }
+    xAlreadyYielded = xTaskResumeAll();
+
+    /* 让出CPU(现在当前任务已不在就绪列表, 会切到别的任务) */
+    if( xAlreadyYielded == pdFALSE )
+        portYIELD_WITHIN_API();
+}</code></pre>
+<h4>延时列表的精妙:两个列表 + 溢出处理</h4>
+<p>FreeRTOS 用<strong>两个</strong>延时列表(<code>xDelayedTaskList1</code> 和 <code>xDelayedTaskList2</code>),外加两个指针 <code>pxDelayedTaskList</code>/<code>pxOverflowDelayedTaskList</code>。为什么要两个?因为 <code>xTickCount</code> 是有限位数(如 32 位),会<strong>溢出回绕</strong>(从 0xFFFFFFFF 加 1 变回 0)。</p>
+<p>如果一个任务要睡到"溢出之后"的时刻,它就放进"溢出延时列表"。当 <code>xTickCount</code> 真的溢出回绕时,两个列表指针一交换,原来的"溢出列表"变成"当前列表"。<strong>用列表交换优雅地处理了计数器溢出,不用复杂的比较逻辑。</strong></p>
+<blockquote><p>延时列表按<strong>唤醒时刻排序</strong>(最早到期的在头部),还维护一个 <code>xNextTaskUnblockTime</code> = 最近一个要唤醒的时刻。这样 <code>xTaskIncrementTick</code>(17.6)不用每个 tick 都遍历整个列表,只需比较 <code>xTickCount >= xNextTaskUnblockTime</code>,不到就直接跳过——<strong>大部分 tick 什么都不用做,O(1)</strong>。这个"排序 + 记录最近到期时间"的优化,是保证 tick 中断本身极短、不拖累实时性的关键。设计得非常精细。</p></blockquote>
+
+<h2 id="s10">17.10 抢占式 vs 协作式</h2>
+<p>FreeRTOS 由 <code>configUSE_PREEMPTION</code> 决定调度模式:</p>
+<table>
+<tr><th></th><th>抢占式(configUSE_PREEMPTION=1)</th><th>协作式(=0)</th></tr>
+<tr><td>切换时机</td><td>时钟节拍/高优先级就绪时随时抢占</td><td>只在任务主动 taskYIELD 或阻塞时切</td></tr>
+<tr><td>依赖</td><td>SysTick 中断(第一卷:抢占的引擎)</td><td>任务自觉让出</td></tr>
+<tr><td>实时性</td><td>好(高优先级任务能立刻抢到)</td><td>差(赖别的任务让出)</td></tr>
+<tr><td>风险</td><td>需处理临界区/并发</td><td>一个任务不让出会饿死别人(第一卷"闷头炒菜")</td></tr>
+</table>
+<p>绝大多数实际项目用抢占式。协作式回到了第一卷 1.7 说的困境:如果一个任务是死循环不让出,协作式下它会永远霸占 CPU,别的任务饿死——这正是"为什么需要时钟中断做抢占"的活教材。<strong>抢占式 = 有时钟中断这个"闹钟"强制打断;协作式 = 没闹钟,全靠自觉。</strong></p>
+
+<h2 id="s11">17.11 调度锁:vTaskSuspendAll / xTaskResumeAll</h2>
+<p>有时一段代码需要"操作内核数据结构时不被调度打断",但又不想关中断(关中断会影响中断响应)。FreeRTOS 提供<strong>挂起调度器</strong>:</p>
+<pre><code>vTaskSuspendAll();    /* 挂起调度器: 之后不会发生任务切换, 但中断照常! */
+{
+    /* 这里安全地操作, 不会被切到别的任务 */
+}
+xTaskResumeAll();     /* 恢复调度器: 补上期间欠下的切换 */</code></pre>
+<p>关键区别(面试常考):</p>
+<ul>
+  <li><strong>关中断</strong>:连中断都不响应,最强,但影响实时性(第七章:关中断期间中断被推迟)。</li>
+  <li><strong>挂起调度器</strong>:<strong>中断照常响应</strong>(ISR 还能跑),只是 ISR 里即使要求切换也不切,而是记下"欠一次切换"(<code>xYieldPending</code>,17.4 见过),等 <code>xTaskResumeAll</code> 时补上。</li>
+</ul>
+<blockquote><p>这是精细的并发控制:<strong>挂起调度器保护"任务 vs 任务"的竞争,但不牺牲中断响应</strong>;关中断保护"任务 vs 中断"的竞争,但牺牲中断响应。<strong>用哪个取决于你要防谁。</strong>如果共享数据只在任务间访问(ISR 不碰),用挂起调度器更好(不伤实时);如果 ISR 也访问,必须关中断。这个"按竞争对象选保护手段"的思想,第五卷 Linux(自旋锁 vs 关抢占 vs 关中断)会以更丰富的形式重现。</p></blockquote>
+
+<h2 id="s12">17.12 临界区:关中断的两种粒度</h2>
+<p>FreeRTOS 的临界区宏,对应第七章"关中断保护临界区":</p>
+<pre><code>taskENTER_CRITICAL();     /* 进入临界区: 关中断(到一定优先级) */
+{
+    /* 极短的、连中断都不能打断的操作 */
+}
+taskEXIT_CRITICAL();      /* 退出: 恢复中断 */
+
+/* ISR 里用带 FROM_ISR 的版本: */
+uxSavedInterruptStatus = taskENTER_CRITICAL_FROM_ISR();
+{ ... }
+taskEXIT_CRITICAL_FROM_ISR( uxSavedInterruptStatus );</code></pre>
+<p>细节:FreeRTOS 的 <code>taskENTER_CRITICAL</code> 在 Cortex-M 上不是关<strong>所有</strong>中断,而是通过 <code>BASEPRI</code> 寄存器<strong>只屏蔽优先级低于 <code>configMAX_SYSCALL_INTERRUPT_PRIORITY</code> 的中断</strong>——比它更高优先级的中断(如飞控的紧急中断)仍能响应!</p>
+<blockquote><p>这是个重要设计:<strong>关中断也可以是"部分关"的。</strong>把中断分成两类:优先级高于阈值的"不受 FreeRTOS 管的超高优先级中断"(它们不能调用 FreeRTOS API,但响应永远不被延迟,用于极端实时需求),和低于阈值的"普通中断"(能调 FreeRTOS API,会被临界区屏蔽)。<strong>这样即使内核在临界区,最紧急的中断(如电机过流保护)依然零延迟响应</strong>——对无人机/电机控制至关重要。这也是 <code>xxxFromISR</code> 版本 API 存在的原因:只有优先级低于阈值的 ISR 才能安全调用 FreeRTOS API。面试常抠这个 <code>configMAX_SYSCALL_INTERRUPT_PRIORITY</code>。</p></blockquote>
+
+<h2 id="s13">17.13 回扣与对比 Linux</h2>
+<p>把 FreeRTOS 调度器和后面要学的 Linux 调度器先对照一下,建立坐标:</p>
+<table>
+<tr><th></th><th>FreeRTOS 调度器</th><th>Linux CFS(第五卷)</th></tr>
+<tr><td>选任务数据结构</td><td>优先级链表数组 + 位图</td><td>红黑树(按虚拟运行时间)</td></tr>
+<tr><td>选任务复杂度</td><td>O(1)(CLZ)</td><td>O(log n)</td></tr>
+<tr><td>调度哲学</td><td>严格优先级 + 同级轮转</td><td>公平分配 CPU 时间</td></tr>
+<tr><td>目标</td><td>实时确定性</td><td>吞吐 + 交互体验 + 公平</td></tr>
+<tr><td>时间片</td><td>固定 1 tick</td><td>动态计算</td></tr>
+<tr><td>核心变量</td><td>pxCurrentTCB</td><td>rq->curr / per-CPU 运行队列</td></tr>
+</table>
+<blockquote><p>核心差异一句话:<strong>FreeRTOS 为"确定性"而生(选任务时间恒定、高优先级绝对优先),Linux CFS 为"公平和吞吐"而生(不让任何任务饿死、照顾交互)。</strong>这就是第一卷反复说的"实时系统 vs 分时系统"的分野,现在你在 FreeRTOS 源码里看到了"确定性"那一半的具体实现。学 Linux CFS 时,你会看到"公平"那一半为了照顾通用场景做了多复杂的取舍——两相对照,理解才深。</p></blockquote>
+
+<h2 id="s14">17.14 面试常问问题</h2>
+<p><strong>Q1:FreeRTOS 调度器如何选出下一个任务?</strong><br>taskSELECT_HIGHEST_PRIORITY_TASK:用位图+CLZ 找最高就绪优先级(O(1)),从该优先级的环形就绪链表取下一个(同级轮转)。更新 pxCurrentTCB。</p>
+<p><strong>Q2:vTaskSwitchContext 和 PendSV 的分工?</strong><br>vTaskSwitchContext(C,架构无关)只决定切给谁、更新 pxCurrentTCB;PendSV(汇编,架构相关)真正保存旧任务、恢复新任务寄存器。职责分离对应"内核=架构无关+移植层"。</p>
+<p><strong>Q3:调度在什么时候触发?最终怎么切换?</strong><br>三条路径:SysTick 抢占、taskYIELD、阻塞/唤醒;殊途同归——都触发 PendSV 异常,在 PendSV 里调 vTaskSwitchContext 并完成切换。</p>
+<p><strong>Q4:时间片轮转怎么实现?只在什么任务间?</strong><br>xTaskIncrementTick 每 tick 检查同优先级就绪任务>1 则要求切换;环形就绪链表 pxIndex 前进依次取任务。只在同优先级任务间轮转(固定 1 tick),不同优先级严格高的先跑。</p>
+<p><strong>Q5:vTaskDelay 如何实现?延时列表为什么用两个?</strong><br>把任务移到延时列表并让出 CPU,到期由 tick 移回就绪列表。两个列表 + 交换指针处理 xTickCount 溢出回绕;按到期时间排序 + xNextTaskUnblockTime 让 tick 处理 O(1)。</p>
+<p><strong>Q6:挂起调度器和关中断的区别?</strong><br>挂起调度器不切任务但中断照常响应(欠的切换事后补);关中断连中断都不响应。前者保护任务间竞争不伤实时,后者保护任务与中断竞争但伤实时。按竞争对象选。</p>
+<p><strong>Q7:configMAX_SYSCALL_INTERRUPT_PRIORITY 是什么?</strong><br>临界区用 BASEPRI 只屏蔽低于此阈值的中断;高于它的超高优先级中断永不被延迟(但不能调 FreeRTOS API)。保证极紧急中断零延迟,对电机/飞控关键。</p>
+
+<h2 id="s15">17.15 常见误区</h2>
+<ol>
+  <li><strong>"vTaskSwitchContext 会保存/恢复寄存器"</strong>——不,它只更新 pxCurrentTCB;寄存器操作在 PendSV 汇编里。</li>
+  <li><strong>"时间片轮转发生在所有任务间"</strong>——只在同优先级任务间;不同优先级严格按高低。</li>
+  <li><strong>"vTaskDelay 是忙等"</strong>——不是,任务被移出就绪列表让出 CPU,不占用 CPU。</li>
+  <li><strong>"挂起调度器=关中断"</strong>——不同,挂起调度器时中断照常响应。</li>
+  <li><strong>"taskENTER_CRITICAL 关所有中断"</strong>——Cortex-M 上用 BASEPRI 只关低于阈值的,超高优先级中断仍响应。</li>
+  <li><strong>"FreeRTOS 追求公平"</strong>——它追求确定性/优先级,不追求公平(那是 Linux CFS)。</li>
+  <li><strong>"优先级数值越小越高"</strong>——FreeRTOS 任务优先级数值越大越高(再次提醒,和中断优先级相反)。</li>
+</ol>
+
+<h2 id="s16">17.16 本章总结</h2>
+<ul>
+  <li>调度器回答两问:何时调度(三条触发路径)、选谁(最高优先级)。</li>
+  <li><strong>pxCurrentTCB</strong> 是核心锚点;切换的本质是正确更新它。</li>
+  <li><strong>taskSELECT_HIGHEST_PRIORITY_TASK</strong>:位图+CLZ 找最高优先级(O(1))+ 环形链表取下一个(同级轮转)。</li>
+  <li><strong>vTaskSwitchContext</strong>(C,选谁)与 <strong>PendSV</strong>(汇编,真正切)职责分离,对应架构无关/移植层。</li>
+  <li>三条触发路径(SysTick 抢占 / taskYIELD / 阻塞唤醒)<strong>殊途同归触发 PendSV</strong>。</li>
+  <li><strong>xTaskIncrementTick</strong>:计数+1、唤醒到期任务(高优先级则抢占)、时间片检查——第一卷"时钟中断=抢占引擎"的源码。</li>
+  <li>时间片固定 1 tick,仅同优先级间轮转;<code>portYIELD</code> 本质是挂起 PendSV(用了内存/指令屏障)。</li>
+  <li><strong>vTaskDelay</strong> 用延时列表(双列表处理溢出、按到期排序 + xNextTaskUnblockTime 使 tick O(1))。</li>
+  <li>抢占式(靠 SysTick)vs 协作式(靠自觉);<strong>挂起调度器</strong>(不伤中断)vs <strong>关中断</strong>(伤中断)按竞争对象选。</li>
+  <li><strong>configMAX_SYSCALL_INTERRUPT_PRIORITY</strong> 让超高优先级中断零延迟,是实时关键。</li>
+</ul>
+
+<h2 id="s17">17.17 思维导图</h2>
+<pre><code>FreeRTOS 调度器
+├─ 一、两问:何时调度 + 选谁
+├─ 二、pxCurrentTCB(核心锚点, volatile)
+├─ 三、选任务:位图+CLZ(O(1)) + 环形链表取下一个(轮转)
+├─ 四、vTaskSwitchContext(C选谁) vs PendSV(汇编真切) 职责分离
+├─ 五、三条触发路径殊途同归→PendSV
+│  ├─ SysTick抢占 / taskYIELD / 阻塞唤醒
+├─ 六、xTaskIncrementTick(时钟中断=抢占引擎)
+│  ├─ 计数+1 / 唤醒到期任务(高优先级则抢占) / 时间片检查
+├─ 七、时间片:固定1tick, 仅同优先级轮转(环形pxIndex)
+├─ 八、portYIELD=挂起PendSV(用DSB/ISB屏障)
+├─ 九、vTaskDelay→延时列表
+│  ├─ 双列表处理xTickCount溢出
+│  └─ 按到期排序+xNextTaskUnblockTime→tick O(1)
+├─ 十、抢占式(靠SysTick) vs 协作式(靠自觉)
+├─ 十一、挂起调度器(不伤中断) vs 关中断(伤中断)按竞争对象选
+├─ 十二、临界区BASEPRI:超高优先级中断零延迟
+│  └─ configMAX_SYSCALL_INTERRUPT_PRIORITY
+└─ 十三、对比Linux CFS:确定性 vs 公平</code></pre>
+
+<h2 id="s18">17.18 课后练习与面试题</h2>
+<h3>课后练习</h3>
+<ol>
+  <li>在 <code>tasks.c</code> 找到 <code>vTaskSwitchContext</code>、<code>taskSELECT_HIGHEST_PRIORITY_TASK</code>、<code>xTaskIncrementTick</code>,逐段对照本章读。</li>
+  <li>创建 3 个同优先级任务,各自翻转一个 GPIO,用逻辑分析仪观察它们每 1 tick 轮换,验证时间片轮转;再创建一个更高优先级任务周期运行,观察它如何抢占。</li>
+  <li>打开/关闭 <code>configUSE_TIME_SLICING</code>,对比同优先级任务的运行行为。</li>
+  <li>打开/关闭 <code>configUSE_PREEMPTION</code>,写一个不主动让出的高优先级死循环任务,观察协作式下低优先级任务是否被饿死。</li>
+  <li>在 <code>vTaskDelay</code> 处下断点,单步进入,观察任务如何被移出就绪列表、加入延时列表;找到双延时列表和溢出处理逻辑。</li>
+  <li>研究 <code>configMAX_SYSCALL_INTERRUPT_PRIORITY</code> 和 <code>taskENTER_CRITICAL</code> 里 BASEPRI 的设置,理解哪些中断会/不会被临界区屏蔽。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>描述 FreeRTOS 选出下一个运行任务的完整算法。</li>
+  <li>vTaskSwitchContext 和 PendSV 各负责什么?为什么这样分工?</li>
+  <li>调度有哪几种触发方式?为什么最终都用 PendSV?</li>
+  <li>时间片轮转如何实现?发生在哪些任务之间?</li>
+  <li>vTaskDelay 的实现原理?如何处理 tick 计数溢出?</li>
+  <li>挂起调度器和关中断的区别与适用场景?</li>
+  <li>configMAX_SYSCALL_INTERRUPT_PRIORITY 的作用?它对实时性意味着什么?</li>
+  <li>对比 FreeRTOS 调度器和 Linux CFS 的设计取向。</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第十七章 完 · 下一章《第十八章 SysTick 与 PendSV 上下文切换》</p>
+<div class="nav">
+  <a href="第16章-FreeRTOS-Task任务.html">← 第十六章</a>
+  <a href="index.html">目录</a>
+  <a href="第18章-FreeRTOS-SysTick与PendSV.html">第十八章 →</a>
+</div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第十三章 GIC 中断控制器</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13.5px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第12章-异常与异常等级.html">← 第十二章</a>
+  <a href="index.html">目录</a>
+  <a href="第14章-Cache一致性.html">第十四章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第二卷 · ARM 架构</div>
+  <h1>第十三章 GIC 中断控制器</h1>
+  <div class="sub">几百个外设中断，如何被送到正确的那个 CPU 核</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么多核需要一个专门的中断控制器</a></li>
+    <li><a href="#s2">从 NVIC 到 GIC：问题变复杂了</a></li>
+    <li><a href="#s3">生活类比：公司的总机与分机</a></li>
+    <li><a href="#s4">三类中断：SGI / PPI / SPI(+LPI)</a></li>
+    <li><a href="#s5">GIC 的物理结构：Distributor + Redistributor + CPU Interface</a></li>
+    <li><a href="#s6">一个中断的一生：生命周期状态机</a></li>
+    <li><a href="#s7">优先级、抢占与 Running Priority</a></li>
+    <li><a href="#s8">亲和性路由：中断送给哪个核</a></li>
+    <li><a href="#s9">ACK 与 EOI：内核怎么"接住"中断</a></li>
+    <li><a href="#s10">GICv3 的系统寄存器接口</a></li>
+    <li><a href="#s11">ITS 与 LPI：给 MSI 用的消息中断</a></li>
+    <li><a href="#s12">Linux 是怎么用 GIC 的</a></li>
+    <li><a href="#s13">RK3588 的 GIC-600</a></li>
+    <li><a href="#s14">面试常问</a></li>
+    <li><a href="#s15">常见误区</a></li>
+    <li><a href="#s16">本章总结</a></li>
+    <li><a href="#s17">思维导图</a></li>
+    <li><a href="#s18">课后练习与面试题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第七章讲了"中断是什么、怎么响应",第十二章讲了"中断作为异常怎么进 EL1"。但有一个环节一直被跳过:<strong>外设产生的中断信号,是怎么从几百个外设里被筛选、排优先级、然后送到 8 个核中"正确的那一个"的?</strong>这件事由一个专门的硬件——GIC——完成。这一章把 GIC(以 RK3588 用的 GICv3 为主)从结构到寄存器讲透。这是多核 Linux、SMP 中断处理、CPU 亲和性的硬件基础,也是驱动工程师绕不开的一关。</p></blockquote>
+
+<h2 id="s1">13.1 为什么多核需要一个专门的中断控制器</h2>
+<p>先想清楚问题的规模。一颗 RK3588 上有多少个中断源?UART×N、SPI、I2C、CAN、USB、PCIe、GPIO(几百个引脚,每个都能中断)、各种定时器、DMA 的每个通道、GPU、VPU、NPU……<strong>加起来几百上千个中断源</strong>。而 CPU 只有 8 个核。现在的问题远比单片机复杂:</p>
+<ol>
+  <li><strong>汇聚</strong>:几百个中断信号,不可能每个都直接连到 CPU 核的一根引脚上(引脚不够,也没法扩展)。需要一个"汇聚点"把它们收集起来。</li>
+  <li><strong>仲裁</strong>:同时来了 10 个中断,先处理哪个?要按优先级排队。</li>
+  <li><strong>路由(多核特有!)</strong>:这个中断该交给哪个核处理?核 0 忙,能不能给核 3?能不能指定"网卡中断只由核 2 处理"?</li>
+  <li><strong>核间通信</strong>:核 0 想通知核 3"你醒醒,有活干了"——多核之间也需要互相中断。</li>
+  <li><strong>屏蔽与优先级门槛</strong>:某个核正在做关键任务,想暂时只接受高于某优先级的中断。</li>
+</ol>
+<p>这些事,单靠 CPU 核自己做不了(核只有一根"中断进来了"的输入线)。<strong>必须有一个独立的硬件专门管这摊子事——它就是 GIC(Generic Interrupt Controller,通用中断控制器)。</strong></p>
+
+<h2 id="s2">13.2 从 NVIC 到 GIC：问题变复杂了</h2>
+<p>你在 Cortex-M 上熟悉的是 <strong>NVIC</strong>(嵌套向量中断控制器)。对比一下,你就懂 GIC 为什么这么复杂:</p>
+<table>
+<tr><th></th><th>NVIC(Cortex-M)</th><th>GIC(Cortex-A)</th></tr>
+<tr><td>在哪</td><td>在 CPU 核内部,紧耦合</td><td>独立的片上 IP,核外</td></tr>
+<tr><td>核数</td><td>单核为主</td><td>多核(几十上百核)</td></tr>
+<tr><td>路由</td><td>不用管,就一个核</td><td>核心难题:送给哪个核</td></tr>
+<tr><td>中断数</td><td>几十~几百</td><td>上千,还支持消息中断(LPI)</td></tr>
+<tr><td>核间中断</td><td>无(单核不需要)</td><td>SGI 专门做核间中断</td></tr>
+<tr><td>访问方式</td><td>固定的内存映射寄存器</td><td>MMIO + 系统寄存器(GICv3)</td></tr>
+</table>
+<blockquote><p>一句话:<strong>NVIC 是"单核、核内、简单确定"的中断管家;GIC 是"多核、核外、要做路由和仲裁"的中断调度中心。</strong>GIC 的全部复杂性,都来自"多核"这三个字——因为一旦有多个核,就必须回答"这个中断归谁管"。理解了这个动机,后面的结构就都有了逻辑。</p></blockquote>
+<p>GIC 有多个版本:GICv1/v2(老,最多 8 核)、<strong>GICv3</strong>(现代主流,支持大量核、引入系统寄存器接口和 LPI)、GICv4(加了虚拟中断直通)。RK3588 用的是 <strong>GICv3</strong>(具体实现是 ARM GIC-600),所以本章以 GICv3 为主线。</p>
+
+<h2 id="s3">13.3 生活类比：公司的总机与分机</h2>
+<p>把 GIC 想象成一个大公司的电话系统。公司有几百个外线(外设中断源)、8 个部门经理(CPU 核)。</p>
+<ul>
+  <li><strong>总机(Distributor,分发器)</strong>:所有外线电话先打到总机。总机知道全局:哪些电话线存在、每条线多重要(优先级)、这条线该转给哪个部门(路由)。它是"全局视角"的那一个。</li>
+  <li><strong>每个经理桌上的分机(CPU Interface / Redistributor)</strong>:总机决定把电话转给某个经理后,电话在那个经理的分机上响。经理拿起分机应答(ACK)、处理、挂断(EOI)。这是"每个核私有"的部分。</li>
+  <li><strong>内部通话(SGI)</strong>:经理之间可以直接互相打内线(核间中断),不用走外线。</li>
+</ul>
+<p>关键分工:<strong>总机管"全局的、共享的"事(所有外设中断的收集、优先级、路由决策);每个核的接口管"本核私有的"事(接听、应答、优先级门槛)。</strong>GIC 的物理结构(13.5)就是这个分工的硬件化。</p>
+
+<h2 id="s4">13.4 三类中断：SGI / PPI / SPI(+LPI)</h2>
+<p>GIC 把所有中断按"来源和归属"分成几类,并给每类分配了固定的中断号(INTID)范围。这是理解 GIC 的第一块基石,面试必问。</p>
+<table>
+<tr><th>类型</th><th>全称</th><th>INTID 范围</th><th>是什么</th><th>归属</th></tr>
+<tr><td><strong>SGI</strong></td><td>Software Generated Interrupt<br>软件产生中断</td><td>0–15</td><td>一个核用软件"戳"另一个核(核间中断 IPI)</td><td>每核私有</td></tr>
+<tr><td><strong>PPI</strong></td><td>Private Peripheral Interrupt<br>私有外设中断</td><td>16–31</td><td>每个核私有的外设中断,如每核自己的定时器</td><td>每核私有</td></tr>
+<tr><td><strong>SPI</strong></td><td>Shared Peripheral Interrupt<br>共享外设中断</td><td>32–1019</td><td>全局共享的外设中断,如 UART、GPIO、网卡</td><td>可路由到任意核</td></tr>
+<tr><td><strong>LPI</strong></td><td>Locality-specific Peripheral Interrupt</td><td>8192+</td><td>基于消息的中断(MSI),给 PCIe 等用</td><td>GICv3 引入,靠 ITS 路由</td></tr>
+</table>
+<h4>怎么理解这三类的划分?按"这个中断该给谁"来分</h4>
+<ul>
+  <li><strong>SGI(核间中断)</strong>:核 0 想让核 3 干活(比如 Linux 要在所有核上刷 TLB、要让某个核重新调度)。它不是外设产生的,而是软件写 GIC 寄存器"生成"的,专门用于核之间打招呼。这在多核里极其重要——第五卷的 <code>smp_call_function</code>、TLB shootdown、reschedule IPI 全靠它。</li>
+  <li><strong>PPI(私有外设)</strong>:有些外设是"每个核一份"的,最典型的是<strong>每核的私有定时器</strong>(ARM generic timer)。核 0 的定时器中断只该给核 0(它管核 0 的调度 tick),不该跑到核 3。这类中断天生绑定某个核。</li>
+  <li><strong>SPI(共享外设)</strong>:绝大多数外设(UART、SPI、GPIO、DMA、网卡)是"全局一份"的,它们的中断可以交给任意核处理,由内核/GIC 决定路由到哪个核。<strong>这是"中断亲和性(IRQ affinity)"发挥作用的地方</strong>——你能在 Linux 里指定"网卡中断只由核 2 处理"。</li>
+</ul>
+<blockquote><p>记住这个划分的<strong>本质是"归属"</strong>:SGI/PPI 是每核私有的(号 0-31,每个核都有自己的一套 0-31),SPI 是全局共享可路由的(号 32+,全局唯一)。这个"私有 vs 共享"的分界,直接决定了它们在 GIC 里由哪个部件管理(私有的归 Redistributor,共享的归 Distributor)——见下节。</p></blockquote>
+
+<h2 id="s5">13.5 GIC 的物理结构：Distributor + Redistributor + CPU Interface</h2>
+<p>现在拆开 GICv3 的硬件。它由三大部件组成,正好对应"全局 vs 私有"的分工:</p>
+<pre><code>                    几百个外设中断源(SPI)
+                           │
+              ┌────────────▼─────────────┐
+              │   Distributor (GICD)      │  ← 全局唯一一个
+              │   管所有 SPI:              │
+              │   - 使能/禁用每个中断       │
+              │   - 设优先级               │
+              │   - 决定路由到哪个核         │
+              └──┬──────────┬──────────┬──┘
+                 │          │          │  (把中断分发给目标核的Redistributor)
+        ┌────────▼──┐ ┌─────▼─────┐ ┌──▼────────┐
+        │Redistrib. │ │Redistrib. │ │Redistrib. │  ← 每个核一个
+        │(GICR) 核0 │ │(GICR) 核1 │ │(GICR) 核7 │
+        │管本核的    │ │           │ │           │
+        │SGI/PPI/LPI │ │           │ │           │
+        └─────┬─────┘ └─────┬─────┘ └─────┬─────┘
+              │             │             │  (通过CPU Interface送进核)
+        ┌─────▼─────┐ ┌─────▼─────┐ ┌─────▼─────┐
+        │CPU Iface  │ │CPU Iface  │ │CPU Iface  │  ← 每个核内部
+        │(ICC_* 系统 │ │           │ │           │
+        │ 寄存器)    │ │           │ │           │
+        └─────┬─────┘ └─────┬─────┘ └─────┬─────┘
+           核0 CPU        核1 CPU       核7 CPU</code></pre>
+<table>
+<tr><th>部件</th><th>数量</th><th>管什么</th><th>访问方式</th></tr>
+<tr><td><strong>Distributor (GICD)</strong></td><td>全局 1 个</td><td>所有 SPI 的使能/优先级/路由,全局配置</td><td>MMIO(内存映射寄存器)</td></tr>
+<tr><td><strong>Redistributor (GICR)</strong></td><td>每核 1 个</td><td>本核的 SGI/PPI/LPI 的状态与配置</td><td>MMIO(每核一段地址)</td></tr>
+<tr><td><strong>CPU Interface</strong></td><td>每核内 1 个</td><td>本核实际接收中断、ACK、EOI、优先级门槛</td><td><strong>系统寄存器 ICC_*</strong>(GICv3 新增,快)</td></tr>
+</table>
+<blockquote><p>为什么 GICv3 要把 GICv2 的东西拆成 Distributor + Redistributor 两层?因为<strong>可扩展性</strong>。GICv2 最多支持 8 核,所有配置都在一个 Distributor 里,核多了这个中心点就成了瓶颈和限制。GICv3 把"每核私有的中断(SGI/PPI/LPI)"下放到<strong>每核一个的 Redistributor</strong>,Distributor 只管全局共享的 SPI。这样核数可以扩展到成百上千(服务器 CPU)。<strong>这是"把共享的集中管、把私有的分散管"的经典可扩展性设计</strong>——你会在第五卷 Linux 的 per-CPU 数据结构里反复见到同样的思想。</p></blockquote>
+
+<h2 id="s6">13.6 一个中断的一生：生命周期状态机</h2>
+<p>GIC 里每个中断都有一个状态,理解这个状态机是掌握 GIC 的核心。一个中断在四个状态间转移:</p>
+<pre><code>       ┌──────────┐  外设拉高中断信号   ┌──────────┐
+       │ Inactive │ ─────────────────▶ │ Pending  │
+       │ (空闲)    │                    │ (等待处理) │
+       └──────────┘                    └────┬─────┘
+            ▲                                │ CPU通过读ICC_IAR
+            │ EOI(处理完毕)                   │ 应答(ACK)这个中断
+            │                                ▼
+       ┌────┴─────┐   处理期间外设又触发  ┌──────────┐
+       │ Active   │ ◀─────────────────  │  Active  │
+       │(正在处理) │   → Active&Pending  │(正在处理) │
+       └──────────┘                     └──────────┘</code></pre>
+<table>
+<tr><th>状态</th><th>含义</th></tr>
+<tr><td><strong>Inactive</strong></td><td>没事,中断没发生</td></tr>
+<tr><td><strong>Pending</strong></td><td>中断已触发,在排队等某个核来处理</td></tr>
+<tr><td><strong>Active</strong></td><td>某个核已经 ACK 了它,正在处理中</td></tr>
+<tr><td><strong>Active and Pending</strong></td><td>正在处理时,同一个中断又来了一次(边处理边有新的排队)</td></tr>
+</table>
+<p>状态转移的驱动:</p>
+<ul>
+  <li><strong>Inactive → Pending</strong>:外设产生中断(拉高信号线,或对电平/边沿触发),GIC 把它标记为 pending。</li>
+  <li><strong>Pending → Active</strong>:CPU 读 <strong>ICC_IAR</strong>(Interrupt Acknowledge Register)寄存器"认领"这个中断——这个动作叫 <strong>ACK(应答)</strong>。GIC 返回中断号,并把状态改成 active。</li>
+  <li><strong>Active → Inactive</strong>:CPU 处理完,写 <strong>ICC_EOIR</strong>(End Of Interrupt Register)告诉 GIC"这个中断我处理完了"——这叫 <strong>EOI</strong>。</li>
+</ul>
+<blockquote><p>为什么要有 <strong>Active</strong> 这个中间状态,而不是"处理完直接回 inactive"?因为在处理期间,GIC 要知道"这个中断有核正在处理,别再送给别的核了"(防止同一中断被两个核重复处理)。而且 active 状态下,如果同一中断又来了,记为 <strong>Active and Pending</strong>,处理完当前的会再处理一次,不丢中断。这个状态机保证了<strong>中断不重复、不丢失</strong>,是 GIC 正确性的核心。</p></blockquote>
+
+<h2 id="s7">13.7 优先级、抢占与 Running Priority</h2>
+<p>多个中断同时 pending,GIC 靠优先级仲裁。这里有几个精确的机制:</p>
+<h4>优先级数值:越小越高(和 Cortex-M NVIC 一样)</h4>
+<p>每个中断有个 8 位优先级字段(具体可用位数由实现决定,如 RK3588 支持 5 位=32 级)。<strong>数值越小,优先级越高</strong>(0 最高)。这是个经典坑,配反了高优先级中断抢不到。</p>
+<h4>优先级掩码:ICC_PMR(Priority Mask Register)</h4>
+<p>每个核可以设一个"门槛"——<strong>只有优先级高于(数值小于)这个门槛的中断,才能被这个核接收。</strong>低于门槛的被暂时挡住。这相当于第七章"关中断"的精细版:不是全关,而是"只关低优先级的"。Linux 的 <code>local_irq_disable</code> 在 GICv3 上有一种实现(pseudo-NMI 特性)就是靠调 PMR。</p>
+<h4>抢占:Running Priority 与 Binary Point</h4>
+<p>核正在处理一个中断(active),此时来了个更高优先级的中断,能不能抢占当前中断处理?</p>
+<ul>
+  <li>核当前处理的中断的优先级,叫 <strong>Running Priority</strong>。</li>
+  <li>新中断只有优先级<strong>高于 Running Priority</strong>(且高于 PMR 门槛),才能抢占,形成<strong>中断嵌套</strong>(第七章讲过嵌套)。</li>
+  <li><strong>Binary Point Register(ICC_BPR)</strong>:把 8 位优先级分成"组优先级"和"组内优先级"两部分。<strong>只有组优先级不同才允许抢占,组内优先级不同不抢占。</strong>这是用来控制"抢占的粒度"——你可以让一批优先级相近的中断互相不抢占(减少嵌套开销),只有明显更高的才抢。</li>
+</ul>
+<blockquote><p>Binary Point 是很多人搞不清的点。打个比方:优先级像军衔。BPR 决定"军衔差多少才允许打断上级"。如果设成"只有跨大级别(将 vs 校)才能打断",那么同为校级的中断(上校、中校)之间就不互相抢占,排队处理;只有将级来了才抢。<strong>它让你在"响应及时"和"减少嵌套混乱"之间调平衡。</strong>Linux 通常把 BPR 设成"几乎不用组内优先级",简化模型。</p></blockquote>
+
+<h2 id="s8">13.8 亲和性路由：中断送给哪个核</h2>
+<p>这是 GIC 相对 NVIC 最本质的新增能力,也是多核性能调优的关键。一个 SPI(共享外设中断)该送给哪个核?GICv3 用<strong>亲和性(Affinity)路由</strong>。</p>
+<h4>核的层级地址:Affinity</h4>
+<p>GICv3 给每个核一个层级化的地址,叫 Affinity,格式 <code>&lt;Aff3.Aff2.Aff1.Aff0&gt;</code>,对应芯片的物理层级(哪个 socket、哪个 cluster、哪个核)。比如 RK3588 的核在不同 cluster(大核簇/小核簇),就用不同的 Aff1。这个值就是 MPIDR 寄存器里的内容。</p>
+<h4>两种路由模式</h4>
+<p>Distributor 里每个 SPI 有个路由寄存器(<code>GICD_IROUTER&lt;n&gt;</code>),决定它去哪:</p>
+<ul>
+  <li><strong>指定目标模式</strong>:把中断精确送给某一个特定的核(由其 Affinity 指定)。用于"网卡中断固定由核 2 处理"这种亲和性绑定。</li>
+  <li><strong>1-of-N 模式</strong>:把中断交给 GIC,让它从"一组候选核"里挑一个当前<strong>能接收</strong>的核(比如没被 PMR 挡住、相对空闲的)。用于负载均衡。</li>
+</ul>
+<blockquote><p>这就是 Linux 里 <code>/proc/irq/&lt;irq&gt;/smp_affinity</code> 的硬件基础。你写一个 CPU 掩码进去,内核就会配置 GICD_IROUTER,把这个中断路由到指定的核。<strong>为什么要指定?性能。</strong>比如:①让网卡中断固定在核 2,那么网络数据的处理都在核 2,相关数据一直在核 2 的 Cache 里(第八章 Cache 亲和性),不用跨核搬;②把中断从跑实时任务的核上"赶走",避免中断打扰实时性(这在这种做机器人的公司极重要——把飞控相关处理隔离到专用核)。第八卷讲 CPU 隔离(isolcpus)、中断亲和性调优时会深入。</p></blockquote>
+
+<h2 id="s9">13.9 ACK 与 EOI：内核怎么"接住"中断</h2>
+<p>把 13.6 的状态机落到内核实际写的寄存器操作。当一个中断送达某个核,触发了 IRQ 异常(第十二章),进入内核的 IRQ 处理入口后,内核这样"接住"它:</p>
+<pre><code>内核 IRQ 处理流程(GICv3):
+
+① 读 ICC_IAR1_EL1  (Interrupt Acknowledge Register)
+   → GIC 返回当前最高优先级 pending 中断的 INTID(中断号)
+   → 该中断状态 Pending → Active   (这就是 ACK)
+   → 若返回 1023(特殊值)表示"假中断/没有中断", 直接退出
+
+② 根据 INTID 找到对应的处理函数(irq handler), 执行它
+   → 读设备寄存器、清设备的中断标志、处理数据...
+
+③ 写 ICC_EOIR1_EL1  (End Of Interrupt Register), 参数是刚才的 INTID
+   → 告诉 GIC "这个中断处理完了"
+   → 该中断状态 Active → Inactive   (这就是 EOI)
+   → 释放这个优先级, 允许同级中断再进来</code></pre>
+<h4>EOI 的两种模式:为什么 ACK 和 "deactivate" 可以分开</h4>
+<p>GICv3 支持把 EOI 拆成两步:<strong>priority drop(降优先级)</strong>和<strong>deactivate(去激活)</strong>。</p>
+<ul>
+  <li><strong>EOImode=0(合一)</strong>:写 EOIR 一次干完两件事(降优先级+去激活)。简单。</li>
+  <li><strong>EOImode=1(分离)</strong>:写 EOIR 只"降优先级"(允许后续中断抢占),另外写 <code>ICC_DIR</code> 才真正"去激活"。</li>
+</ul>
+<p>为什么要分离?<strong>虚拟化。</strong>当中断要转发给虚拟机处理时,Hypervisor(EL2)先降优先级(让物理 GIC 可以继续工作),但"去激活"要等虚拟机真正处理完才做。分离两步给了虚拟化灵活性。Linux 在跑虚拟化(KVM)时用 EOImode=1。这个细节体现了 GICv3 为虚拟化做的设计(GICv4 更进一步做虚拟中断直通)。</p>
+
+<h2 id="s10">13.10 GICv3 的系统寄存器接口</h2>
+<p>GICv2 时代,CPU Interface 是通过 <strong>MMIO(内存映射寄存器)</strong>访问的——每次 ACK/EOI 都要访问一个内存地址,慢(要走总线,还可能 miss)。GICv3 的一大改进:<strong>把 CPU Interface 变成 CPU 的系统寄存器(ICC_* 寄存器),用 MSR/MRS 指令直接读写,快得多。</strong></p>
+<pre><code>GICv3 常用系统寄存器(通过 MRS/MSR 访问, 不走内存总线):
+  ICC_IAR1_EL1   读它 = ACK, 获取中断号
+  ICC_EOIR1_EL1  写它 = EOI, 结束中断
+  ICC_PMR_EL1    优先级掩码(门槛)
+  ICC_BPR1_EL1   Binary Point(抢占粒度)
+  ICC_CTLR_EL1   控制(如 EOImode)
+  ICC_SGI1R_EL1  写它 = 发送 SGI(核间中断)
+  ICC_IGRPEN1_EL1 使能中断组</code></pre>
+<blockquote><p>为什么这个改进重要?<strong>中断响应是极高频操作</strong>,每秒可能几十万次。把 ACK/EOI 从"访问内存映射寄存器(几十~上百周期)"变成"读写系统寄存器(几周期)",大幅降低中断处理开销、也让延迟更确定。这对高吞吐(网络)和实时(机器人)都是关键优化。<strong>MMIO(慢、走总线)vs 系统寄存器(快、核内)</strong>——你会发现这又是第四章"越靠近核越快"的体现。GICD/GICR 仍是 MMIO(全局配置,不频繁),但最频繁的 CPU Interface 操作改成了系统寄存器。这个"把热路径搬进核内"的思路,是体系结构优化的通用套路。</p></blockquote>
+
+<h2 id="s11">13.11 ITS 与 LPI：给 MSI 用的消息中断</h2>
+<p>GICv3 引入了一类全新的中断:<strong>LPI(基于消息的中断)</strong>,以及管理它的 <strong>ITS(Interrupt Translation Service,中断翻译服务)</strong>。这是给 <strong>PCIe/MSI</strong> 用的,理解它需要先懂 MSI。</p>
+<h4>传统中断 vs 消息中断(MSI)</h4>
+<ul>
+  <li><strong>传统中断(线中断)</strong>:外设有一根物理"中断线"连到 GIC,拉高电平表示中断。问题:线的数量有限,PCIe 设备可能很多、每个设备想要很多中断(如网卡多队列,每个队列一个中断),物理线不够用。</li>
+  <li><strong>MSI(Message Signaled Interrupt,消息中断)</strong>:外设不用专门的中断线,而是<strong>往一个特定的内存地址"写一个数据"来表示中断</strong>——这个写操作被 GIC 捕获,翻译成一个中断。好处:不占物理线,一个设备能有海量中断(几千个),天然适合 PCIe。</li>
+</ul>
+<h4>ITS 干什么:把"设备写的消息"翻译成"送给哪个核的哪个中断"</h4>
+<pre><code>PCIe 设备触发 MSI:
+  设备往 ITS 的门铃地址写一个数据 (DeviceID + EventID)
+        │
+        ▼
+  ITS 查它维护的翻译表:
+  - 用 DeviceID 找到是哪个设备
+  - 用 EventID 映射到一个 LPI 中断号
+  - 查 ITS 表决定这个 LPI 送给哪个核(哪个 Redistributor)
+        │
+        ▼
+  对应核的 Redistributor 收到 LPI → 送进 CPU → 触发中断</code></pre>
+<p>ITS 就像一个"智能总机翻译员":设备只知道自己的编号和事件号,ITS 负责把它翻译成"具体哪个核收到哪个中断号"。<strong>LPI 号从 8192 起,数量可以极大(几十万),满足 PCIe 大量设备的需求。</strong>LPI 的配置(优先级、使能、路由目标)存在<strong>内存里的表</strong>(不是寄存器,因为数量太大),由 Redistributor 和 ITS 通过内存访问管理。</p>
+<blockquote><p>你做 RK3588 上的 PCIe 设备(NVMe SSD、网卡、AI 加速卡)驱动时,它们的中断走的就是 MSI/MSI-X → LPI → ITS 这条路。理解 ITS 才能理解为什么 PCIe 设备能有那么多中断、以及它们怎么被路由。这也是"传统电平中断"到"现代消息中断"的演进——用"写内存消息"取代"物理中断线",是可扩展性的又一次胜利。</p></blockquote>
+
+<h2 id="s12">13.12 Linux 是怎么用 GIC 的</h2>
+<p>把硬件接回软件。Linux 有一套<strong>中断子系统(irqchip 框架)</strong>,GIC 只是其中一个"irqchip 驱动"。梳理软件栈:</p>
+<pre><code>Linux 中断软件栈(自底向上):
+
+  硬件: GIC (GICD + GICR + CPU Interface + ITS)
+      ▲
+  irqchip 驱动: drivers/irqchip/irq-gic-v3.c
+      - 实现 GIC 的 ack/eoi/mask/unmask/set_affinity 等操作
+      ▲
+  通用中断层: kernel/irq/  (irq_desc 描述每个中断)
+      - Linux 用"虚拟中断号 virq"抽象, 通过 irqdomain 映射到硬件 INTID
+      ▲
+  设备驱动: request_irq(virq, my_handler, ...)
+      - 驱动只管"申请某中断+提供处理函数", 不碰 GIC 细节</code></pre>
+<p>几个关键点:</p>
+<ul>
+  <li><strong>硬件中断号(INTID/hwirq)≠ Linux 虚拟中断号(virq)。</strong>Linux 用 <code>irqdomain</code> 做映射,让驱动用统一的 virq,不用关心底层是 GIC 还是别的控制器。这是"再加一层抽象"的又一例(呼应第九章 MMU、第十章虚拟内存的"加中间层"哲学)。</li>
+  <li>设备树(第六卷)里描述中断:<code>interrupts = &lt;GIC_SPI 46 IRQ_TYPE_LEVEL_HIGH&gt;;</code> 就是告诉内核"这个设备用 SPI 类型、硬件号 46、电平触发",内核据此配置 GIC 并建立 virq 映射。</li>
+  <li>驱动 <code>request_irq()</code> 时,通用层最终调 GIC 驱动去 unmask 这个中断、设优先级、设路由。中断来了,GIC 驱动的 ack/eoi 被自动调用。</li>
+</ul>
+
+<h2 id="s13">13.13 RK3588 的 GIC-600</h2>
+<p>落到你手上的板子。RK3588 用的是 ARM <strong>GIC-600</strong>(GICv3 的一个具体实现):</p>
+<ul>
+  <li>支持 RK3588 的 8 个核(4×A76 + 4×A55),跨两个 cluster,用 Affinity 区分。</li>
+  <li>有 Distributor、每核 Redistributor、ITS(供 PCIe 的 MSI 用——RK3588 有多路 PCIe)。</li>
+  <li>你在 RK3588 的设备树(<code>rk3588.dtsi</code>)里能找到 <code>gic: interrupt-controller@fe600000</code> 节点,里面 <code>#interrupt-cells = &lt;4&gt;</code>、寄存器基址(GICD、GICR 的地址)、ITS 子节点等。</li>
+  <li>Linux 启动时 <code>irq-gic-v3.c</code> 探测它、初始化,之后所有中断都经它。</li>
+</ul>
+<blockquote><p>实战建议:在 RK3588 上 <code>cat /proc/interrupts</code>,你能看到每个中断在<strong>每个核</strong>上的触发计数(多核特有,NVIC 时代没有这个视角)。观察哪些中断集中在哪个核、用 <code>/proc/irq/N/smp_affinity</code> 调整路由,就是 GIC 亲和性的实操。做机器人/无人机时,把高频中断从实时核上迁走、集中到专用核,是常见的实时性优化——这一整套操作的硬件依据,就是本章的 GIC。</p></blockquote>
+
+<h2 id="s14">13.14 面试常问问题</h2>
+<p><strong>Q1:GIC 和 NVIC 的区别?为什么多核要用 GIC?</strong><br>NVIC 在核内、单核、简单;GIC 是核外独立 IP、面向多核,核心难题是中断路由(送给哪个核)、仲裁、核间中断。多核必须有一个统一的部件决定"中断归谁管"。</p>
+<p><strong>Q2:SGI/PPI/SPI 的区别?</strong><br>按归属分:SGI(0-15)核间软件中断、PPI(16-31)每核私有外设中断(如私有定时器)、SPI(32-1019)全局共享可路由的外设中断。SGI/PPI 私有,SPI 共享。</p>
+<p><strong>Q3:GICv3 的三大部件及分工?为什么拆成 Distributor + Redistributor?</strong><br>Distributor 管全局 SPI(路由/优先级),每核 Redistributor 管本核 SGI/PPI/LPI,CPU Interface 在核内做 ACK/EOI。拆分是为可扩展性:把私有中断下放到每核,支持成百核。</p>
+<p><strong>Q4:一个中断的生命周期状态?ACK 和 EOI 是什么?</strong><br>Inactive→Pending(外设触发)→Active(读 ICC_IAR 应答=ACK)→Inactive(写 ICC_EOIR 结束=EOI)。Active 状态防止同一中断被多核重复处理、不丢中断。</p>
+<p><strong>Q5:中断亲和性(affinity)是什么?有什么用?</strong><br>把 SPI 路由到指定核。用于:把中断固定在某核以利用 Cache 亲和性、做负载均衡、把中断从实时核赶走保护实时性。对应 Linux 的 smp_affinity。</p>
+<p><strong>Q6:什么是 MSI/LPI/ITS?为什么 PCIe 用它?</strong><br>MSI 用"往特定地址写消息"代替物理中断线,不占线且可有海量中断。LPI 是 GICv3 的消息中断类型,ITS 负责把设备写的消息(DeviceID+EventID)翻译成"哪个 LPI、送哪个核"。PCIe 设备多、需大量中断,故用之。</p>
+<p><strong>Q7:GICv3 相比 v2 的 CPU Interface 有何改进?</strong><br>从 MMIO 改为系统寄存器(ICC_*),用 MRS/MSR 访问,降低高频 ACK/EOI 的开销和延迟。</p>
+
+<h2 id="s15">13.15 常见误区</h2>
+<ol>
+  <li><strong>"GIC 就是个大号 NVIC"</strong>——核心区别是多核路由,GIC 要决定中断给哪个核,NVIC 不需要。</li>
+  <li><strong>"所有中断都能路由到任意核"</strong>——只有 SPI 可路由;SGI/PPI 是每核私有的。</li>
+  <li><strong>"优先级数值越大越优先"</strong>——相反,数值越小越高(和 NVIC 一致)。</li>
+  <li><strong>"读了中断号就算处理完了"</strong>——读 IAR 只是 ACK(进 Active),必须写 EOIR 才算结束(回 Inactive),漏了会导致该优先级被永久占住。</li>
+  <li><strong>"Distributor 管所有中断"</strong>——GICv3 里 Distributor 只管 SPI,SGI/PPI/LPI 归每核 Redistributor。</li>
+  <li><strong>"MSI 需要中断线"</strong>——MSI 恰恰是用写内存消息代替中断线。</li>
+  <li><strong>"Linux 驱动要直接操作 GIC 寄存器"</strong>——驱动用 request_irq/virq,GIC 细节由 irqchip 驱动和通用中断层封装。</li>
+</ol>
+
+<h2 id="s16">13.16 本章总结</h2>
+<ul>
+  <li>多核有几百个中断源、多个核,必须有专门硬件做<strong>汇聚、仲裁、路由、核间中断</strong>——这就是 GIC。</li>
+  <li>GIC vs NVIC:核外 vs 核内、多核 vs 单核,复杂性全来自"多核要做路由"。</li>
+  <li>三类中断按归属分:<strong>SGI(0-15 核间)、PPI(16-31 每核私有)、SPI(32+ 共享可路由)</strong>,GICv3 还有 <strong>LPI</strong>(消息中断)。</li>
+  <li>GICv3 三部件:<strong>Distributor</strong>(全局管 SPI)、每核 <strong>Redistributor</strong>(管私有 SGI/PPI/LPI)、核内 <strong>CPU Interface</strong>(ACK/EOI)。拆分为了可扩展。</li>
+  <li>中断生命周期:<strong>Inactive→Pending→Active→Inactive</strong>;读 <strong>ICC_IAR</strong>=ACK,写 <strong>ICC_EOIR</strong>=EOI;Active 态防重复、不丢中断。</li>
+  <li>优先级越小越高;<strong>PMR</strong> 设门槛,<strong>Running Priority</strong> + <strong>BPR</strong> 控制抢占与嵌套粒度。</li>
+  <li><strong>亲和性路由</strong>:SPI 可指定送给某核或 1-of-N,是 Cache 亲和、实时隔离、负载均衡的基础(Linux smp_affinity)。</li>
+  <li>GICv3 把 CPU Interface 改成<strong>系统寄存器 ICC_*</strong>,降低高频中断开销。</li>
+  <li><strong>MSI/LPI/ITS</strong>:用写内存消息代替中断线,ITS 翻译 DeviceID+EventID→送哪个核,给 PCIe 海量中断用。</li>
+  <li>Linux 用 irqchip + irqdomain(virq↔hwirq)抽象 GIC;RK3588 用 GIC-600(GICv3)。</li>
+</ul>
+
+<h2 id="s17">13.17 思维导图</h2>
+<pre><code>GIC 中断控制器
+├─ 一、多核难题:汇聚/仲裁/路由/核间中断→需专门硬件
+├─ 二、GIC vs NVIC:核外/多核 vs 核内/单核(复杂性=多核路由)
+├─ 三、类比:总机(Distributor)+分机(CPU Interface)+内线(SGI)
+├─ 四、三类中断(按归属)
+│  ├─ SGI 0-15 核间软件中断(IPI)
+│  ├─ PPI 16-31 每核私有(如私有定时器)
+│  ├─ SPI 32-1019 共享可路由(UART/GPIO/网卡)
+│  └─ LPI 8192+ 消息中断(PCIe/MSI)
+├─ 五、三部件(GICv3)
+│  ├─ Distributor 全局管SPI
+│  ├─ Redistributor 每核管SGI/PPI/LPI
+│  └─ CPU Interface 核内ACK/EOI
+│  └─ 拆分理由:可扩展(私有下放到每核)
+├─ 六、生命周期:Inactive→Pending→Active→Inactive
+│  └─ IAR=ACK, EOIR=EOI;Active防重复不丢
+├─ 七、优先级(越小越高)/PMR门槛/RunningPri/BPR抢占粒度
+├─ 八、★亲和性路由:SPI送指定核/1-of-N
+│  └─ Cache亲和/实时隔离/负载均衡(smp_affinity)
+├─ 九、ACK/EOI寄存器操作;EOImode分离(虚拟化用)
+├─ 十、GICv3系统寄存器ICC_*(替代MMIO,降开销)
+├─ 十一、MSI/LPI/ITS:写内存消息代替中断线
+│  └─ ITS翻译DeviceID+EventID→哪个核(PCIe海量中断)
+├─ 十二、Linux:irqchip+irqdomain(virq↔hwirq), request_irq
+└─ 十三、RK3588用GIC-600(GICv3);/proc/interrupts看每核</code></pre>
+
+<h2 id="s18">13.18 课后练习与面试题</h2>
+<h3>课后练习</h3>
+<ol>
+  <li>RK3588 上 <code>cat /proc/interrupts</code>,识别几个中断分别属于哪类(看编号/名字),观察它们在 8 个核上的分布计数。</li>
+  <li>选一个 SPI 中断,读 <code>/proc/irq/N/smp_affinity</code>(和 <code>smp_affinity_list</code>),改成只允许某个核,再看 <code>/proc/interrupts</code> 里它是否只在该核增长。</li>
+  <li>在 RK3588 设备树(<code>rk3588.dtsi</code>)里找到 <code>interrupt-controller</code> 节点和某个外设的 <code>interrupts = &lt;GIC_SPI ...&gt;</code>,解读四个 cell 的含义。</li>
+  <li>读 Linux 源码 <code>drivers/irqchip/irq-gic-v3.c</code>,找到 <code>gic_handle_irq</code>(读 IAR)、<code>gic_eoi_irq</code>(写 EOIR)、<code>gic_set_affinity</code>(写 IROUTER),对照本章。</li>
+  <li>(进阶)查 ITS 相关:<code>cat /proc/interrupts</code> 找到 PCIe/NVMe 的 MSI 中断,确认它走的是 LPI;读 <code>drivers/irqchip/irq-gic-v3-its.c</code> 了解翻译表结构。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>为什么多核系统需要 GIC 而不是 NVIC?GIC 多解决了什么问题?</li>
+  <li>SGI/PPI/SPI/LPI 各是什么?编号范围和用途?</li>
+  <li>GICv3 为什么拆成 Distributor 和 Redistributor?各管什么?</li>
+  <li>描述一个中断从触发到处理完的状态变化,以及内核对应的寄存器操作。</li>
+  <li>中断亲和性是什么?在机器人/实时系统里为什么重要?</li>
+  <li>MSI 相比传统线中断的优势?ITS 的作用?</li>
+  <li>GICv3 把 CPU Interface 改成系统寄存器带来什么好处?</li>
+  <li>Linux 如何抽象不同的中断控制器?virq 和 hwirq 的关系?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第十三章 完 · 下一章《第十四章 Cache 一致性 (MESI)》</p>
+<div class="nav">
+  <a href="第12章-异常与异常等级.html">← 第十二章</a>
+  <a href="index.html">目录</a>
+  <a href="第14章-Cache一致性.html">第十四章 →</a>
+</div>
+
+</div>
+</body>
+</html>

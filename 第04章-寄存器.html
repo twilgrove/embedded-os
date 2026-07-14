@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第四章 寄存器</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13.5px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第03章-指令如何执行.html">← 第三章</a>
+  <a href="index.html">目录</a>
+  <a href="第05章-Stack.html">第五章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第一卷 · 计算机组成原理</div>
+  <h1>第四章 寄存器</h1>
+  <div class="sub">CPU 手边那几十个小碗，为什么是理解上下文切换的钥匙</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">为什么专门用一章讲寄存器</a></li>
+    <li><a href="#s2">再问一次：没有寄存器会怎样</a></li>
+    <li><a href="#s3">存储金字塔：为什么寄存器最快</a></li>
+    <li><a href="#s4">寄存器到底有多快</a></li>
+    <li><a href="#s5">ARM 寄存器全景(Cortex-M)</a></li>
+    <li><a href="#s6">几个特殊寄存器：SP/LR/PC/xPSR</a></li>
+    <li><a href="#s7">ARM64 寄存器(Cortex-A)</a></li>
+    <li><a href="#s8">通用 vs 专用，调用者/被调用者保存</a></li>
+    <li><a href="#s9">寄存器与 C 变量的关系</a></li>
+    <li><a href="#s10">影子寄存器与快速中断</a></li>
+    <li><a href="#s11">上下文 = 一组寄存器的快照</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图</a></li>
+    <li><a href="#s16">课后练习与面试题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：前三章寄存器一直在出场，但都是配角。这一章把它扶正——因为<strong>上下文切换切的就是寄存器</strong>，理解不了寄存器就理解不了 RTOS/Linux 的调度实现。学完你要能默画出 ARM Cortex-M 的寄存器组，说清每个特殊寄存器的用途，并解释"为什么保存上下文就是把这些寄存器抄一份"。</p></blockquote>
+
+<h2 id="s1">4.1 为什么专门用一章讲寄存器</h2>
+<p>寄存器看起来简单——不就是几十个存数的格子吗?但它是整本书的<strong>枢纽</strong>:</p>
+<ul>
+  <li>第一章的<strong>上下文</strong> = 寄存器的集合;</li>
+  <li>第三卷 FreeRTOS 的 <strong>PendSV 切换汇编</strong>,每一行都在搬寄存器;</li>
+  <li>第六章<strong>函数调用</strong>的参数传递、返回值,靠寄存器约定;</li>
+  <li>第七章<strong>中断</strong>响应,硬件自动压栈的就是寄存器;</li>
+  <li>调试时看<strong>崩溃现场</strong>,读的就是寄存器值。</li>
+</ul>
+<p>可以说,<strong>寄存器是软件和硬件的接触面</strong>。把它吃透,后面很多"黑盒"会变透明。</p>
+
+<h2 id="s2">4.2 再问一次：没有寄存器会怎样</h2>
+<p>第二章问过一次,这里更深入。假设 CPU 没有寄存器,ALU 直接对内存运算。算 <code>a = b + c + d</code>:</p>
+<pre><code>没有寄存器(每步都碰内存):
+  从内存读 b        ← 慢(几十~几百个周期)
+  从内存读 c        ← 慢
+  相加, 结果写回内存 ← 慢
+  从内存读刚才的和   ← 慢
+  从内存读 d        ← 慢
+  相加, 写回内存     ← 慢
+
+有寄存器:
+  b,c,d 一次性读进小碗 → 全在 CPU 内部飞快相加 → 只在最后写回一次</code></pre>
+<p>差距的根源在下一节的"存储金字塔"。<strong>寄存器存在的唯一理由:内存太慢,ALU 需要一个紧挨自己的高速暂存区。</strong>这不是设计者的偏好,是被物理速度差逼出来的。</p>
+
+<h2 id="s3">4.3 存储金字塔：为什么寄存器最快</h2>
+<p>计算机的存储不是一种,而是一个"越往上越快越贵越小"的金字塔。理解它,你就懂了寄存器、Cache、内存、硬盘为什么这样分工。</p>
+<pre><code>          ▲ 快 / 贵 / 小
+          │
+    ┌─────────────┐   寄存器     ~0.3ns   几十个     在CPU核里
+    │  寄存器      │             1周期
+    ├─────────────┤   L1 Cache  ~1ns      几十KB
+    │  L1/L2/L3   │   L2        ~4ns      几百KB    在CPU芯片上
+    │   Cache     │   L3        ~15ns     几十MB
+    ├─────────────┤
+    │   内存 DRAM  │            ~100ns    几GB      外部芯片
+    ├─────────────┤
+    │  SSD/硬盘    │            ~100µs~ms  几百GB+   外部设备
+    └─────────────┘
+          │
+          ▼ 慢 / 便宜 / 大</code></pre>
+<h4>为什么会有这个金字塔?一句话:鱼与熊掌</h4>
+<p>又快又大又便宜的存储不存在(物理和成本限制)。所以工程上的智慧是<strong>分层</strong>:把最常用的一点点数据放在最快的地方(寄存器),次常用的放 Cache,大量数据放内存,海量数据放硬盘。<strong>用一点点昂贵的快存储,配合大量廉价的慢存储,逼近"又快又大"的假象。</strong></p>
+<p>注意这个金字塔:<strong>寄存器和内存之间的速度差约 100 倍以上</strong>(0.3ns vs 100ns)。这就是为什么第三章反复强调"运算前要把数据 Load 进寄存器"——不搬进来,ALU 就得忍受 100 倍的等待。</p>
+
+<h2 id="s4">4.4 寄存器到底有多快</h2>
+<p>给你一个直观的换算,建立对速度的敬畏。假设把"寄存器访问 0.3ns"放大成"1 秒":</p>
+<table>
+<tr><th>存储</th><th>真实延迟</th><th>放大成"1秒=寄存器"后</th></tr>
+<tr><td>寄存器</td><td>~0.3 ns</td><td>1 秒</td></tr>
+<tr><td>L1 Cache</td><td>~1 ns</td><td>3 秒</td></tr>
+<tr><td>内存 DRAM</td><td>~100 ns</td><td>约 5 分钟</td></tr>
+<tr><td>SSD</td><td>~100 µs</td><td>约 4 天</td></tr>
+<tr><td>机械硬盘</td><td>~10 ms</td><td>约 1 年</td></tr>
+</table>
+<p>感受到了吗?对 CPU 来说,"去内存拿个数"相当于人等 5 分钟,"读硬盘"相当于等一年。<strong>这就是为什么高性能编程的核心几乎都是"想办法让数据待在离 CPU 更近的地方"</strong>——寄存器分配、Cache 友好、减少访存。第八章讲 Cache 时会把这条主线推到极致。</p>
+
+<h2 id="s5">4.5 ARM 寄存器全景(Cortex-M)</h2>
+<p>你做过 STM32,用的就是 Cortex-M。它的核心寄存器组请你务必能默画出来——面试白板题常考,调试也天天看。</p>
+<pre><code>Cortex-M 核心寄存器(16 个 32 位)
+
+┌──────┐  R0   ┐
+├──────┤  R1   │
+├──────┤  R2   │
+├──────┤  R3   │  通用寄存器(存数据/参数/返回值)
+├──────┤  R4   │  R0~R3 常用于传函数参数
+├──────┤  R5   │  R0    常用于放返回值
+├──────┤  ...  │
+├──────┤  R12  ┘
+├──────┤  R13 = SP  ★栈指针 (Stack Pointer)
+├──────┤  R14 = LR  ★链接寄存器(返回地址)
+├──────┤  R15 = PC  ★程序计数器(下一条指令地址)
+└──────┘
+    + xPSR  ★程序状态寄存器(标志位N/Z/C/V + 中断状态等)</code></pre>
+<p>关键点:<strong>R13/R14/R15 虽然编号连续,但是"专用"的</strong>——它们有硬件赋予的特殊身份(下一节)。R0~R12 是"通用"的,爱存啥存啥。这 16 个 + xPSR,基本就是一个 Cortex-M 任务的"完整现场"。<strong>记住这个数字:十几个寄存器,这就是为什么上下文切换能很快。</strong></p>
+<p>补充:Cortex-M 其实有<strong>两个 SP</strong>——MSP(主栈指针,内核/中断用)和 PSP(进程栈指针,任务用)。RTOS 通常让任务用 PSP、中断用 MSP,这样任务栈和中断栈分开,更安全。这个设计在第三卷讲 FreeRTOS 移植时是关键,先埋下。</p>
+
+<h2 id="s6">4.6 几个特殊寄存器：SP / LR / PC / xPSR</h2>
+<p>这四个是理解调用、中断、切换的命门,逐个说透。</p>
+<h3>SP —— 栈指针</h3>
+<p>永远指向当前栈的栈顶(第五章详讲栈)。函数的局部变量、保存的寄存器、返回地址都堆在栈里,SP 记着"堆到哪了"。<strong>每个任务有自己独立的栈,所以每个任务有自己的 SP 值</strong>——切换任务时换 SP,就等于换了一整个栈。这是上下文切换的核心动作之一。</p>
+<h3>LR —— 链接寄存器(返回地址)</h3>
+<p>第三章说 <code>BL</code>(函数调用)会把返回地址存进 LR。函数执行完 <code>BX LR</code> 就跳回去。<strong>为什么用寄存器存返回地址而不是直接压栈?</strong>因为快——叶子函数(不再调别人的函数)返回地址一直待在 LR 里,连内存都不用碰。但如果这个函数还要调别的函数,LR 会被覆盖,就得先把 LR 压栈保存(第六章)。</p>
+<h3>PC —— 程序计数器</h3>
+<p>指令流的"手指"。改 PC = 跳转。<strong>中断的本质:硬件强行改 PC 跳到中断处理程序,处理完再把 PC 改回来。</strong>(第七章)</p>
+<h3>xPSR —— 程序状态寄存器</h3>
+<p>装着第三章的标志位(N/Z/C/V),还装着"当前是否在中断里""当前中断号"等状态。<strong>上下文切换必须保存它</strong>(第三章 3.12 说过原因:标志位不存,恢复后条件跳转会错)。</p>
+<blockquote><p>把这四个连起来看一次切换:保存 A 的现场 = 存 A 的 {R0-R12, SP, LR, PC, xPSR};恢复 B = 把 B 的这组值填回去。B 的 PC 一填回,手指回到 B 的指令;B 的 SP 一填回,栈回到 B 的栈。<strong>换人如换栈、如换手指位置。</strong></p></blockquote>
+
+<h2 id="s7">4.7 ARM64 寄存器(Cortex-A / RK3588)</h2>
+<p>RK3588 是 Cortex-A(ARMv8-A,64 位),寄存器和 Cortex-M 不同,你做 Linux/RK3588 必须知道:</p>
+<pre><code>ARM64 (AArch64) 通用寄存器:
+  X0 ~ X30   31 个 64 位通用寄存器
+  W0 ~ W30   即 X0~X30 的低 32 位(同一个寄存器的两个视角)
+
+特殊角色(由调用约定 AAPCS64 规定):
+  X0~X7    传函数参数 / X0 放返回值
+  X8       系统调用号 / 间接返回
+  X29 = FP 帧指针(Frame Pointer)
+  X30 = LR 链接寄存器(返回地址)
+  SP       栈指针(独立, 不在 X 编号里)
+  PC       程序计数器(不能直接当通用寄存器访问)
+  PSTATE   状态(相当于 Cortex-M 的 xPSR, 存标志位等)
+
+以及 EL0/EL1/... 各有自己的一套系统寄存器(SP_EL0, SP_EL1...)</code></pre>
+<p>对比记忆:Cortex-M 是 16 个 32 位、面向小型实时;ARM64 是 31 个 64 位、面向大型系统。<strong>寄存器越多,编译器越能把变量留在寄存器里,访存越少,性能越好</strong>——这也是 64 位相比 32 位的一个优势(不只是能寻址更大内存)。</p>
+
+<h2 id="s8">4.8 通用 vs 专用，调用者/被调用者保存</h2>
+<p>这是一个真实工程和面试都高频、但很多人稀里糊涂的点:<strong>函数调用时,一堆寄存器由谁负责保存?</strong></p>
+<h4>问题的来源</h4>
+<p>函数 A 调用函数 B。A 正在用 R4 存一个重要值,B 里也想用 R4。B 一用就把 A 的值覆盖了,B 返回后 A 傻眼。怎么办?总得有人负责"用之前先备份、用完还原"。于是有了<strong>调用约定(Calling Convention)</strong>,把寄存器分两类:</p>
+<table>
+<tr><th>类别</th><th>谁负责保存</th><th>含义</th><th>ARM(AAPCS)</th></tr>
+<tr><td>Caller-saved<br>(调用者保存)</td><td>调用方 A</td><td>"我知道调 B 可能弄脏这些,我调用前自己先备份"</td><td>R0~R3, R12</td></tr>
+<tr><td>Callee-saved<br>(被调用者保存)</td><td>被调方 B</td><td>"我 B 要用这些,得先存起来,返回前还原,不让 A 察觉"</td><td>R4~R11</td></tr>
+</table>
+<h4>为什么这么分?为了少存</h4>
+<p>如果没有约定,每次调用要把所有寄存器都存一遍,太浪费。分两类后:<strong>各存各负责的一半</strong>,总的保存动作最少。R0~R3 反正是用来传参数和返回值的,调用后 A 通常也不在乎它们旧值,所以归调用者(要用才存);R4~R11 用于长期保存的局部变量,归被调用者(用了才存并还原)。</p>
+<blockquote><p>这个知识点在第六章(函数调用)和第三卷(上下文切换代码)会直接用到。上下文切换为什么要保存 R4~R11?因为切换发生在函数中途,而 R4~R11 是"被调用者保存"的,里面可能有当前任务的重要值,切走前必须存下来。R0~R3 有时不用存(视触发方式),因为按约定它们本就是易失的。<strong>看得懂 PendSV 里"手动压 R4~R11"就靠这条。</strong></p></blockquote>
+
+<h2 id="s9">4.9 寄存器与 C 变量的关系</h2>
+<p>你写 C 时从不管寄存器,但编译器天天在管。它做一件核心工作叫<strong>寄存器分配</strong>:尽量把最常用的变量安排进寄存器,减少访存。</p>
+<pre><code>C 代码:
+  int f(int a, int b) {
+      int t = a + b;    // t 很可能被分配到某个寄存器, 根本不进内存
+      return t * 2;
+  }
+
+-O2 优化后可能连 t 都没有, 直接寄存器里算完返回, 一次内存都不碰。</code></pre>
+<ul>
+  <li><code>register</code> 关键字(老 C)曾用来建议编译器"把这个变量放寄存器",现在编译器比你聪明,基本没用了。</li>
+  <li><code>volatile</code> 关键字相反:告诉编译器"别把它优化进寄存器,每次都老老实实读内存"。用于映射硬件寄存器、多线程/中断共享变量——因为那些值可能被 CPU 之外的东西改变,缓存在寄存器里会读到过期值。<strong>这是嵌入式必考:为什么中断里改的全局变量,主循环要用 volatile?</strong>就是防止主循环把它缓存在寄存器里,看不到中断的修改。</li>
+</ul>
+
+<h2 id="s10">4.10 影子寄存器与快速中断</h2>
+<p>一个进阶但实用的设计。中断来了要保存现场,这需要时间。有些架构为了让中断响应更快,搞了<strong>影子寄存器(Banked/Shadow Registers)</strong>:硬件里备了另一套寄存器,进中断时自动切换过去用,不用软件一个个压栈保存。</p>
+<ul>
+  <li>经典 ARM(ARM7/9、Cortex-A 的传统模式)有分组寄存器:不同异常模式有自己的 SP、LR,进入时自动切换,省去保存。</li>
+  <li>Cortex-M 则用另一种思路:进中断时<strong>硬件自动把 R0-R3,R12,LR,PC,xPSR 压栈</strong>(叫"自动压栈"),软件只需保存剩下的 R4-R11。这就是为什么 Cortex-M 中断响应快且确定。</li>
+</ul>
+<blockquote><p>这解释了第一章 1.11 那个时序图里"硬件自动压一半、软件压另一半"的由来。Cortex-M 硬件负责压 caller-saved 那批(R0-R3,R12 等),软件(PendSV)负责压 callee-saved 那批(R4-R11)——正好和 4.8 的调用约定对应上!<strong>硬件的自动压栈选择,恰恰是按调用约定设计的。</strong>这种前后呼应,正是理解体系结构的乐趣。</p></blockquote>
+
+<h2 id="s11">4.11 上下文 = 一组寄存器的快照</h2>
+<p>把全章收束到这句话:<strong>一个执行流(任务/线程)在某一瞬间的"上下文",就是它此刻所有寄存器值的一张快照。</strong></p>
+<pre><code>任务 A 的上下文(快照) =
+  { R0, R1, ..., R12,   ← 中间计算值、参数
+    SP,                  ← 栈用到哪(换它=换栈)
+    LR,                  ← 返回地址
+    PC,                  ← 执行到哪条指令(换它=换手指)
+    xPSR }               ← 标志位、状态(不存会判断错)
+
+保存上下文 = 把这张快照抄到任务A的存档区(栈+TCB)
+恢复上下文 = 把另一张快照填回 CPU 寄存器
+调度       = 决定填谁的快照</code></pre>
+<p>回看前四章,你已经从"CPU 是什么"一路走到"上下文的物理本质"。<strong>第一章讲的操作系统三支柱之首——上下文切换,到这里终于有了完整的硬件解释。</strong>接下来第五章讲栈(快照存哪儿)、第六章讲函数调用(寄存器约定的实战)、第七章讲中断(谁触发切换),把这条线彻底闭合。</p>
+
+<h2 id="s12">4.12 面试常问问题</h2>
+<p><strong>Q1:为什么需要寄存器?它和内存什么关系?</strong><br>内存比寄存器慢约百倍,ALU 需要紧邻的高速暂存区。寄存器在 CPU 内部,运算的操作数几乎都在寄存器间进行;内存数据要先 Load 进来。</p>
+<p><strong>Q2:画出 Cortex-M 的寄存器组,说明 SP/LR/PC/xPSR 作用。</strong><br>R0-R12 通用 + R13=SP(栈顶)、R14=LR(返回地址)、R15=PC(下条指令)、xPSR(标志位+状态)。见 4.5/4.6。</p>
+<p><strong>Q3:什么是 caller-saved / callee-saved?为什么这样分?</strong><br>调用约定规定谁负责保存哪些寄存器,目的是让函数调用时的保存动作最少。R0-R3 调用者保存,R4-R11 被调用者保存。</p>
+<p><strong>Q4:上下文切换具体保存哪些寄存器?保存到哪?</strong><br>通用寄存器 + SP + LR + PC + 状态寄存器,存到该任务的栈里,栈顶记入 TCB。Cortex-M 上一部分由硬件自动压栈、R4-R11 由软件压。</p>
+<p><strong>Q5:volatile 为什么必要?和寄存器有什么关系?</strong><br>阻止编译器把变量缓存进寄存器,强制每次访问真实内存。用于硬件寄存器映射、中断/多核共享变量,防止读到寄存器里的过期值。</p>
+<p><strong>Q6:64 位相比 32 位,寄存器层面的优势?</strong><br>寄存器更宽(能处理更大数)、更多(31 个),编译器能留更多变量在寄存器,减少访存;同时能寻址更大内存。</p>
+
+<h2 id="s13">4.13 常见误区</h2>
+<ol>
+  <li><strong>"寄存器是内存的一小块"</strong>——不是。寄存器在 CPU 核内部,和内存是完全不同的物理器件,快约百倍。</li>
+  <li><strong>"寄存器越多越好"</strong>——多有好处但有代价:指令里编号位数增加、上下文切换要保存的更多、芯片面积上升。是权衡。</li>
+  <li><strong>"上下文只需存通用寄存器"</strong>——必须含 SP、PC、状态寄存器,漏一个就出错。</li>
+  <li><strong>"register 关键字能提速"</strong>——现代编译器早已自动做得更好,基本无效。</li>
+  <li><strong>"中断保存现场全靠软件"</strong>——Cortex-M 有硬件自动压栈,分担了一半。</li>
+  <li><strong>"SP 只有一个"</strong>——Cortex-M 有 MSP/PSP 两个;ARM64 各异常级还有各自的 SP。</li>
+</ol>
+
+<h2 id="s14">4.14 本章总结</h2>
+<ul>
+  <li>寄存器存在的唯一理由:内存太慢(差约百倍),ALU 需要紧邻的高速暂存区。</li>
+  <li><strong>存储金字塔</strong>:寄存器→Cache→内存→硬盘,越上越快越贵越小;分层是为了逼近"又快又大"。</li>
+  <li>Cortex-M:R0-R12 通用 + SP/LR/PC/xPSR;记住"十几个",这是上下文能快速保存的原因。</li>
+  <li>四个关键专用寄存器:<strong>SP</strong>(换它=换栈)、<strong>LR</strong>(返回地址)、<strong>PC</strong>(换它=换执行位置)、<strong>xPSR</strong>(标志位,必须保存)。</li>
+  <li>ARM64:31 个 64 位(X0-X30)+ SP/PC/PSTATE,面向大型系统。</li>
+  <li><strong>调用约定</strong>把寄存器分 caller-saved(R0-R3)/callee-saved(R4-R11),为了最小化保存开销;正好对应 Cortex-M 硬件自动压栈的划分。</li>
+  <li><strong>volatile</strong> 阻止变量被缓存进寄存器,保证看到真实内存值。</li>
+  <li>核心结论:<strong>上下文 = 一组寄存器的快照</strong>;保存/恢复/调度就是抄快照、填快照、选快照。</li>
+</ul>
+
+<h2 id="s15">4.15 思维导图</h2>
+<pre><code>寄存器
+├─ 一、为何需要:内存慢百倍,ALU要高速暂存
+├─ 二、存储金字塔
+│  ├─ 寄存器/Cache/内存/硬盘 越上越快贵小
+│  └─ 分层=逼近"又快又大"的假象
+├─ 三、有多快:内存≈等5分钟,硬盘≈等1年
+├─ 四、Cortex-M 寄存器组(记住十几个)
+│  ├─ R0-R12 通用
+│  ├─ SP/LR/PC/xPSR 专用
+│  └─ MSP/PSP 双栈指针
+├─ 五、四个命门
+│  ├─ SP 换它=换栈
+│  ├─ LR 返回地址
+│  ├─ PC 换它=换执行位置
+│  └─ xPSR 标志位(必存)
+├─ 六、ARM64:31个64位 X0-X30
+├─ 七、调用约定
+│  ├─ caller-saved R0-R3(调用者存)
+│  ├─ callee-saved R4-R11(被调者存)
+│  └─ 目的:保存动作最少;对应硬件自动压栈
+├─ 八、与C变量:寄存器分配/volatile
+└─ 九、结论:上下文=寄存器快照(抄/填/选)</code></pre>
+
+<h2 id="s16">4.16 课后练习与面试题</h2>
+<h3>课后练习</h3>
+<ol>
+  <li>不看书默画 Cortex-M 的 16 个寄存器 + xPSR,标出 SP/LR/PC,写出各自作用。</li>
+  <li>写一个中断里修改、主循环里读取的全局标志,分别加/不加 <code>volatile</code>,开 <code>-O2</code> 编译看汇编差异,理解为什么不加会出 bug。</li>
+  <li>写一个 A 调 B 的程序,用 <code>-S</code> 看汇编,找出 B 开头保存 R4-R11(callee-saved)、结尾恢复的代码。</li>
+  <li>在 gdb 里断点一个函数,用 <code>info registers</code> 打印所有寄存器,进入子函数后再打印,观察哪些变了、哪些被保存恢复。</li>
+  <li>查 RK3588 的 ARM64 手册,列出 X0-X7、X29、X30、SP 的约定用途,和 Cortex-M 对比。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>寄存器为什么快?为什么不能全用寄存器代替内存?</li>
+  <li>存储金字塔各层速度差多少数量级?对写高性能代码的启示?</li>
+  <li>Cortex-M 有哪些特殊寄存器,各管什么?</li>
+  <li>caller-saved 和 callee-saved 的区别与设计动机?</li>
+  <li>上下文切换保存哪些寄存器?为什么状态寄存器不能漏?</li>
+  <li>volatile 的作用?举一个不加就出 bug 的嵌入式场景。</li>
+  <li>Cortex-M 进中断时硬件自动压了哪些寄存器?为什么正好是那几个?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第四章 完 · 下一章《第五章 Stack》</p>
+<div class="nav">
+  <a href="第03章-指令如何执行.html">← 第三章</a>
+  <a href="index.html">目录</a>
+  <a href="第05章-Stack.html">第五章 →</a>
+</div>
+
+</div>
+</body>
+</html>

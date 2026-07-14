@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第十章 虚拟内存</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13.5px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第09章-MMU.html">← 第九章</a>
+  <a href="index.html">目录</a>
+  <a href="第11章-ARM架构与CortexM和A.html">第十一章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第一卷 · 计算机组成原理</div>
+  <h1>第十章 虚拟内存</h1>
+  <div class="sub">在 MMU 地基上盖起的大厦：按需分页、写时复制、换页、mmap</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">MMU 与虚拟内存的关系</a></li>
+    <li><a href="#s2">虚拟内存要兑现的四个承诺</a></li>
+    <li><a href="#s3">承诺一：每个进程独占的大地址空间</a></li>
+    <li><a href="#s4">承诺二：内存可以比物理内存大(换页)</a></li>
+    <li><a href="#s5">按需分页：用到才给</a></li>
+    <li><a href="#s6">页面置换与抖动</a></li>
+    <li><a href="#s7">写时复制(COW)：fork 为什么这么快</a></li>
+    <li><a href="#s8">mmap：把文件变成内存</a></li>
+    <li><a href="#s9">进程地址空间的完整布局</a></li>
+    <li><a href="#s10">虚拟内存的代价与嵌入式取舍</a></li>
+    <li><a href="#s11">回扣与全卷收束</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图</a></li>
+    <li><a href="#s16">课后练习与面试题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第九章讲了 MMU 这个硬件"翻译器"。虚拟内存是<strong>软件(操作系统)在 MMU 硬件上盖起的一整套内存管理体系</strong>。MMU 是砖,虚拟内存是楼。这一章把按需分页、换页、写时复制、mmap 这些让人"哦原来如此"的机制讲透——它们都是"利用缺页异常做文章"。学完你要能解释"malloc 了 1GB 为什么不占内存""fork 为什么瞬间完成""内存不够时系统怎么办"。这也是第一卷的收官,会把十章串成一条完整的线。</p></blockquote>
+
+<h2 id="s1">10.1 MMU 与虚拟内存的关系</h2>
+<p>先厘清一个常被混淆的点:<strong>MMU 是硬件,虚拟内存是机制。</strong></p>
+<ul>
+  <li><strong>MMU(第九章)</strong>:一块硬件,只干两件事——把虚拟地址翻译成物理地址、检查权限。它不懂"文件""进程""换页",它只是个忠实的翻译机。</li>
+  <li><strong>虚拟内存(本章)</strong>:操作系统<strong>利用 MMU 提供的能力</strong>(尤其是"翻译失败会触发缺页异常"这个能力),实现的一整套聪明的内存管理策略。</li>
+</ul>
+<p>关键桥梁是<strong>缺页异常</strong>:每当程序访问一个"页表里没准备好"的地址,MMU 就触发缺页异常,把控制权交给操作系统。<strong>操作系统就在这个"异常处理程序"里做各种文章</strong>——这是虚拟内存所有魔法的统一入口。记住这句话,本章都是它的展开。</p>
+
+<h2 id="s2">10.2 虚拟内存要兑现的四个承诺</h2>
+<p>虚拟内存对每个程序做出四个"美好承诺",让程序员写代码时可以假装:</p>
+<ol>
+  <li><strong>独占</strong>:你独占一整块巨大的、连续的地址空间(32 位是 4GB,64 位大得用不完),别的程序不存在。</li>
+  <li><strong>够大</strong>:你能用的内存可以比机器实际装的物理内存还多(靠硬盘顶)。</li>
+  <li><strong>隔离与保护</strong>:别人碰不到你,你碰不到别人(第九章已实现)。</li>
+  <li><strong>省与快</strong>:启动快、fork 快、多个程序能共享同一份物理内存(如共享库)。</li>
+</ol>
+<p>这四个承诺,物理内存只有一份、还可能不够,凭什么能兑现?靠的就是"虚拟地址和物理内存<strong>不必一一对应、不必时刻对应</strong>"这个自由度。下面逐个看。</p>
+
+<h2 id="s3">10.3 承诺一：每个进程独占的大地址空间</h2>
+<p>每个进程都拥有从 0 到最大的一整套虚拟地址(它自己的坐标系),仿佛独占整台机器。这在第九章已经实现:每进程一张页表,同样的虚拟地址在不同进程被翻译到不同物理页。</p>
+<p>但有个反常识的关键:<strong>拥有"4GB 地址空间"不等于占用了 4GB 物理内存!</strong>地址空间只是"编号范围",大部分编号是<strong>空的、没有对应物理页</strong>的。只有你真正用到的那些页,才会被分配真实物理内存(见 10.5 按需分页)。</p>
+<blockquote><p>这解释了新手困惑:"每个进程都有 4GB,我开 100 个进程不就要 400GB 内存?"——不会。地址空间是虚拟的"门牌号范围",不占物理内存;只有真正住了人的门牌(映射了物理页的虚拟页)才占。100 个进程各自的 4GB 绝大部分是空号。</p></blockquote>
+
+<h2 id="s4">10.4 承诺二：内存可以比物理内存大(换页)</h2>
+<p>怎么让程序用的内存比物理内存还多?<strong>把不常用的页暂时挪到硬盘上,腾出物理内存给急用的。</strong>这叫<strong>换页(Swapping/Paging)</strong>。</p>
+<p>类比:你桌子(物理内存)小,放不下所有文件。你把最近不看的文件收进抽屉(硬盘的 swap 区),桌上只留在用的。等哪天又要那份收起来的,再从抽屉拿出来、同时把另一份不用的收回去。<strong>桌子虽小,但通过和抽屉换来换去,你"感觉"能处理的文件远超桌子容量。</strong></p>
+<pre><code>物理内存满了, 程序又要新页:
+  ① 内核挑一个"最近不用"的物理页(如LRU)
+  ② 把它的内容写到硬盘的 swap 区
+  ③ 把这个腾出的物理页给急用的
+  ④ 更新页表: 被换出的那个虚拟页标记为"在硬盘上, 不在内存"
+
+以后程序又访问被换出的页:
+  → MMU发现该页不在内存 → 缺页异常
+  → 内核从swap把它读回物理内存, 更新页表 → 重执行指令
+  → 程序毫无察觉(只是慢了一下)</code></pre>
+<p>又见缺页异常!换页就是"利用缺页异常,在程序访问被换出的页时,悄悄把它从硬盘读回来"。<strong>物理内存 + 硬盘 swap,共同撑起了"比物理内存更大"的假象。</strong></p>
+
+<h2 id="s5">10.5 按需分页：用到才给</h2>
+<p>虚拟内存最核心的策略:<strong>不到真正访问,绝不分配物理内存。</strong>叫<strong>按需分页(Demand Paging)</strong>。</p>
+<p>看 malloc 的真相,这是超高频面试题:</p>
+<pre><code>char *p = malloc(1 * 1024 * 1024 * 1024);  // 申请 1GB
+// 此刻: 物理内存几乎没被占用!
+// 内核只是在页表里"划出"了1GB的虚拟地址范围, 标记为"有效但暂无物理页"
+// 一个物理页都还没给你
+
+p[0] = 'A';   // 你第一次访问第0页
+// → MMU发现这页没物理页 → 缺页异常
+// → 内核这时才分配一个真实的4KB物理页, 填好页表 → 重执行
+// → 现在才占用了 4KB 物理内存
+
+// 你只写了1个字节, 就只占1页(4KB), 剩下的1GB仍是"空头支票"</code></pre>
+<p>所以:<strong>malloc 1GB 几乎瞬间返回且不占内存,是因为它只给了你"地址空间的承诺",物理内存要等你真正访问每一页时才按需分配。</strong>这也解释了第九章练习里 <code>top</code> 看到的 VIRT(虚拟,承诺的)远大于 RES(常驻,真实占用的)。</p>
+<blockquote><p>按需分页的好处:①启动快(不用一次性分配);②省内存(没用到的不占);③支持"稀疏"的大地址空间。第三次见缺页异常了吧?<strong>按需分页 = 利用缺页异常,在你首次访问某页时才分配物理内存。</strong>虚拟内存的三大魔法(按需分页、换页、写时复制)有一个共同的实现套路:<strong>先在页表里"欠着",等你访问时缺页,内核在缺页处理里"补上"。</strong></p></blockquote>
+
+<h2 id="s6">10.6 页面置换与抖动</h2>
+<p>换页要挑"换出哪个页",这就是<strong>页面置换算法</strong>,和第八章 Cache 替换同理,常用 <strong>LRU(最近最少使用)</strong>近似——赌最久没用的以后也少用。</p>
+<h4>抖动(Thrashing):性能悬崖</h4>
+<p>如果物理内存严重不足,程序又频繁访问很多页,会出现:刚把 A 页换出去,马上又要用 A,只好把 B 换出来读回 A;转头又要 B……<strong>系统绝大部分时间都在硬盘和内存之间搬页,几乎不干正事</strong>——这叫<strong>抖动(Thrashing)</strong>。现象是:内存一满,系统卡死、硬盘狂响、鼠标都动不了。</p>
+<p>因为硬盘比内存慢约万倍(第四章金字塔),一旦频繁换页,性能断崖式下跌。这就是为什么"内存不够时加内存比换更快的 CPU 有用得多"。现代系统还有 OOM Killer(内存耗尽时杀掉占用大的进程)来避免彻底卡死,第五卷会讲。</p>
+
+<h2 id="s7">10.7 写时复制(COW)：fork 为什么这么快</h2>
+<p>虚拟内存最优雅的技巧之一,面试爱考。<code>fork()</code> 创建一个子进程,子进程是父进程的完整副本。按理说要把父进程的全部内存复制一份给子进程——如果父进程用了 2GB,复制 2GB 会很慢很占内存。<strong>但 fork 几乎瞬间完成。为什么?</strong></p>
+<p>秘密是<strong>写时复制(Copy-On-Write, COW)</strong>:fork 时<strong>根本不复制内存</strong>,而是让父子进程的页表<strong>都指向同一批物理页</strong>,并把这些页标记为<strong>只读</strong>。</p>
+<pre><code>fork 后(还没人写):
+  父进程页表 ─┐
+              ├─▶ 同一批物理页(标记只读)   ← 不复制! 共享!
+  子进程页表 ─┘
+
+某一方要写某页时:
+  → 往只读页写 → MMU触发异常(第九章权限位!)
+  → 内核在异常处理里: 这时才真正复制这一页, 给写的人一份私有的可写副本, 改它的页表
+  → 双方从此各用各的这一页
+
+结果: 只有"被修改的页"才复制, 没改的页一直共享 → 极省、极快</code></pre>
+<p>又见异常机制!COW 用的是第九章的"只读权限位 + 写触发异常"。好处:</p>
+<ul>
+  <li><strong>fork 瞬间完成</strong>(只复制页表,不复制数据);</li>
+  <li><strong>省内存</strong>(大量只读页父子共享,如代码段永远不改,永远共享);</li>
+  <li>典型场景 <code>fork</code> 后马上 <code>exec</code>(第五卷),那复制内存就完全白费了——COW 正好避免了这浪费。</li>
+</ul>
+<blockquote><p>写时复制是"<strong>能拖就拖、能省就省</strong>"这个虚拟内存哲学的极致体现:复制这件事,拖到"真的有人要写"的最后一刻,且只复制那一页。它和按需分页、换页一样,都是"先欠着,缺页/异常时再补"。你把这三个机制放一起看,会发现它们是同一个思想的三种应用。</p></blockquote>
+
+<h2 id="s8">10.8 mmap：把文件变成内存</h2>
+<p>还有一个把虚拟内存威力发挥到极致的机制:<strong>mmap(内存映射)</strong>——把一个文件"映射"到进程的虚拟地址空间,之后<strong>像访问内存一样访问文件</strong>,不用 read/write。</p>
+<pre><code>mmap 把文件映射到一段虚拟地址:
+  char *data = mmap(..., fd, ...);   // 把文件fd映射进来
+  char c = data[1000];               // 直接像数组一样读文件第1000字节!
+
+原理: 映射时不真读文件, 只在页表建立"这段虚拟地址↔文件某部分"的关系
+  第一次访问 data[1000] → 该页没在内存 → 缺页异常
+  → 内核在缺页处理里从文件读入对应页 → 重执行 → 拿到数据</code></pre>
+<p>又是缺页异常!mmap 的妙处:</p>
+<ul>
+  <li><strong>省一次拷贝</strong>:传统 read 要"内核缓冲区→用户缓冲区"拷贝,mmap 直接映射,少一次拷贝(零拷贝思想);</li>
+  <li><strong>按需加载</strong>:大文件不用全读进内存,访问哪页读哪页;</li>
+  <li><strong>可执行文件/共享库的加载就是 mmap</strong>:程序启动时,内核把 .text/.so 用 mmap 映射进地址空间,按需分页加载,启动飞快;</li>
+  <li><strong>共享内存(进程间通信)</strong>:两个进程 mmap 同一文件/同一物理页,就能共享数据——第八卷 RK3588 的 AMP 共享内存就用这个。</li>
+</ul>
+
+<h2 id="s9">10.9 进程地址空间的完整布局</h2>
+<p>把前面所有概念落到一张图上——这就是每个 Linux 进程看到的虚拟地址空间(呼应第五章的内存布局,现在你能理解每一块了):</p>
+<pre><code>一个进程的虚拟地址空间(64位Linux, 示意):
+
+  高地址 ┌────────────────────┐
+         │   内核空间          │  ← 所有进程共享, 用户态不可访问(权限位)
+         ├────────────────────┤
+         │   栈 Stack ↓        │  ← 局部变量/调用栈(第五章), 向下长
+         ├────────────────────┤
+         │        ↕(空闲)      │
+         ├────────────────────┤
+         │  mmap 区            │  ← 共享库(.so)、mmap文件、大块malloc
+         ├────────────────────┤
+         │        ↕            │
+         │   堆 Heap ↑         │  ← malloc/brk, 向上长
+         ├────────────────────┤
+         │  BSS(未初始化全局)   │
+         │  Data(已初始化全局)  │
+         ├────────────────────┤
+  低地址 │  Text 代码段(只读)   │  ← 程序指令, 常被多进程共享
+         └────────────────────┘
+
+关键: 这整张图是"虚拟"的! 每块按需映射到物理页;
+      多进程的代码段/共享库可映射到同一份物理页(省内存)</code></pre>
+<p><code>cat /proc/自己PID/maps</code> 看到的就是这张图的真实内容。<strong>每一段都是一组虚拟页,通过页表按需映射到物理内存,有各自的权限位。</strong>你写的每个变量、每次 malloc、每个函数,都落在这张图的某一段里。</p>
+
+<h2 id="s10">10.10 虚拟内存的代价与嵌入式取舍</h2>
+<p>虚拟内存这么好,为什么 FreeRTOS/飞控内环不用?因为它有<strong>代价</strong>,而实时系统最怕代价的<strong>不确定性</strong>:</p>
+<ul>
+  <li><strong>翻译开销</strong>:每次访存要经 MMU(有 TLB 缓解,但 TLB miss 时要多次访存)。</li>
+  <li><strong>缺页的不确定延迟</strong>:一次访问可能命中(纳秒级),也可能缺页要从硬盘读回(毫秒级)——<strong>延迟差百万倍,且不可预测!</strong>这对"必须在 100µs 内响应"的飞控是致命的。</li>
+  <li><strong>换页可能在任何时刻发生</strong>,打乱实时任务的时序。</li>
+  <li><strong>硬件成本</strong>:MMU 占芯片面积和功耗。</li>
+</ul>
+<blockquote><p>这就是第一章那条分界线的完整答案:<strong>Linux 要虚拟内存(为了隔离、安全、跑众多程序,牺牲确定性);实时系统(飞控内环)不要或谨慎用(为了确定性,牺牲隔离和灵活)。</strong>硬实时系统常把关键内存"锁定"在物理内存里(<code>mlock</code>)防止被换出,就是为了消除缺页的不确定延迟。这类公司两种系统都用、都考,就是因为无人机既需要 Linux 端的丰富功能,又需要飞控端的硬实时确定性——理解这个取舍,是这类岗位的核心素养。</p></blockquote>
+
+<h2 id="s11">10.11 回扣与全卷收束</h2>
+<p>第十章也是第一卷的终点。回头看,这十章其实讲了一个完整的故事:</p>
+<pre><code>第一卷主线:操作系统是怎么"长"在硬件上的
+
+CPU会算(2章:ALU/寄存器) ── 靠指令一步步干活(3章)
+        │
+   但只有几十个寄存器(4章), 状态要存在栈里(5章)
+        │
+   函数调用把寄存器和栈拧成一股绳(6章)
+        │
+   ┌────┴─────────────────────────────┐
+   │ 上下文 = 寄存器快照, 存在栈里, TCB记栈顶  │  ← 操作系统"多任务"的地基
+   └────┬─────────────────────────────┘
+        │
+   中断(7章)强行打断CPU → 抢占式调度的引擎 → 操作系统"心脏"完整
+        │
+   而访存太慢, 用Cache(8章)缓解 → 影响切换成本、写代码方式
+        │
+   要让多个不可信程序安全共存 → MMU(9章)加地址翻译层 → 隔离与保护
+        │
+   在MMU上盖起虚拟内存(10章): 按需分页/换页/COW/mmap → 独占大内存的假象
+        │
+        ▼
+   至此, 第一章那句"操作系统=复用硬件(并发)+隔离保护(安全)"
+   的每一个字, 都有了硬件层面的完整解释。</code></pre>
+<p>第一卷回答了"操作系统赖以生存的硬件是什么样"。<strong>接下来第二卷(ARM 架构)会把这些硬件机制在真实的 ARM 处理器上精确化</strong>(Cortex-M/A、异常等级 EL、GIC 中断控制器、Cache 一致性),然后第三卷起,我们就带着这套硬件认知,去读 FreeRTOS、RT-Thread、Linux 的真实源码——你会发现,源码里的每一行,都是第一卷这些概念的实现。</p>
+
+<h2 id="s12">10.12 面试常问问题</h2>
+<p><strong>Q1:MMU 和虚拟内存什么关系?</strong><br>MMU 是硬件(翻译地址+查权限);虚拟内存是操作系统利用 MMU(尤其缺页异常)实现的内存管理机制。</p>
+<p><strong>Q2:malloc 1GB 会立刻占用 1GB 物理内存吗?为什么?</strong><br>不会。按需分页:malloc 只在页表划出虚拟地址范围,物理页等你首次访问某页时缺页才分配。故 VIRT 大、RES 小。</p>
+<p><strong>Q3:fork 为什么很快?写时复制原理?</strong><br>COW:fork 不复制内存,父子页表共享同一批物理页并标只读;谁写触发异常,内核才复制那一页给它。只复制被改的页,极快极省。</p>
+<p><strong>Q4:内存比物理内存大是怎么做到的?</strong><br>换页(swap):把不常用页换到硬盘,腾出物理内存;再访问时缺页从硬盘读回。物理内存+swap 撑起更大假象。</p>
+<p><strong>Q5:什么是抖动(thrashing)?</strong><br>物理内存严重不足时频繁换进换出,系统大部分时间在搬页几乎不干活,性能断崖。因硬盘比内存慢万倍。</p>
+<p><strong>Q6:mmap 的原理和好处?</strong><br>把文件映射到虚拟地址,像访问内存一样访问文件;按需(缺页)加载、少一次拷贝、可用于加载可执行文件/共享库、进程间共享内存。</p>
+<p><strong>Q7:实时系统为什么慎用虚拟内存?</strong><br>缺页可能从硬盘读回,延迟不确定(纳秒 vs 毫秒),破坏实时确定性。硬实时用 mlock 锁定内存防换出。</p>
+
+<h2 id="s13">10.13 常见误区</h2>
+<ol>
+  <li><strong>"虚拟内存就是硬盘上的 swap 文件"</strong>——狭义误解。虚拟内存是整套地址虚拟化机制,swap 只是其中"内存比物理大"这一部分。</li>
+  <li><strong>"有了 4GB 地址空间就占了 4GB 内存"</strong>——地址空间是虚拟编号范围,按需才映射物理页。</li>
+  <li><strong>"malloc 成功就分配了物理内存"</strong>——只给了虚拟地址承诺,访问时才真分配。</li>
+  <li><strong>"fork 会复制父进程全部内存"</strong>——COW,只在写时复制被改的页。</li>
+  <li><strong>"虚拟内存一定让系统更快"</strong>——它是为隔离/灵活/大容量,带来翻译和缺页开销;实时场景反而是负担。</li>
+  <li><strong>"缺页异常都是坏事"</strong>——按需分页、COW、mmap、换页回读都靠正常缺页运作。</li>
+</ol>
+
+<h2 id="s14">10.14 本章总结</h2>
+<ul>
+  <li>MMU 是硬件,虚拟内存是操作系统在其上实现的机制;<strong>缺页异常</strong>是所有虚拟内存魔法的统一入口。</li>
+  <li>四个承诺:独占的大地址空间、可比物理内存大、隔离保护、省与快共享。</li>
+  <li><strong>地址空间大 ≠ 占物理内存</strong>;只有真正访问的页才映射物理页。</li>
+  <li><strong>按需分页</strong>:malloc 只给虚拟承诺,首次访问缺页时才分配物理页(解释 VIRT≫RES)。</li>
+  <li><strong>换页(swap)</strong>:不常用页挪硬盘,撑起"比物理内存大";严重不足会<strong>抖动</strong>。</li>
+  <li><strong>写时复制 COW</strong>:fork 不复制、共享只读页,写时才复制那一页 → fork 快而省。</li>
+  <li><strong>mmap</strong>:文件映射进地址空间,按需加载、少拷贝,用于加载程序/共享库/共享内存。</li>
+  <li>三大魔法(按需分页/换页/COW)本质同一套路:<strong>页表里先欠着,访问时缺页/异常再补上</strong>。</li>
+  <li>代价是翻译开销 + 缺页的<strong>不确定延迟</strong>,故实时系统慎用(mlock 锁定)。</li>
+  <li>全卷收束:第一章"复用硬件+隔离保护"的每个字,十章下来都有了硬件解释。</li>
+</ul>
+
+<h2 id="s15">10.15 思维导图</h2>
+<pre><code>虚拟内存
+├─ 一、MMU(硬件)vs 虚拟内存(机制);缺页异常=统一入口
+├─ 二、四个承诺:独占大空间/可超物理/隔离/省快
+├─ 三、地址空间大≠占物理内存(空号不占)
+├─ 四、换页swap:不常用页挪硬盘→撑起"比物理大"
+├─ 五、★按需分页:malloc只给承诺,访问缺页才分配物理页
+│  └─ 解释 VIRT≫RES
+├─ 六、页面置换LRU;内存严重不足→抖动thrashing(硬盘慢万倍)
+├─ 七、★写时复制COW:fork共享只读页,写时才复制那页→快而省
+├─ 八、mmap:文件映射进地址空间,按需加载/少拷贝
+│  └─ 加载可执行/共享库/进程间共享内存
+├─ 九、进程地址空间布局(代码/数据/堆/mmap/栈/内核)
+│  └─ 全虚拟,按需映射,可跨进程共享物理页
+├─ 十、代价:翻译开销+缺页不确定延迟→实时慎用(mlock)
+└─ 十一、★三大魔法同套路:页表先欠着,缺页时补上
+    全卷收束:第一章定义的每个字都有了硬件解释</code></pre>
+
+<h2 id="s16">10.16 课后练习与面试题</h2>
+<h3>课后练习</h3>
+<ol>
+  <li>malloc 一大块内存(如 1GB)但不写入,用 <code>top</code>/<code>ps</code> 看 VIRT vs RES;再逐页写入,观察 RES 增长,亲历按需分页。</li>
+  <li>写 fork 前后修改内存的程序,用工具观察 COW:fork 后内存几乎没增加,子进程写入后才增加对应页。</li>
+  <li>用 <code>mmap</code> 打开一个大文件并随机访问几个位置,对比 <code>read</code> 方式,理解按需加载和少拷贝。</li>
+  <li>(谨慎)在虚拟机里跑一个疯狂 malloc 并写入的程序,观察 swap 使用上升直到抖动/OOM Killer 介入,体会内存耗尽。</li>
+  <li><code>cat /proc/self/maps</code> 打印地址空间,对照 10.9 布局图,找出代码段、堆、栈、共享库各段及其权限(r/w/x)。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>MMU 和虚拟内存的区别与联系?缺页异常在其中的角色?</li>
+  <li>malloc 大内存为什么很快且不立即占物理内存?</li>
+  <li>fork 为什么快?详述写时复制。</li>
+  <li>系统怎么做到"可用内存大于物理内存"?什么是抖动?</li>
+  <li>mmap 的原理和典型用途?为什么能"零拷贝"?</li>
+  <li>按需分页、换页、写时复制有什么共同的实现思想?</li>
+  <li>为什么飞控这类硬实时系统慎用虚拟内存?怎么缓解?</li>
+  <li>画出一个进程的虚拟地址空间布局,说明各段和权限。</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第十章 完 · <strong>第一卷《计算机组成原理》全部完成</strong> · 下一卷《ARM 架构》</p>
+<div class="nav">
+  <a href="第09章-MMU.html">← 第九章</a>
+  <a href="index.html">目录</a>
+  <a href="第11章-ARM架构与CortexM和A.html">第十一章 →</a>
+</div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第十二章 异常与异常等级 EL0-EL3</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13.5px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第11章-ARM架构与CortexM和A.html">← 第十一章</a>
+  <a href="index.html">目录</a>
+  <a href="第13章-GIC中断控制器.html">第十三章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第二卷 · ARM 架构</div>
+  <h1>第十二章 异常与异常等级 EL0-EL3</h1>
+  <div class="sub">CPU 的四层权限楼，以及每一次"陷入内核"的精确机制</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">承接第七章：把"异常"在 ARM 上讲精确</a></li>
+    <li><a href="#s2">为什么需要多个特权等级</a></li>
+    <li><a href="#s3">四层楼：EL0 / EL1 / EL2 / EL3</a></li>
+    <li><a href="#s4">异常的分类：同步、IRQ、FIQ、SError</a></li>
+    <li><a href="#s5">一次异常的完整硬件动作</a></li>
+    <li><a href="#s6">异常向量表(ARM64 版)</a></li>
+    <li><a href="#s7">保存现场的关键寄存器：ELR/SPSR/SP</a></li>
+    <li><a href="#s8">系统调用：从 EL0 到 EL1 的精确路径</a></li>
+    <li><a href="#s9">异常等级的切换规则</a></li>
+    <li><a href="#s10">EL2 虚拟化与 EL3 安全世界(概览)</a></li>
+    <li><a href="#s11">回扣：一切"进内核"都是异常</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图</a></li>
+    <li><a href="#s16">课后练习与面试题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第七章讲了中断和"异常"这个统一概念,但那是通用层面。这一章在 ARM64(Cortex-A / RK3588)上把它讲到精确:什么是 EL0-EL3 四个特权等级、一次系统调用/中断/缺页在硬件上到底怎么切换等级、保存了哪些寄存器。这是理解 Linux 内核入口、KVM 虚拟化、TrustZone 安全的地基。学完你要能讲清"用户程序调 read() 后,CPU 精确地发生了什么"。</p></blockquote>
+
+<h2 id="s1">12.1 承接第七章：把"异常"在 ARM 上讲精确</h2>
+<p>第七章的核心结论:中断、故障、系统调用<strong>底层都是"异常"</strong>,机制统一——保存现场、查向量表、跳处理程序、恢复返回。那一章讲的是 Cortex-M 视角(相对简单)。这一章换到 <strong>ARM64(Cortex-A)</strong>视角,它多了一样 M 没有的东西:<strong>多个异常等级(EL)</strong>。异常在 ARM64 里不只是"跳去处理",还常常伴随<strong>特权等级的切换</strong>。这正是 Linux 用户态/内核态、虚拟化、安全世界的硬件根基。</p>
+
+<h2 id="s2">12.2 为什么需要多个特权等级</h2>
+<p>第一章讲过"用户态 vs 内核态"两级。但现代系统的需求更复杂,逼出了更多层:</p>
+<ol>
+  <li><strong>用户程序</strong>不能碰硬件(第一章)→ 需要一层<strong>用户态</strong>。</li>
+  <li><strong>操作系统内核</strong>要管硬件 → 需要一层<strong>内核态</strong>,权限比用户高。</li>
+  <li>一台机器要<strong>同时跑多个操作系统</strong>(虚拟机/云计算)→ 需要一个"管理多个内核"的<strong>更高层(虚拟化层/Hypervisor)</strong>。</li>
+  <li>要保护<strong>指纹、密钥、支付</strong>等最敏感的东西,连操作系统都不能碰 → 需要一个<strong>最高的安全层</strong>。</li>
+</ol>
+<p>于是 ARM64 设计了<strong>四个异常等级</strong>,像一栋楼的四层,越高层权限越大。<strong>需求越复杂,分层越多</strong>——这和第十一章说的"M 两态、A 四级"一脉相承。</p>
+
+<h2 id="s3">12.3 四层楼：EL0 / EL1 / EL2 / EL3</h2>
+<pre><code>ARM64 异常等级(楼层越高权限越大):
+
+  ┌─────────────────────────────────────────┐
+  │ EL3  安全监控 (Secure Monitor)            │ ← 最高权限, 管安全世界切换
+  │      跑: ARM Trusted Firmware (ATF)       │   (TrustZone, 下卷详讲)
+  ├─────────────────────────────────────────┤
+  │ EL2  虚拟化 (Hypervisor)                  │ ← 管多个虚拟机/OS
+  │      跑: KVM / Xen / 各种 Hypervisor      │
+  ├─────────────────────────────────────────┤
+  │ EL1  操作系统内核 (OS Kernel)             │ ← Linux 内核在这
+  │      跑: Linux Kernel                     │   能配 MMU、访问硬件
+  ├─────────────────────────────────────────┤
+  │ EL0  应用程序 (Application)               │ ← 你的 App、ROS2 节点在这
+  │      跑: 用户程序                          │   权限最低, 不能碰硬件
+  └─────────────────────────────────────────┘</code></pre>
+<table>
+<tr><th>等级</th><th>谁在这</th><th>能干什么</th><th>类比(公司)</th></tr>
+<tr><td>EL0</td><td>用户 App</td><td>只能算,不能碰硬件/特权寄存器</td><td>普通员工</td></tr>
+<tr><td>EL1</td><td>OS 内核(Linux)</td><td>配 MMU、管中断、访问硬件</td><td>部门经理</td></tr>
+<tr><td>EL2</td><td>Hypervisor</td><td>管多个 OS,虚拟化硬件</td><td>总经理</td></tr>
+<tr><td>EL3</td><td>安全固件(ATF)</td><td>切换安全/非安全世界,最高权限</td><td>董事长</td></tr>
+</table>
+<p>关键规则:<strong>低等级不能直接访问高等级的资源,想要更高权限的服务,只能通过"异常"往上跳。</strong>这就是下面要讲的机制。EL0→EL1 是你最常遇到的(系统调用);EL2/EL3 平时"隐身",但 RK3588 开机时其实经历了 EL3(安全固件)→EL2/EL1(内核)的完整流程。</p>
+
+<h2 id="s4">12.4 异常的分类：同步、IRQ、FIQ、SError</h2>
+<p>ARM64 把异常分四大类,这是精确理解的基础:</p>
+<table>
+<tr><th>类别</th><th>同步/异步</th><th>触发源</th><th>例子</th></tr>
+<tr><td><strong>同步异常 Synchronous</strong></td><td>同步(由当前指令直接引起)</td><td>指令执行的直接结果</td><td>系统调用(SVC)、缺页、非法指令、除零</td></tr>
+<tr><td><strong>IRQ</strong></td><td>异步</td><td>普通外部中断</td><td>定时器、UART、GPIO</td></tr>
+<tr><td><strong>FIQ</strong></td><td>异步</td><td>快速中断(更高优先级)</td><td>安全世界/极紧急的中断</td></tr>
+<tr><td><strong>SError</strong></td><td>异步</td><td>系统错误</td><td>总线错误、内存故障</td></tr>
+</table>
+<p>核心区分:<strong>同步 vs 异步</strong>。</p>
+<ul>
+  <li><strong>同步异常</strong>:是"当前这条指令"直接造成的,和指令一一对应、可精确定位。比如你执行 <code>SVC</code>(系统调用)、访问了野指针(缺页)。它同步发生,处理完通常能精确知道是哪条指令引起的。</li>
+  <li><strong>异步异常(IRQ/FIQ/SError)</strong>:和当前指令无关,是外部世界随机来的(第七章的中断)。它可能在任何指令边界插入。</li>
+</ul>
+<blockquote><p>这个"同步/异步"的分类很重要:<strong>系统调用和缺页是同步异常</strong>(程序自己的指令引起),<strong>外设中断是异步异常</strong>。它们虽然都走异常机制,但内核处理时对待方式不同——同步异常要分析"哪条指令、为什么"(比如缺页要看访问的地址),异步异常只要"响应这个外部事件"。</p></blockquote>
+
+<h2 id="s5">12.5 一次异常的完整硬件动作</h2>
+<p>当异常发生,ARM64 硬件自动做这一串动作(比 Cortex-M 多了"可能切换 EL"):</p>
+<pre><code>EL0 的用户程序执行中, 发生异常(比如执行了 SVC)
+        │
+        ▼  CPU 硬件自动完成:
+  ① 确定目标异常等级(通常 EL0 的异常进 EL1 内核处理)
+  ② 把返回地址存入 ELR_EL1   (Exception Link Register, 相当于第七章的"记住回哪")
+  ③ 把当前处理器状态存入 SPSR_EL1 (Saved Program Status Register, 存标志位等)
+  ④ 切换到目标 EL(EL0 → EL1), 切换到 EL1 的栈指针 SP_EL1
+  ⑤ 根据异常类型, 从"异常向量表"算出入口地址, 跳过去
+        │
+        ▼
+  内核的异常处理程序(EL1)接管:
+  - 先手动保存通用寄存器(X0-X30)到内核栈  ← 软件做(类似第六章序言)
+  - 判断异常类型, 分派到具体处理(系统调用/缺页/中断...)
+  - 处理完成
+  - 恢复通用寄存器
+  - 执行 ERET 指令(Exception Return)
+        │
+        ▼  ERET 硬件自动:
+  - 从 SPSR_EL1 恢复处理器状态
+  - 从 ELR_EL1 恢复 PC(回到被打断处)
+  - 切回原来的 EL(EL1 → EL0)
+        │
+        ▼
+  用户程序从被打断处继续, 仿佛无事发生(但系统调用已帮它办完事)</code></pre>
+<p>对比第七章 Cortex-M:核心流程一样(存返回地址、存状态、跳向量表、处理、返回),但 ARM64 多了<strong>③④的 EL 切换和专用的 ELR/SPSR 寄存器</strong>,以及用 <strong>ERET</strong> 指令返回(M 用特殊的返回值触发)。这是"多特权级"带来的额外机制。</p>
+
+<h2 id="s6">12.6 异常向量表(ARM64 版)</h2>
+<p>第七章讲过向量表。ARM64 的向量表比 Cortex-M 精巧:它不是"每个中断一项",而是按<strong>(来源 EL + 异常类型)</strong>组织,每一项是一段代码(不只是地址)。</p>
+<pre><code>ARM64 异常向量表(VBAR_ELn 寄存器指向它):
+每个EL有一张, 分16个入口(4种来源 × 4种异常类型):
+
+  来源: 当前EL用SP0 / 当前EL用SPx / 低EL(64位) / 低EL(32位)
+  类型: 同步 / IRQ / FIQ / SError
+
+  ┌──────────────────────────────────┐
+  │ ... (来自低EL 64位)               │
+  │  同步异常入口   ← 系统调用/缺页从这进 │
+  │  IRQ 入口       ← 外设中断从这进     │
+  │  FIQ 入口                          │
+  │  SError 入口                       │
+  └──────────────────────────────────┘</code></pre>
+<p>你不用背 16 项,只需理解:<strong>硬件根据"异常来自哪个 EL、是哪类异常",跳到向量表对应的那段入口代码。</strong>Linux 内核启动时会设置 <code>VBAR_EL1</code> 指向自己的向量表(在 <code>arch/arm64/kernel/entry.S</code> 里),这就是内核所有入口的总闸。第五卷读系统调用源码时会看到它。</p>
+
+<h2 id="s7">12.7 保存现场的关键寄存器：ELR / SPSR / SP_ELn</h2>
+<p>ARM64 为异常处理准备了专用寄存器,理解它们就理解了"现场怎么保住":</p>
+<table>
+<tr><th>寄存器</th><th>作用</th><th>对应第一卷的什么</th></tr>
+<tr><td><strong>ELR_EL1</strong></td><td>存被打断处的返回地址</td><td>第七章"记住回哪"、类似 LR/PC</td></tr>
+<tr><td><strong>SPSR_EL1</strong></td><td>存被打断时的处理器状态(标志位、来自哪个EL等)</td><td>第三/四章的状态寄存器 xPSR</td></tr>
+<tr><td><strong>SP_EL0 / SP_EL1</strong></td><td>每个 EL 有独立的栈指针</td><td>第四/五章 MSP/PSP 的 ARM64 版</td></tr>
+<tr><td><strong>ESR_EL1</strong></td><td>异常综合信息:是什么异常、为什么</td><td>让内核知道"发生了啥"(如缺页地址在 FAR_EL1)</td></tr>
+</table>
+<p>妙处:<strong>每个 EL 有自己独立的栈(SP_EL0/SP_EL1)</strong>——用户态和内核态用不同的栈,这样内核处理异常时不会破坏用户栈,也更安全。这正是第五章"每个执行流独立栈""中断用独立栈"思想在 ARM64 特权级上的体现。<strong>ELR + SPSR 这对寄存器,就是 ARM64 版的"上下文快照的核心"</strong>——ERET 靠它俩把 PC 和状态一次性恢复。</p>
+
+<h2 id="s8">12.8 系统调用：从 EL0 到 EL1 的精确路径</h2>
+<p>现在把最重要的一条路径走精确——你调 <code>read()</code> 时到底发生了什么。这是面试终极题。</p>
+<pre><code>C 代码(EL0 用户态):  n = read(fd, buf, 100);
+
+① C 库(glibc)把参数放进寄存器(AAPCS64):
+     X0 = fd,  X1 = buf,  X2 = 100
+     X8 = 系统调用号(read 的编号, 如 63)   ← ARM64 用 X8 传 syscall 号
+② 执行 SVC #0 指令                        ← 触发"同步异常", 主动敲内核的门
+     │
+     ▼ CPU 硬件自动:
+     - ELR_EL1 = SVC 的下一条指令地址(记住回哪)
+     - SPSR_EL1 = 当前状态
+     - EL0 → EL1, 切到 SP_EL1(内核栈)
+     - 跳到 VBAR_EL1 里"低EL同步异常"的入口
+     │
+     ▼ 内核(EL1):
+③ 入口代码保存 X0-X30 到内核栈
+④ 读 ESR_EL1 确认是 SVC(系统调用), 不是缺页等
+⑤ 用 X8 的系统调用号查"系统调用表", 找到 sys_read 函数
+⑥ 以 X0-X2 为参数调用 sys_read → 真正去读文件(可能睡眠等IO)
+⑦ 返回值放回 X0
+⑧ 恢复寄存器, 执行 ERET
+     │
+     ▼ ERET 硬件自动:
+     - 从 SPSR_EL1 恢复状态, 从 ELR_EL1 恢复 PC
+     - EL1 → EL0, 切回用户栈
+     │
+     ▼
+⑨ 用户程序拿到 X0(读了多少字节)继续跑, 完全无感</code></pre>
+<blockquote><p>这就是"陷入内核"的完整真相,把第一章(用户/内核态)、第三章(SVC 指令)、第七章(异常机制)、本章(EL 切换)全部串起来了。<strong>系统调用号放 X8、参数放 X0-X7、SVC 触发同步异常、切到 EL1、查系统调用表、ERET 返回</strong>——你能把这条链讲完整,就是系统级工程师的水平。第五卷会带你在 Linux 源码里逐行看 <code>el0_svc</code> → <code>invoke_syscall</code> → <code>sys_read</code>。</p></blockquote>
+
+<h2 id="s9">12.9 异常等级的切换规则</h2>
+<p>EL 之间怎么走?几条铁律:</p>
+<ul>
+  <li><strong>只能通过异常往上走</strong>:低 EL 想进高 EL,必须触发异常(SVC 进 EL1、HVC 进 EL2、SMC 进 EL3)。不能直接跳。</li>
+  <li><strong>通过 ERET 往下回</strong>:高 EL 处理完,用 ERET 返回低 EL。</li>
+  <li><strong>异常通常"就近向上"</strong>:EL0 的异常默认进 EL1 处理;但可配置路由(比如虚拟化场景把某些异常路由到 EL2)。</li>
+  <li><strong>EL 只升不"平移"</strong>:异常总是去 ≥ 当前的 EL。</li>
+</ul>
+<pre><code>专用的"敲门"指令(触发异常上升):
+  SVC → 进 EL1  (Supervisor Call, 应用叫内核, 系统调用)
+  HVC → 进 EL2  (Hypervisor Call, 内核叫虚拟化层)
+  SMC → 进 EL3  (Secure Monitor Call, 叫安全世界)
+
+返回:
+  ERET ← 从高EL回到低EL</code></pre>
+<p>三条 <code>xVC</code> 指令对应三层"往上叫"的门,对称漂亮。记住 <strong>SVC=系统调用</strong>(你天天用),HVC/SMC 是虚拟化和安全用的(下卷)。</p>
+
+<h2 id="s10">12.10 EL2 虚拟化与 EL3 安全世界(概览)</h2>
+<p>EL2/EL3 平时你接触少,但要知道它们存在的意义(细节留到 TrustZone 那章):</p>
+<h4>EL2:虚拟化</h4>
+<p>一台物理机要跑多个虚拟机(每个虚拟机里有自己的 Linux 内核跑在 EL1)。谁来管这些内核、给它们分配资源、拦截它们对硬件的访问?<strong>EL2 的 Hypervisor</strong>(如 KVM)。它比内核还高一层,能"欺骗"每个虚拟机让它以为自己独占硬件——这是第九/十章"虚拟内存"思想在整机层面的放大版(虚拟化 CPU、内存、设备)。云服务器、汽车域控制器大量用。</p>
+<h4>EL3:安全世界(TrustZone)</h4>
+<p>ARM 把系统分成"普通世界(Normal World)"和"安全世界(Secure World)"两个平行宇宙,<strong>EL3 的安全监控固件</strong>负责在两者间切换。指纹、密钥、DRM、支付这些最敏感的代码跑在安全世界,连普通世界的 Linux 内核都看不到、碰不到。这就是<strong>TrustZone</strong>,下一批章节(硬核区)详讲。</p>
+<blockquote><p>四层楼的完整图景:<strong>EL0 应用 → EL1 操作系统 → EL2 管多个操作系统 → EL3 守护最高机密。</strong>每一层都不信任下一层,用硬件强制隔离。这是第一章"隔离与保护"思想的终极形态——从"隔离进程",到"隔离操作系统",再到"隔离安全世界"。</p></blockquote>
+
+<h2 id="s11">12.11 回扣：一切"进内核"都是异常</h2>
+<p>把第七章和本章的核心结论钉死:<strong>在 ARM 上,用户程序进入内核的每一条路径,底层都是"异常"。</strong></p>
+<table>
+<tr><th>你做的事</th><th>异常类型</th><th>结果</th></tr>
+<tr><td>调 read/write/malloc(brk)</td><td>同步异常(SVC)</td><td>进 EL1 执行系统调用</td></tr>
+<tr><td>访问野指针/NULL</td><td>同步异常(缺页/翻译错)</td><td>进 EL1,内核判非法→SIGSEGV</td></tr>
+<tr><td>访问 malloc 了但没映射的页</td><td>同步异常(缺页)</td><td>进 EL1,内核按需分配(第十章)</td></tr>
+<tr><td>定时器到点</td><td>异步异常(IRQ)</td><td>进 EL1,内核跑调度器(抢占!第一章)</td></tr>
+<tr><td>网卡收到包</td><td>异步异常(IRQ)</td><td>进 EL1,内核处理中断</td></tr>
+</table>
+<blockquote><p>这张表是操作系统的"入口全景图"。<strong>无论是主动求内核办事(系统调用)、还是被动出错(缺页/段错误)、还是外部事件(中断),CPU 用的都是同一套异常机制,都伴随 EL0→EL1 的特权提升。</strong>内核就是"坐在 EL1 等着被各种异常唤醒"的服务程序。你理解了异常和 EL,就理解了内核如何被触发、如何夺回控制权——这也是第一章"抢占"和"系统调用"两条线在 ARM 硬件上的最终落地。第二卷接下来的 GIC(中断怎么送达)、Cache 一致性、TrustZone 属于硬核细节,建议提升 effort 再深入。</p></blockquote>
+
+<h2 id="s12">12.12 面试常问问题</h2>
+<p><strong>Q1:ARM64 有几个异常等级?各跑什么?</strong><br>四个:EL0 用户 App、EL1 OS 内核、EL2 Hypervisor、EL3 安全监控固件。楼层越高权限越大。</p>
+<p><strong>Q2:异常分哪几类?同步和异步的区别?</strong><br>同步异常(当前指令引起,如 SVC/缺页)、IRQ/FIQ(外部中断)、SError(系统错误)。同步与指令一一对应可精确定位;异步随外部事件在任意指令边界发生。</p>
+<p><strong>Q3:详述一次系统调用 read() 从 EL0 到 EL1 的过程。</strong><br>参数入 X0-X7、调用号入 X8,执行 SVC 触发同步异常;硬件存 ELR/SPSR、切 EL1 和内核栈、跳向量表;内核保存寄存器、查系统调用表、执行 sys_read、返回值入 X0、ERET 切回 EL0。</p>
+<p><strong>Q4:低 EL 怎么进高 EL?怎么返回?</strong><br>只能通过异常上升:SVC→EL1、HVC→EL2、SMC→EL3;用 ERET 返回低 EL。不能直接跳。</p>
+<p><strong>Q5:ELR_EL1 和 SPSR_EL1 是什么?</strong><br>ELR 存异常返回地址,SPSR 存被打断时的处理器状态(标志位、来源 EL);ERET 靠它俩恢复 PC 和状态。</p>
+<p><strong>Q6:为什么每个 EL 有独立的栈指针?</strong><br>用户态和内核态用不同栈(SP_EL0/SP_EL1),内核处理异常不破坏也不依赖用户栈,更安全隔离。</p>
+<p><strong>Q7:段错误在 EL/异常层面是怎么回事?</strong><br>访问非法地址触发同步异常(缺页/翻译错),进 EL1,内核查明是非法访问,向进程发 SIGSEGV。</p>
+
+<h2 id="s13">12.13 常见误区</h2>
+<ol>
+  <li><strong>"EL 数字越大权限越小"</strong>——相反,EL3 最高、EL0 最低。</li>
+  <li><strong>"用户程序能直接跳进内核代码"</strong>——不能,只能通过异常(SVC)上升,由硬件受控切换。</li>
+  <li><strong>"系统调用是普通函数调用"</strong>——是同步异常 + EL 切换,比函数调用重得多(要保存现场、切特权级、切栈)。</li>
+  <li><strong>"中断和系统调用机制不同"</strong>——都是异常机制,区别是异步(中断)vs 同步(系统调用)、触发源不同。</li>
+  <li><strong>"缺页都是错误"</strong>——同步异常里的缺页很多是正常按需分页(第十章),不是段错误。</li>
+  <li><strong>"EL2/EL3 没用/不存在"</strong>——RK3588 开机就走了 EL3(安全固件)→EL1,虚拟化用 EL2,只是平时隐身。</li>
+</ol>
+
+<h2 id="s14">12.14 本章总结</h2>
+<ul>
+  <li>ARM64 有<strong>四个异常等级</strong>:EL0 用户 App、EL1 OS 内核、EL2 Hypervisor、EL3 安全固件;楼层越高权限越大,是"隔离保护"的终极形态。</li>
+  <li>异常分<strong>同步</strong>(当前指令引起:SVC/缺页)和<strong>异步</strong>(IRQ/FIQ/SError,外部事件)。</li>
+  <li>异常硬件动作:存 <strong>ELR_EL1</strong>(返回地址)+ <strong>SPSR_EL1</strong>(状态)→ 切 EL 和栈 → 跳<strong>向量表</strong>(VBAR)→ 处理 → <strong>ERET</strong> 返回。</li>
+  <li>每个 EL 有<strong>独立栈指针</strong>(SP_EL0/SP_EL1),用户/内核栈分离更安全。</li>
+  <li>系统调用精确路径:参数 X0-X7、调用号 X8、<strong>SVC 触发同步异常</strong>→EL1→查系统调用表→执行→ERET 回 EL0。</li>
+  <li>EL 切换规则:<strong>只能经异常上升(SVC/HVC/SMC)、经 ERET 下降</strong>。</li>
+  <li>EL2 做整机虚拟化(管多个 OS),EL3 做 TrustZone 安全世界切换(下卷详讲)。</li>
+  <li>回扣:<strong>用户进内核的一切路径(系统调用/缺页/中断)底层都是异常 + EL0→EL1 提升</strong>;内核是坐在 EL1 等异常唤醒的服务程序。</li>
+</ul>
+
+<h2 id="s15">12.15 思维导图</h2>
+<pre><code>异常与异常等级 EL0-EL3
+├─ 一、承接第七章:在ARM64上讲精确(多了EL切换)
+├─ 二、为何多级:用户/内核/虚拟化/安全 逐层逼出
+├─ 三、四层楼
+│  ├─ EL0 用户App  EL1 OS内核
+│  └─ EL2 Hypervisor  EL3 安全固件(权限:EL3>EL2>EL1>EL0)
+├─ 四、异常分类
+│  ├─ 同步(当前指令:SVC/缺页/非法指令)
+│  └─ 异步(IRQ/FIQ外部中断, SError系统错误)
+├─ 五、硬件动作:存ELR+SPSR→切EL和栈→跳向量表→处理→ERET
+├─ 六、异常向量表(VBAR指向, 按来源EL+类型组织16项)
+├─ 七、关键寄存器:ELR(返回地址)/SPSR(状态)/SP_ELn(各EL独立栈)/ESR(异常信息)
+├─ 八、★系统调用EL0→EL1精确路径
+│  └─ 参数X0-X7,调用号X8,SVC触发,查表,ERET返回
+├─ 九、切换规则:SVC→EL1/HVC→EL2/SMC→EL3上升;ERET下降
+├─ 十、EL2虚拟化(管多OS)/EL3 TrustZone安全世界
+└─ 十一、★回扣:一切进内核=异常+EL0→EL1(系统调用/缺页/中断统一)</code></pre>
+
+<h2 id="s16">12.16 课后练习与面试题</h2>
+<h3>课后练习</h3>
+<ol>
+  <li>RK3588 上 <code>strace ./程序</code> 观察系统调用序列;挑一个如 <code>read</code>,对照 12.8 理解它触发的 SVC。</li>
+  <li>用 gdb 单步一个调用 write 的程序,尝试停在 <code>svc</code> 指令处,看寄存器 X0-X2、X8 的值(对照参数和调用号)。</li>
+  <li>Linux 上 <code>cat /proc/cpuinfo</code> 或读 RK3588 文档,确认它启动经过 EL3(ATF)→EL2/EL1 的流程。</li>
+  <li>写一个故意访问 NULL 的程序,用 <code>dmesg</code> 看内核打印的异常信息(ESR、故障地址等),对照 12.7 的 ESR_EL1/FAR_EL1。</li>
+  <li>查 Linux 源码 <code>arch/arm64/kernel/entry.S</code>,找到异常向量表 <code>vectors</code> 和 <code>el0_svc</code> 入口,对照本章(为第五卷预热)。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>ARM64 四个异常等级分别是什么?权限如何排序?</li>
+  <li>同步异常和异步异常的区别?各举例。</li>
+  <li>详细描述系统调用从用户态到内核态的过程(寄存器、指令、EL 切换)。</li>
+  <li>低 EL 如何进入高 EL?用什么指令返回?</li>
+  <li>ELR/SPSR 的作用?为什么每个 EL 要独立栈指针?</li>
+  <li>段错误在异常和 EL 层面是怎么发生的?</li>
+  <li>EL2 和 EL3 分别用来做什么?</li>
+  <li>为什么说"一切进内核都是异常"?列举几条路径。</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第十二章 完 · 第二卷余下(GIC / Cache 一致性 / TrustZone)为硬核区,建议切 high effort</p>
+<div class="nav">
+  <a href="第11章-ARM架构与CortexM和A.html">← 第十一章</a>
+  <a href="index.html">目录</a>
+  <a href="第13章-GIC中断控制器.html">第十三章 →</a>
+</div>
+
+</div>
+</body>
+</html>

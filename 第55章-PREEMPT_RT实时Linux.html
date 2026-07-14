@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第五十五章 PREEMPT_RT 实时 Linux</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第54章-WCET最坏执行时间.html">← 第五十四章</a>
+  <a href="index.html">目录</a>
+  <a href="第56章-RK3588架构总览.html">第五十六章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第七卷 · 实时系统 · 收官</div>
+  <h1>第五十五章 PREEMPT_RT 实时 Linux</h1>
+  <div class="sub">把功能强大的 Linux,改造成能"准时"</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">既要 Linux 的功能,又要实时</a></li>
+    <li><a href="#s2">生活例子:给货车装急救通道</a></li>
+    <li><a href="#s3">PREEMPT_RT 是什么</a></li>
+    <li><a href="#s4">Linux 抢占模型的演进</a></li>
+    <li><a href="#s5">改造一:自旋锁变可睡眠锁</a></li>
+    <li><a href="#s6">改造二:中断线程化</a></li>
+    <li><a href="#s7">改造三:优先级继承等</a></li>
+    <li><a href="#s8">效果:延迟从毫秒到微秒</a></li>
+    <li><a href="#s9">另一条路:双内核(Xenomai)</a></li>
+    <li><a href="#s10">实时 Linux 调优实战清单</a></li>
+    <li><a href="#s11">回扣全卷与 AMP 展望</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:第50章说原生 Linux 不硬实时,但 Linux 功能太强大了(网络、文件、ROS2、丰富驱动),我们又想在它上面跑实时任务。<strong>能不能把 Linux 改造成实时的?</strong>能——<strong>PREEMPT_RT</strong> 补丁(现已大部分合入主线)就是干这个的。本章讲它<strong>如何把 Linux 那些"不确定源"(第51章)逐一改造掉</strong>,让延迟从毫秒级降到微秒级。作为第七卷收官,这是理论落地到 RK3588 实际工程的一章,车企做 Linux 实时必考。</p></blockquote>
+
+<h2 id="s1">55.1 既要 Linux 的功能，又要实时</h2>
+<p>一个现实的两难:</p>
+<ul>
+  <li><strong>RTOS(FreeRTOS)</strong>:实时性好,但功能少——没有丰富的文件系统、网络栈、进程隔离、ROS2、复杂应用生态。</li>
+  <li><strong>Linux</strong>:功能极强(网络、文件、驱动、ROS2、AI 框架),但默认不硬实时(第50章)。</li>
+</ul>
+<p><strong>现代机器人/无人机/汽车既需要 Linux 的强大功能(跑视觉、导航、通信),又需要实时(控制回路)。</strong>怎么办?两条路:①<strong>分开</strong>——MCU 跑 RTOS 做硬实时控制,SoC 跑 Linux 做复杂应用(AMP,第八卷),这是最稳妥的;②<strong>合并</strong>——把 Linux 本身改造成实时的,让实时任务和复杂应用都跑在一个 Linux 上。<strong>本章讲第二条路:PREEMPT_RT 如何改造 Linux。</strong>它让你在一颗跑 Linux 的 SoC(如 RK3588)上,既能跑 ROS2/视觉,又能跑有一定实时保证的控制任务——省去额外 MCU,简化系统。这对成本/体积敏感的产品很有吸引力。</p>
+
+<h2 id="s2">55.2 生活例子：给货车装急救通道</h2>
+<p>原生 Linux 像一辆<strong>满载的货车</strong>(吞吐优先,第50章):装得多、效率高,但一旦开动就不好停,急事(紧急任务)插不进来——货装到一半不能随便卸(不可抢占段)、司机在打电话时不接别的呼叫(关中断)。</p>
+<p><strong>PREEMPt_RT 的改造,就像给这辆货车动手术:装可以随时暂停装卸的机构(可抢占)、给司机配个"急事优先"的对讲机(中断线程化、优先级继承),让紧急任务能随时打断当前工作插进来处理。</strong>改造后,货车还是那辆功能强大的货车(Linux 的功能全保留),但<strong>获得了"急事能及时响应"的能力(实时性)。</strong>代价是:为了能随时被打断,平时的运输效率(吞吐)略降。这就是 PREEMPT_RT 的本质——<strong>用一点吞吐,换 Linux 的实时能力。</strong></p>
+
+<h2 id="s3">55.3 PREEMPT_RT 是什么</h2>
+<p>明确 PREEMPT_RT 的定位:</p>
+<table>
+<tr><th>问题</th><th>答案</th></tr>
+<tr><td>是什么</td><td>一套让 Linux 内核<strong>近乎完全可抢占</strong>的补丁/配置(CONFIG_PREEMPT_RT)</td></tr>
+<tr><td>目标</td><td>大幅降低最坏调度延迟,让 Linux 能满足<strong>软实时到部分硬实时</strong></td></tr>
+<tr><td>手段</td><td>消除第51章那些不确定源:改可抢占、中断线程化、优先级继承</td></tr>
+<tr><td>现状</td><td>历经 20 年,核心已<strong>合入 Linux 主线</strong>(6.12 起大部分正式支持)</td></tr>
+<tr><td>不改变</td><td>Linux 的 API、功能、生态全保留(应用不用改)</td></tr>
+</table>
+<blockquote><p><strong>PREEMPT_RT 的核心目标:把 Linux 内核改造成"几乎处处可抢占",从而大幅降低最坏调度延迟(第51章),让高优先级实时任务能几乎立即抢占运行。</strong>它<strong>不是</strong>另一个操作系统,而是对标准 Linux 内核的一系列修改(通过 <code>CONFIG_PREEMPT_RT</code> 配置启用),<strong>完全保留 Linux 的 API、功能和生态</strong>——你的 ROS2、网络程序、驱动照常跑,只是内核的实时性大大增强。<strong>这是一个了不起的工程成就</strong>:历经约 20 年开发,如今核心已合入 Linux 主线(6.12 版本起大部分特性正式支持,不再需要外部打补丁)。它能把 Linux 的最坏延迟从毫秒级(甚至几十毫秒)压到<strong>几十微秒</strong>,满足软实时和相当一部分硬实时需求。下面看它具体改了什么。</p></blockquote>
+
+<h2 id="s4">55.4 Linux 抢占模型的演进</h2>
+<p>理解 PREEMPT_RT 前,先看 Linux 抢占能力的几个档位(内核配置选项):</p>
+<table>
+<tr><th>抢占模型</th><th>可抢占程度</th><th>适合</th></tr>
+<tr><td>PREEMPT_NONE</td><td>内核态<strong>不可抢占</strong>(只在返回用户态时切换)</td><td>服务器(要吞吐)</td></tr>
+<tr><td>PREEMPT_VOLUNTARY</td><td>内核里加了一些"自愿抢占点"</td><td>桌面(改善响应)</td></tr>
+<tr><td>PREEMPT(低延迟)</td><td>内核态<strong>大部分可抢占</strong>(除持锁/中断)</td><td>桌面/低延迟需求</td></tr>
+<tr><td><strong>PREEMPT_RT</strong></td><td>内核态<strong>几乎完全可抢占</strong>(连自旋锁临界区都可抢占)</td><td>实时</td></tr>
+</table>
+<p><strong>这是一个"可抢占程度"递增的谱系,PREEMPT_RT 是最激进的一档。</strong>普通 Linux(服务器 NONE、桌面 PREEMPT)在内核态有大量不可抢占的地方(第51章),高优先级任务要等。<strong>PREEMPT_RT 把"几乎所有"内核代码都变成可抢占</strong>——包括原本绝对不可抢占的自旋锁临界区(55.5)。<strong>可抢占程度越高,调度延迟越小(高优先级任务越能及时插入),但抢占/切换开销越大、吞吐略降</strong>——又是第50章吞吐 vs 实时的权衡。你在编译内核时通过这个配置选择档位;做实时就选 PREEMPT_RT。下面看它用哪些具体手段实现"几乎完全可抢占"。</p>
+
+<h2 id="s5">55.5 改造一：自旋锁变可睡眠锁</h2>
+<p>PREEMPT_RT 最核心、最巧妙的改造——<strong>把大部分自旋锁变成可睡眠、可抢占的锁</strong>:</p>
+<pre><code>原生Linux的自旋锁(第37章)问题:
+  持自旋锁时【不可抢占】(第51章不可抢占段的主要来源)
+  → 高优先级实时任务就绪, 但当前任务持自旋锁 → 只能等它解锁
+  → 自旋锁临界区 = 一段不可抢占的延迟
+
+PREEMPT_RT的改造:
+  ★把大部分 spinlock 转换成 rt_mutex(可睡眠的互斥锁)
+   → 持这种"自旋锁"时【可以被抢占】了!
+   → 高优先级任务就绪 → 立即抢占持锁任务
+   → 持锁任务被抢占后睡眠(而非自旋), 高优先级先跑
+   → 而且rt_mutex带【优先级继承】(第53章)! 防反转
+   (少数真正需要的原子上下文, 保留raw_spinlock不变)</code></pre>
+<blockquote><p><strong>这是 PREEMPT_RT 最核心的改造:把 Linux 内核里大量的自旋锁(第37章)从"持锁不可抢占"改成"持锁可抢占的可睡眠锁(rt_mutex)"。</strong>原生 Linux 里,持自旋锁是不可抢占段(第51章)的主要来源——一段自旋锁临界区就是一段高优先级任务无法插入的延迟。<strong>PREEMPT_RT 让这些"自旋锁"实际变成可睡眠的 rt_mutex</strong>:持锁的任务可以被高优先级任务抢占(它会睡眠让路,而非霸占 CPU 自旋),大大降低了调度延迟。<strong>更妙的是,rt_mutex 自带优先级继承(第53章),顺便解决了优先级反转问题。</strong>代价是:锁操作从"简单自旋"变成"可能睡眠+切换",开销增大、吞吐略降(实时的代价)。<strong>少数真正需要原子性、绝不能睡的地方</strong>(如调度器核心、真正的中断处理)保留为 <code>raw_spinlock</code> 不变。这个"自旋锁可睡眠化"是 PREEMPT_RT 削减不可抢占段的主力。</p></blockquote>
+
+<h2 id="s6">55.6 改造二：中断线程化</h2>
+<p>第二大改造——<strong>把中断处理线程化</strong>(第43章线程化中断的全面推广):</p>
+<pre><code>原生Linux的中断问题:
+  硬中断ISR在中断上下文运行, 【不可被调度/抢占】,
+  而且ISR期间可能关中断 → 高优先级实时任务被ISR挡住
+  一个耗时的ISR = 一段不可控的延迟
+
+PREEMPT_RT的改造:
+  ★把大部分中断处理【放进内核线程】运行(threaded IRQ, 第43章)
+   → 中断处理变成一个【普通的内核线程】, 有优先级、可被调度
+   → 如果实时任务优先级比某中断线程【更高】,
+     实时任务可以抢占中断线程! (中断不再无条件优先)
+   → 中断处理也纳入统一的优先级调度体系
+
+  只保留极短的硬中断上半部(标记+唤醒中断线程)
+  → 硬中断关中断时间极短 → 中断延迟大降</code></pre>
+<p><strong>第二大改造:把中断处理从"不可抢占的中断上下文"搬进"可调度的内核线程"。</strong>原生 Linux 的硬中断 ISR 优先于一切任务运行、不可抢占,一个耗时 ISR 就是一段挡住实时任务的延迟。<strong>PREEMPT_RT 把大部分中断处理做成内核线程(第43章线程化中断的全面化)</strong>:中断处理变成有优先级、可被调度的线程,<strong>于是一个高优先级的实时任务可以抢占低优先级的中断线程</strong>——中断不再无条件压倒实时任务,而是纳入统一的优先级体系。只保留极短的硬中断上半部(标记+唤醒中断线程),硬中断关中断时间极短。<strong>这让"中断延迟"和"中断对调度的干扰"都大幅降低,并让你能给关键实时任务设比中断线程更高的优先级,保证它优先。</strong></p>
+
+<h2 id="s7">55.7 改造三：优先级继承等</h2>
+<p>PREEMPT_RT 还有一系列配套改造,共同消除不确定源:</p>
+<table>
+<tr><th>改造</th><th>作用</th><th>对应</th></tr>
+<tr><td><strong>rt_mutex 优先级继承</strong></td><td>内核锁普遍带 PI,消除优先级反转</td><td>第53章</td></tr>
+<tr><td><strong>软中断线程化</strong></td><td>softirq 也放线程,可被抢占</td><td>第36章</td></tr>
+<tr><td><strong>高精度定时器</strong></td><td>hrtimer,定时精度到纳秒,精确唤醒</td><td>-</td></tr>
+<tr><td><strong>缩短/消除长临界区</strong></td><td>把内核里长的不可抢占段拆短</td><td>第51章</td></tr>
+<tr><td><strong>可抢占的 RCU</strong></td><td>RCU 读侧也可抢占(preemptible RCU)</td><td>第38章</td></tr>
+</table>
+<blockquote><p><strong>PREEMPT_RT 是一整套系统性改造,把第51章列举的每一个"不确定源"逐个攻克:</strong>自旋锁可抢占(改造一)、中断线程化(改造二)、软中断也线程化、内核锁普遍带优先级继承消除反转(第53章)、用高精度定时器 hrtimer 实现纳秒级精确唤醒、把内核里残留的长不可抢占段拆短、连 RCU(第38章)读侧都改成可抢占。<strong>你会发现,这套改造就是第51章"降低延迟手段"和第53章"优先级继承"在内核层面的系统性落地。</strong>每一项都在削减最坏调度延迟。<strong>这也再次印证第七卷的知识是环环相扣的:PREEMPT_RT 不是凭空的黑科技,而是把前面所有实时原理(延迟分解、优先级继承、可抢占、高精度定时)工程化地实现在 Linux 内核里。</strong>理解了前面几章,你就能看懂 PREEMPT_RT 每项改造的动机。</p></blockquote>
+
+<h2 id="s8">55.8 效果：延迟从毫秒到微秒</h2>
+<p>改造的实际效果,用第51章的 cyclictest 衡量:</p>
+<pre><code>cyclictest 测最坏调度延迟(Max), 同样负载下:
+
+  原生Linux(PREEMPT_NONE/桌面):
+    Max 常在 【几百微秒 ~ 几十毫秒】, 且有不可预测长尾
+    → 只能软实时(视频/音频), 做不了控制
+
+  PREEMPT_RT:
+    Max 通常 【< 100微秒】(好的平台/配置下几十us), 且【有界】
+    → 能满足软实时和相当一部分硬实时(如几百Hz~kHz控制回路)
+
+  RTOS(FreeRTOS)/裸机:
+    Max 更小(us级甚至更低)且更稳定
+    → 严格硬实时(高频电机控制等)
+
+  → PREEMPT_RT让Linux的实时性【接近但一般不及】专用RTOS,
+    但换来了Linux的全部功能生态</code></pre>
+<p><strong>效果显著:PREEMPT_RT 把 Linux 的最坏调度延迟从"毫秒级且有不可预测长尾"降到"通常 &lt;100 微秒且有界"。</strong>这个量级的提升,让 Linux 从"只能软实时"变成"能满足软实时和相当一部分硬实时"——足以跑几百 Hz 到 kHz 的控制回路(很多机器人/无人机的姿态环在这个范围)。<strong>但要客观:PREEMPT_RT 的实时性仍一般不及专用 RTOS/裸机</strong>(后者 Max 更小更稳定),因为 Linux 内核毕竟庞大复杂,还有些难以完全消除的延迟源、以及现代 SoC 的硬件不确定(第54章)。<strong>所以选择是:极严格的硬实时(高频电机 FOC)用 RTOS/MCU;中等实时 + 需要 Linux 功能的用 PREEMPT_RT。</strong>车企会根据具体控制回路的严格程度来选。</p>
+
+<h2 id="s9">55.9 另一条路：双内核(Xenomai)</h2>
+<p>把 Linux 变实时,除了 PREEMPT_RT(改造单内核),还有另一种思路——<strong>双内核</strong>:</p>
+<pre><code>双内核方案(Xenomai / RTAI 等):
+  在Linux【底下】塞一个微型实时内核(co-kernel),
+  它优先级高于整个Linux:
+    ┌──────────────────────────┐
+    │  实时任务 ← 跑在实时内核上(硬实时保证)│
+    ├──────────────────────────┤
+    │  Linux(及其所有应用)← 作为实时内核的  │
+    │       "空闲任务"运行, 随时被实时内核抢占 │
+    └──────────────────────────┘
+  → 实时内核直接管硬件中断, 保证实时任务的确定性
+  → Linux只在实时内核空闲时才运行
+
+对比:
+  PREEMPT_RT(单内核): 改造Linux本身, 简单统一, 用标准Linux API,
+                     实时性好但不及双内核
+  双内核(Xenomai): 实时性更强(接近RTOS), 但架构复杂、
+                   实时任务要用专门API、维护成本高</code></pre>
+<p><strong>双内核是另一条实时化路线:不改造 Linux,而是在它"下面"放一个微型实时内核(co-kernel),这个实时内核优先级高于整个 Linux。</strong>实时任务跑在实时内核上(获得接近 RTOS 的硬实时保证),Linux 整个作为实时内核的"空闲任务"运行——只在没有实时任务时才跑。<strong>对比 PREEMPT_RT:双内核实时性更强(实时内核小而可控),但架构复杂、实时任务要用专门 API(不是标准 Linux API)、维护成本高。</strong>PREEMPT_RT 则是<strong>改造 Linux 单内核本身</strong>——统一、简单、用标准 Linux API,实时性虽略逊但足够多数场景,且随主线维护。<strong>趋势上 PREEMPT_RT 合入主线后成为主流选择</strong>(维护和生态优势),双内核(Xenomai)用于对实时性要求极致的特定场合。了解两条路的存在和取舍即可。</p>
+
+<h2 id="s10">55.10 实时 Linux 调优实战清单</h2>
+<p>把 Linux 调成实时,不只是打开 PREEMPT_RT,还要一系列配置(实战 checklist,车企做 RK3588 实时必用):</p>
+<pre><code>实时 Linux 调优清单:
+  □ 用 PREEMPT_RT 内核(或至少 PREEMPT)
+  □ 关键任务用 SCHED_FIFO/RR 高优先级 (chrt, 第52章)
+  □ mlockall() 锁定内存, 防换页 (第10/51章)
+  □ 用内存池/预分配, 避免运行时 malloc (第24/54章)
+  □ CPU 隔离: isolcpus + 把实时任务绑到隔离核 (亲和, 第八卷)
+  □ 关闭该核的中断/RCU回调/负载均衡, 减少干扰
+  □ 关闭 DVFS/CPU 调频, 固定最高频率 (第54章)
+  □ 禁用不必要的电源管理(C-states 深睡眠会增大唤醒延迟)
+  □ 用带优先级继承的锁 (PTHREAD_PRIO_INHERIT, 第53章)
+  □ 调整 RT throttling (或确保实时任务不死循环)
+  □ 用 cyclictest 验证 Max 延迟达标 (第51章)
+  □ 循环有界、避免递归 (为可预测编程, 第54章)</code></pre>
+<blockquote><p><strong>这份清单是实时 Linux 工程的"作战手册",几乎每一项都对应第七卷前面某章的原理。</strong>把 Linux 调成实时,<strong>PREEMPT_RT 内核只是起点</strong>,还要:用实时调度策略(第52章)、锁内存防换页(第51章)、内存池避免 malloc(第54章)、<strong>CPU 隔离把实时任务绑到专用核并关掉该核的各种干扰(第八卷 affinity/isolcpus)</strong>、固定频率(第54章)、用优先级继承锁(第53章),最后用 <strong>cyclictest 验证</strong>(第51章)。<strong>你会发现,这份清单就是把第七卷所有知识落地成可执行的工程步骤</strong>——这正是"理论到实践"的桥梁。<strong>对目标车企的你,这份 checklist 极其实用</strong>:在 RK3588 上跑实时控制任务,就是照着它一项项配置和验证。面试问"怎么在 Linux 上做实时",答出这份清单(而不只是"用 PREEMPT_RT")才显功力。</p></blockquote>
+
+<h2 id="s11">55.11 回扣全卷与 AMP 展望</h2>
+<p>第七卷收官,回顾全卷并展望第八卷:</p>
+<table>
+<tr><th>第七卷章节</th><th>核心</th></tr>
+<tr><td>50 什么是实时性</td><td>实时=确定性,非快</td></tr>
+<tr><td>51 延迟来源</td><td>分解延迟,找不确定源</td></tr>
+<tr><td>52 实时调度</td><td>RMS/EDF,可调度性分析</td></tr>
+<tr><td>53 优先级反转</td><td>继承/天花板解无界反转</td></tr>
+<tr><td>54 WCET</td><td>最坏执行时间,分析输入</td></tr>
+<tr><td><strong>55 PREEMPT_RT</strong></td><td>把 Linux 改造成实时(落地)</td></tr>
+</table>
+<blockquote><p><strong>第七卷完整地讲了实时系统:从"什么是实时"(50)的观念,到延迟分析(51)、调度理论(52)、优先级反转(53)、WCET(54)的方法论,最后到 PREEMPT_RT(55)把这一切落地到真实的 Linux 系统。</strong>你现在具备了<strong>完整的实时系统能力</strong>:理解实时的本质、能分析和降低延迟、能设计可证明满足 deadline 的调度、能防治优先级反转、能处理 WCET、能把 Linux 调成实时。<strong>这是从"会用 RTOS"到"懂实时系统工程"的完整跃迁。</strong></p>
+<p><strong>但本章也揭示了一个更大的工程现实:单靠 PREEMPT_RT,Linux 的实时性仍不及专用 RTOS;而现代产品(无人机、自动驾驶域控)既要 Linux 的强大功能(视觉、AI、通信),又要 RTOS 级的硬实时控制。</strong>怎么两全?答案是<strong>第八卷的核心主题——AMP(非对称多处理)</strong>:在一颗 SoC(如 RK3588)里,<strong>让大核跑 Linux(复杂应用)、小核跑 RTOS(硬实时控制),两者协同</strong>。这样飞控的硬实时用 RTOS 保证、视觉导航的功能用 Linux 满足,各取所长。<strong>第八卷会讲 RK3588 上的这种混合架构:Linux + RT-Thread/RTOS、多核协同(AMP/SMP)、核间通信(RPMsg)、共享内存、CPU 亲和隔离——把第七卷的实时理论和第六卷的驱动能力,综合应用到工业级别的真实工程平台上。</strong>你已经打通了从计算机原理、ARM、RTOS、Linux 内核、驱动到实时系统的完整链路,第八卷将是这一切的工程集大成。<strong>恭喜你征服了实时系统这座硬核高峰!</strong></p></blockquote>
+
+<h2 id="s12">55.12 面试常问问题</h2>
+<p><strong>Q1:为什么原生 Linux 不硬实时?PREEMPT_RT 解决什么?</strong><br>原生 Linux 有大量不可抢占段、长关中断、中断优先于任务等(第51章),最坏延迟毫秒级且有长尾。PREEMPT_RT 把内核改造成几乎完全可抢占,把最坏延迟降到微秒级且有界。</p>
+<p><strong>Q2:PREEMPT_RT 的核心改造有哪些?★</strong><br>①自旋锁改成可睡眠可抢占的 rt_mutex(消除不可抢占段,还带优先级继承);②中断线程化(中断处理放内核线程,可被高优先级任务抢占);③软中断线程化、高精度定时器、可抢占 RCU、缩短长临界区。</p>
+<p><strong>Q3:自旋锁改可睡眠锁为什么能提升实时性?</strong><br>原生持自旋锁不可抢占,是延迟主要来源。改成 rt_mutex 后持锁可被高优先级抢占(持锁者睡眠让路),大降调度延迟,还顺带优先级继承防反转。少数原子场景保留 raw_spinlock。</p>
+<p><strong>Q4:PREEMPT_RT 能达到什么延迟?和 RTOS 比?</strong><br>cyclictest Max 通常 &lt;100us 且有界(原生毫秒级有长尾)。能满足软实时和部分硬实时(百 Hz~kHz 控制)。但一般不及专用 RTOS/裸机(us 级更稳),因 Linux 庞大+硬件不确定。</p>
+<p><strong>Q5:PREEMPT_RT 和双内核(Xenomai)的区别?</strong><br>PREEMPT_RT 改造 Linux 单内核,统一、标准 API、已入主线;双内核在 Linux 下塞微实时内核,实时性更强但架构复杂、要专门 API。趋势是 PREEMPT_RT 主流。</p>
+<p><strong>Q6:在 Linux 上做实时,除了 PREEMPT_RT 还要做什么?</strong><br>SCHED_FIFO 高优先级、mlockall 锁内存、内存池避 malloc、CPU 隔离绑核关干扰、固定频率、优先级继承锁、cyclictest 验证、循环有界。一整套调优。</p>
+<p><strong>Q7:既要 Linux 功能又要硬实时,最佳方案?</strong><br>AMP:大核跑 Linux(复杂应用)、小核/MCU 跑 RTOS(硬实时控制),核间通信协同(第八卷)。PREEMPT_RT 适合中等实时+要 Linux 功能的场景。</p>
+
+<h2 id="s13">55.13 常见误区</h2>
+<ol>
+  <li><strong>"装了 PREEMPT_RT 就自动硬实时"</strong>——还要一整套调优(绑核/锁内存/优先级等),且仍不及 RTOS。</li>
+  <li><strong>"PREEMPT_RT 会让 Linux 变快"</strong>——不是变快,是最坏延迟变小可预测;平均吞吐略降。</li>
+  <li><strong>"PREEMPT_RT 改变了 Linux API"</strong>——API/功能不变,应用不用改。</li>
+  <li><strong>"PREEMPT_RT 能完全替代 RTOS"</strong>——实时性一般不及专用 RTOS,极严格场景仍需 RTOS/AMP。</li>
+  <li><strong>"自旋锁全改成了睡眠锁"</strong>——大部分改,少数原子上下文保留 raw_spinlock。</li>
+  <li><strong>"实时 Linux 只需内核配置"</strong>——还要应用侧(实时优先级、锁内存、内存池)和系统调优。</li>
+</ol>
+
+<h2 id="s14">55.14 本章总结</h2>
+<ul>
+  <li>两难:RTOS 实时但功能少,Linux 功能强但默认不实时。<strong>PREEMPT_RT</strong> 把 Linux 改造成实时,保留全部功能生态。</li>
+  <li>抢占谱系:NONE → VOLUNTARY → PREEMPT → <strong>PREEMPT_RT(几乎完全可抢占)</strong>;可抢占越多延迟越小、吞吐略降。</li>
+  <li><strong>核心改造★</strong>:①<strong>自旋锁→可睡眠可抢占的 rt_mutex</strong>(消除不可抢占段+优先级继承);②<strong>中断线程化</strong>(中断处理放线程,可被实时任务抢占);③软中断线程化、hrtimer、可抢占 RCU、拆短长临界区。</li>
+  <li>效果:最坏调度延迟从<strong>毫秒级有长尾 → &lt;100us 有界</strong>(cyclictest Max);满足软实时+部分硬实时,但一般不及 RTOS。</li>
+  <li>另一路:<strong>双内核(Xenomai)</strong>——Linux 下塞微实时内核,实时性更强但复杂;PREEMPT_RT 单内核更统一、已入主线,成主流。</li>
+  <li>实战调优清单:PREEMPT_RT + SCHED_FIFO + mlockall + 内存池 + <strong>CPU 隔离绑核 + 固定频率 + 优先级继承锁 + cyclictest 验证</strong>。</li>
+  <li>终极方案:极严格硬实时用 <strong>AMP</strong>(大核 Linux + 小核 RTOS,第八卷);PREEMPT_RT 适合中等实时+要 Linux 功能。</li>
+</ul>
+
+<h2 id="s15">55.15 思维导图 / 课后题</h2>
+<pre><code>PREEMPT_RT 实时 Linux
+├─ 一、两难:RTOS实时少功能 vs Linux多功能不实时 → 改造Linux
+├─ 二、PREEMPT_RT:让内核几乎完全可抢占, 降最坏延迟; 保留Linux生态
+├─ 三、抢占谱系:NONE→VOLUNTARY→PREEMPT→★PREEMPT_RT(完全可抢占)
+├─ 四、★改造1:自旋锁→rt_mutex(可睡眠可抢占+优先级继承)
+├─ 五、★改造2:中断线程化(中断放线程, 可被实时任务抢占)
+├─ 六、改造3:软中断线程化/hrtimer/可抢占RCU/拆短临界区
+├─ 七、★效果:cyclictest Max 毫秒有长尾→<100us有界(软+部分硬实时)
+├─ 八、另一路:双内核Xenomai(更强但复杂); PREEMPT_RT单内核入主线主流
+├─ 九、★实战清单:RT内核+SCHED_FIFO+mlockall+内存池+CPU隔离+固定频率
+│                +优先级继承锁+cyclictest验证
+└─ 十、终极:AMP(大核Linux+小核RTOS, 第八卷); 回扣全卷实时方法论
+        第七卷收官:50确定性/51延迟/52调度/53反转/54WCET/55落地</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li><code>uname -a</code> 看内核是否含 PREEMPT_RT(或看 <code>/sys/kernel/realtime</code>);对比普通内核和 RT 内核跑 cyclictest 的 Max 差异。</li>
+  <li>在有负载(编译/dd/网络)时跑 <code>cyclictest -p99 -i1000 -l1000000 -m</code>,普通内核 vs RT 内核,记录 Max,直观感受实时性提升。</li>
+  <li>照 55.10 清单给一个实时线程做调优:SCHED_FIFO + mlockall + 绑到 isolcpus 隔离核,前后跑 cyclictest 对比 Max。</li>
+  <li>研究 <code>chrt</code>、<code>taskset</code>(绑核)、<code>/proc/sys/kernel/sched_rt_runtime_us</code>(RT throttling)的用法。</li>
+  <li>调研机器人产品的系统架构:哪些用 RTOS(硬实时)、哪些用 Linux(应用),是否用 AMP,思考为什么这样分工(预习第八卷)。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>为什么原生 Linux 不硬实时?PREEMPT_RT 的目标?</li>
+  <li>PREEMPT_RT 的核心改造有哪些?(重点:自旋锁、中断线程化)</li>
+  <li>自旋锁改成可睡眠锁为什么能提升实时性?</li>
+  <li>PREEMPT_RT 能达到什么延迟?和专用 RTOS 比如何?</li>
+  <li>PREEMPT_RT 和双内核方案的区别?</li>
+  <li>在 Linux 上做实时,除内核外还要做哪些调优?</li>
+  <li>既要 Linux 功能又要硬实时,最佳系统架构是什么?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第五十五章 完 · <strong>第七卷 实时系统 收官</strong> · 下一卷《第八卷 RK3588 工程实践》</p>
+<div class="nav">
+  <a href="第54章-WCET最坏执行时间.html">← 第五十四章</a>
+  <a href="index.html">目录</a>
+  <a href="第56章-RK3588架构总览.html">第五十六章 →</a>
+</div>
+
+</div>
+</body>
+</html>

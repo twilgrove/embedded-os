@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第卅八章 RCU</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第37章-Linux-并发同步.html">← 第卅七章</a>
+  <a href="index.html">目录</a>
+  <a href="第39章-驱动总览与字符设备.html">第三十九章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第五卷 · Linux 内核 · 收官</div>
+  <h1>第卅八章 RCU</h1>
+  <div class="sub">读者完全无锁——Linux 最精妙的同步机制</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">锁的尽头:能不能读不加锁</a></li>
+    <li><a href="#s2">生活例子:换灯泡不停电</a></li>
+    <li><a href="#s3">RCU 的名字:读-拷贝-更新</a></li>
+    <li><a href="#s4">核心思想:更新用新副本</a></li>
+    <li><a href="#s5">最大难题:何时释放旧数据</a></li>
+    <li><a href="#s6">宽限期 grace period</a></li>
+    <li><a href="#s7">RCU 读侧几乎零成本</a></li>
+    <li><a href="#s8">RCU 完整流程</a></li>
+    <li><a href="#s9">RCU 的适用与限制</a></li>
+    <li><a href="#s10">内核里 RCU 的实际应用</a></li>
+    <li><a href="#s11">回扣全卷:同步机制全景</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>:第37章的锁,读者也要付出代价(至少一次原子操作/内存屏障)。但内核里大量数据是<strong>读极多、写极少</strong>(路由表、进程列表、配置)——能不能让<strong>读者完全不加锁、零开销</strong>?这就是 <strong>RCU(Read-Copy-Update)</strong>,Linux 最精妙也最难懂的同步机制。它是第37章"减少互斥"思路的终极形态。学完这章,第五卷 Linux 内核就圆满收官了。</p></blockquote>
+
+<h2 id="s1">38.1 锁的尽头：能不能读不加锁</h2>
+<p>第37章末尾我们看到一条演进线:普通锁(读写都互斥)→ 读写锁(读者可并行)→ seqlock(写者不被读者挡)。<strong>每一步都在"减少读者的代价"。</strong>推到极致的问题是:<strong>能不能让读者完全不加锁、不加屏障、零开销地读?</strong></p>
+<p>这听起来不可能——不加任何保护,读到一半数据被改了怎么办?但 RCU 做到了,靠一个巧妙的转念:<strong>不阻止读者读旧数据,而是保证"旧数据在还有读者用时不被销毁"。</strong>读者尽管读(哪怕读到的是"旧版本"),写者去准备"新版本",等所有还在读旧版本的读者都读完了,才回收旧版本。<strong>读写不再互斥,而是"新旧版本共存一段时间"。</strong></p>
+
+<h2 id="s2">38.2 生活例子：不停电换灯泡</h2>
+<p>房间里一盏灯亮着(旧数据),大家正靠它看书(读者在读)。你要换个更亮的灯泡(更新)。<strong>加锁做法</strong>:让所有人闭眼(阻塞读者),关灯、换泡、开灯,再让大家睁眼——期间没人能看书(读者被挡)。</p>
+<p><strong>RCU 做法</strong>:你<strong>先在旁边装好新灯并点亮</strong>(准备新副本),然后"啪"一下把大家的目光引到新灯(切换指针,一瞬间),<strong>旧灯先不拆</strong>——因为可能还有人正盯着旧灯看(还有读者在用旧数据)。你<strong>等到确认没人再看旧灯了,才把旧灯拆掉</strong>(回收旧数据)。全程<strong>没有人需要闭眼</strong>(读者从不被阻塞)!新旧灯共存了一小会儿,代价是"多留了会儿旧灯",换来"读者全程无干扰"。<strong>这就是 RCU 的精髓:更新时新旧共存,等旧的没人用了再清理。</strong></p>
+
+<h2 id="s3">38.3 RCU 的名字：读-拷贝-更新</h2>
+<p><strong>RCU = Read - Copy - Update</strong>,名字就是它的三步工作法:</p>
+<table>
+<tr><th>Read(读)</th><th>读者直接读,不加锁(只标记"我在读临界区")</th></tr>
+<tr><td><strong>Copy(拷贝)</strong></td><td>写者要改时,不原地改,而是<strong>拷贝一份</strong>,在副本上改</td></tr>
+<tr><td><strong>Update(更新)</strong></td><td>改完把指针<strong>原子地切换</strong>到新副本;旧副本等没人用了再回收</td></tr>
+</table>
+<p>关键在<strong>"Copy"和"Update"</strong>:写者<strong>不在原数据上改</strong>(那会让正在读的读者看到"改到一半"的中间状态),而是<strong>复制一份、在副本上从容改好、再一次性把指针切过去</strong>。指针切换是原子的(第37章原子操作),所以读者要么看到完整的旧版本,要么看到完整的新版本,<strong>绝不会看到"改了一半"的破碎状态</strong>。这是 RCU 让读者能安全无锁读的基础。</p>
+
+<h2 id="s4">38.4 核心思想：更新用新副本(而非原地改)</h2>
+<p>用一个链表删除节点的例子,看清"新旧共存":</p>
+<pre><code>链表: A → B → C, 要删除 B
+
+传统(加锁): 锁住链表, 改A的next指向C, 释放B, 解锁
+             → 期间读者被挡
+
+RCU:
+  ① A → B → C   (初始, 读者可能正停在B上读)
+  ② 把A的next【原子地】改成指向C:
+        A ──────→ C
+             ╲   ↗
+              → B      (B还在! 只是没人能"新"到达它了)
+     此刻: 新来的读者走 A→C (看不到B了)
+           但已经在B上的老读者, 还能继续读B (B没被释放!)
+  ③ 等【所有可能还在读B的读者】都离开后 → 才真正free(B)</code></pre>
+<p><strong>看第②步:改指针是原子的一瞬间。</strong>这一瞬之后,新读者顺着 A→C 走,再也到不了 B;但<strong>之前已经在读 B 的老读者,手里还握着 B 的指针,B 还没被释放,他们能安全读完。</strong>写者不能立刻 free(B)——万一还有老读者在读就崩了。<strong>所以 RCU 最难、最核心的问题是:写者怎么知道"所有老读者都读完了,可以安全 free 旧数据了"?</strong>这就引出 RCU 的灵魂概念——宽限期。</p>
+
+<h2 id="s5">38.5 最大难题：何时释放旧数据</h2>
+<p>再强调这个核心难题,因为它是 RCU 全部复杂性的来源:</p>
+<blockquote><p><strong>读者不加锁、不留痕迹地读,写者怎么知道"没有读者还在用旧数据"?</strong>如果写者太早 free 旧数据,还在读的读者就会访问已释放内存(崩溃);如果永不 free,就内存泄漏。<strong>必须精确地在"最后一个老读者离开后"回收。</strong>但读者又不加锁(没法用"引用计数归零"这种要读者付出代价的方式,那就违背了"读者零开销"的初衷)。这个"既要读者零成本,又要知道读者何时全部离开"的矛盾,RCU 用一个绝妙的观察解决——<strong>宽限期</strong>。</p></blockquote>
+
+<h2 id="s6">38.6 宽限期 grace period（RCU 的灵魂)</h2>
+<p>RCU 的关键洞察,基于一条规则:<strong>RCU 读者在"读侧临界区"内(<code>rcu_read_lock</code> 到 <code>rcu_read_unlock</code> 之间)不允许睡眠/被抢占。</strong>由这条规则,推出一个绝妙结论:</p>
+<pre><code>★核心推理:
+  规则: RCU读者临界区内不能睡眠/切换出去
+  推论: 如果某个CPU发生了一次【上下文切换】(第30章),
+        说明它上面【原来的那个读者已经退出临界区了】
+        (因为读者临界区内不会切换)
+
+  所以: 只要【每个CPU都至少经历过一次上下文切换】,
+        就能保证【所有旧读者都已离开临界区】!
+
+  这段"等每个CPU都切换过一次"的时间 = 【宽限期 grace period】
+  宽限期结束 → 旧数据保证没人用了 → 可以安全free</code></pre>
+<blockquote><p><strong>这是 RCU 最天才的地方,一定要理解:</strong>因为读者临界区内不能切换,那么"一个 CPU 发生了上下文切换"就是"它上面的读者已经读完了"的<strong>免费信号</strong>——不需要读者主动报告(读者零开销!),只要观察调度器(第30章)的上下文切换就行。<strong>写者切换指针后,只要等到"每个 CPU 都至少切换过一次"(这段时间叫宽限期),就 100% 确定所有可能持有旧数据的老读者都退出了</strong>,此时 free 旧数据绝对安全。<strong>RCU 把"检测读者是否离开"这个难题,巧妙转化成"观察每个 CPU 是否都调度过一次"——完全不打扰读者。</strong>这就是 RCU 能让读者零开销的秘密。<code>synchronize_rcu()</code> 就是"阻塞等待一个宽限期过去",<code>call_rcu()</code> 是"登记一个回调,宽限期后自动 free"。</p></blockquote>
+
+<h2 id="s7">38.7 RCU 读侧几乎零成本</h2>
+<p>看 RCU 读者的代码,体会它有多"轻":</p>
+<pre><code>RCU 读者:
+  rcu_read_lock();               // ★几乎是空操作(只是标记"我在读临界区")
+      p = rcu_dereference(ptr);  // 读指针(带个轻量屏障保证顺序)
+      ... 使用 p ...              // 安全: 就算此刻被删, p指的旧数据也不会被free
+  rcu_read_unlock();             // ★几乎是空操作
+
+  对比 spinlock/mutex: 读者要原子操作+可能等待
+  RCU读者: rcu_read_lock/unlock 在多数配置下几乎不产生指令!
+           → 读性能 ≈ 无锁, 且【多个读者、读者与写者都不互相阻塞】</code></pre>
+<p><strong>RCU 读者的 <code>rcu_read_lock/unlock</code> 在多数内核配置下几乎是空操作</strong>(就是关/开抢占,或什么都不做)——没有原子操作、没有总线锁、没有 Cache 行争抢(第14章)、绝不阻塞。<strong>这是任何基于锁的方案都做不到的读性能。</strong>代价全转移到了<strong>写者</strong>身上:写者要拷贝、要等宽限期(可能几毫秒到几十毫秒),开销大、延迟高。<strong>所以 RCU 是把"读者的成本"转嫁给"写者",只在读远多于写时才划算。</strong></p>
+
+<h2 id="s8">38.8 RCU 完整流程</h2>
+<p>把写者的完整更新流程串起来(以删除/替换为例):</p>
+<pre><code>RCU 写者更新一个数据:
+  ① 拷贝一份旧数据 (Copy), 在副本上修改
+  ② rcu_assign_pointer(ptr, 新副本);  // 原子切指针(带release屏障)
+       —— 从此新读者看到新数据, 老读者还在看旧数据
+  ③ synchronize_rcu();   // 阻塞, 等一个【宽限期】过去
+       —— 或 call_rcu(&old, free_cb); 登记回调, 不阻塞
+  ④ 宽限期结束(每个CPU都切换过一次)→ 老读者保证全退出
+  ⑤ free(旧数据)         // 现在安全了!
+
+写者之间仍需互斥(用spinlock/mutex), 因为RCU只解决读写并发,
+不解决写写并发!</code></pre>
+<p>注意最后一句:<strong>RCU 只让"读-写"无锁并发,不解决"写-写"冲突。</strong>多个写者之间仍要用第37章的锁(spinlock/mutex)互斥。RCU 的优化专门针对"读多写少"——读者(多)零开销,写者(少)用传统锁互斥且承担宽限期开销。这个分工正是它高效的原因。</p>
+
+<h2 id="s9">38.9 RCU 的适用与限制</h2>
+<p>RCU 不是万能药,明确它的边界(面试爱问):</p>
+<table>
+<tr><th>适合 RCU</th><th>不适合 RCU</th></tr>
+<tr><td>读远多于写(路由表、进程列表、配置)</td><td>读写相当或写多(宽限期开销划不来)</td></tr>
+<tr><td>能接受读者短暂读到"旧版本"</td><td>要求读到绝对最新值</td></tr>
+<tr><td>数据能用"整体替换指针"的方式更新</td><td>要就地改、无法拷贝替换的复杂结构</td></tr>
+<tr><td>写延迟不敏感(可等宽限期)</td><td>写要求低延迟</td></tr>
+</table>
+<blockquote><p>两个关键限制。第一,<strong>读者可能读到"旧版本"</strong>——在写者切指针后、老读者退出前,老读者读的是旧数据。RCU 保证的是"读到一个<strong>一致的、完整的</strong>版本"(不是破碎中间态),但不保证是"最新"版本。要求强一致最新值的场景不能用 RCU。第二,<strong>写侧开销大</strong>(拷贝+宽限期),写多了不划算。<strong>所以 RCU 的定位非常清晰:读多写少 + 能容忍读到稍旧值 + 可指针替换更新。</strong>符合这三条,RCU 给你近乎免费的读;不符合,老老实实用第37章的锁。内核选择同步机制时,正是按这些条件判断的。</p></blockquote>
+
+<h2 id="s10">38.10 内核里 RCU 的实际应用</h2>
+<p>RCU 在 Linux 内核用得极广,举几个你已学过的:</p>
+<ul>
+  <li><strong>进程列表遍历</strong>:遍历所有 task_struct(第28章)——读极多(各种统计、ps),写少(创建/退出进程),完美 RCU 场景。</li>
+  <li><strong>路由表/网络配置</strong>(第34章):每个包都要查路由(读疯狂),路由变化少(写少)。</li>
+  <li><strong>dentry 缓存</strong>(第32章):路径查找读极频繁,目录变化少。</li>
+  <li><strong>文件描述符表</strong>(第32章):读 fd 频繁,增删 fd 少。</li>
+</ul>
+<p><strong>可以说,凡是内核里"读热路径"上的共享数据,大多用了 RCU。</strong>正是 RCU 让这些高频读操作几乎零成本,Linux 才能在多核上扩展到几十上百核而读性能不塌。<strong>这也是为什么理解 RCU 对高性能系统工程师(如做多核实时系统的)很重要——它是多核可扩展性的关键武器。</strong>你在 <code>/proc</code> 里看到的很多信息、ROS2 底层查表,背后可能都有 RCU 在默默让读操作飞快。</p>
+
+<h2 id="s11">38.11 回扣全卷：同步机制全景</h2>
+<p>第五卷收官,把全部同步机制排成一条"读者代价递减"的谱系:</p>
+<table>
+<tr><th>机制</th><th>读者代价</th><th>适用</th><th>章</th></tr>
+<tr><td>普通锁(spin/mutex)</td><td>要拿锁(原子操作/可能阻塞)</td><td>通用,读写都互斥</td><td>37</td></tr>
+<tr><td>读写锁 rwlock</td><td>拿读锁(读者间可并行)</td><td>读多写少</td><td>37</td></tr>
+<tr><td>seqlock</td><td>读完检查序号(可能重读)</td><td>读极多、写低延迟</td><td>37</td></tr>
+<tr><td><strong>RCU</strong></td><td><strong>几乎零(不加锁不屏障)</strong></td><td>读远多于写、可容忍旧值</td><td>38</td></tr>
+</table>
+<blockquote><p><strong>这条谱系是一个漂亮的"用限制换性能"的故事:每往下一层,读者代价更低,但对使用场景的限制更多。</strong>普通锁最通用但读者也有代价;RCU 读者近乎免费,但要求"读多写少+可容忍旧值+可指针替换"。<strong>没有免费的午餐——RCU 的读者零成本,是用"写者承担宽限期开销""读者可能读到旧值""只适用特定更新模式"换来的。</strong>作为工程师,你的价值就在于<strong>看清场景的特征(读写比例、一致性要求、更新方式),选对那个"限制正好能接受、性能正好最优"的机制。</strong>从 FreeRTOS 的关中断临界区(第21章),到 Linux 的原子/自旋锁/互斥锁(第37章),再到 RCU(本章)——你现在拥有了一整套并发工具箱,和选择它们的判断力。<strong>这正是第五卷、乃至整本教材想带你抵达的境界:不是记住每个机制,而是理解它们的取舍,在真实系统里做出正确工程决策。</strong></p></blockquote>
+
+<h2 id="s12">38.12 面试常问问题</h2>
+<p><strong>Q1:RCU 是什么?解决什么问题?</strong><br>Read-Copy-Update,一种让读者几乎零开销(不加锁不加屏障)的同步机制,针对读远多于写的场景。核心:更新时拷贝新副本、原子切指针、新旧共存,等所有老读者离开后回收旧数据。</p>
+<p><strong>Q2:RCU 读者为什么能不加锁?写者怎么知道能释放旧数据了?</strong><br>因为读者临界区内不能睡眠/切换,所以"每个 CPU 都发生过一次上下文切换"就意味着所有老读者都退出了——这段时间叫宽限期。写者等一个宽限期(synchronize_rcu)后即可安全 free,全程不打扰读者。</p>
+<p><strong>Q3:什么是宽限期(grace period)?</strong><br>从写者切指针后开始,到"每个 CPU 都至少经历一次上下文切换"为止的时间。宽限期结束保证所有可能持有旧数据的读者都已离开,可安全回收旧数据。</p>
+<p><strong>Q4:RCU 保证读到最新数据吗?</strong><br>不保证。切指针后老读者仍读旧版本,RCU 只保证读到一个完整一致的版本(非破碎中间态),不保证是最新。要求强一致最新值不能用 RCU。</p>
+<p><strong>Q5:RCU 解决写-写并发吗?</strong><br>不解决。RCU 只优化读-写并发(读者无锁);多个写者之间仍要用 spinlock/mutex 互斥。</p>
+<p><strong>Q6:RCU 的适用条件?</strong><br>读远多于写、能容忍读到稍旧值、数据可用整体替换指针更新、写延迟不敏感(可等宽限期)。典型:路由表、进程列表、dentry 缓存。</p>
+<p><strong>Q7:RCU 相比读写锁的优势?</strong><br>读写锁的读者仍要拿读锁(原子操作、Cache 行争抢),多核下有开销;RCU 读者几乎零开销、读者与写者完全不互相阻塞,多核扩展性远好于读写锁。</p>
+
+<h2 id="s13">38.13 常见误区</h2>
+<ol>
+  <li><strong>"RCU 读者也要加锁"</strong>——rcu_read_lock 几乎是空操作,读者不加真正的锁。</li>
+  <li><strong>"RCU 读到的一定是最新值"</strong>——可能读到旧版本(一致但不一定最新)。</li>
+  <li><strong>"RCU 能替代所有锁"</strong>——只优化读多写少的读写并发,写写仍需锁,写多不划算。</li>
+  <li><strong>"宽限期靠读者报告"</strong>——靠观察每个 CPU 的上下文切换,读者零参与。</li>
+  <li><strong>"RCU 读者临界区能睡眠"</strong>——经典 RCU 不能睡(睡了破坏宽限期推理);有专门的可睡眠变体 SRCU。</li>
+  <li><strong>"写者切指针后立刻能 free 旧数据"</strong>——必须等一个宽限期,否则老读者访问已释放内存。</li>
+</ol>
+
+<h2 id="s14">38.14 本章总结</h2>
+<ul>
+  <li><strong>RCU(Read-Copy-Update)</strong>:让<strong>读者几乎零开销(不加锁不加屏障)</strong>的同步机制,针对<strong>读远多于写</strong>。</li>
+  <li>思想:写者<strong>不原地改,拷贝副本改好、原子切指针</strong>→ 新旧版本共存;读者尽管读(旧读者读旧版本,新读者读新版本),都读到完整一致的版本。</li>
+  <li>核心难题:写者何时能 free 旧数据(读者不加锁没痕迹)?→ <strong>宽限期</strong>。</li>
+  <li><strong>宽限期</strong>:因读者临界区内不能切换,"每个 CPU 都切换过一次"⇒ 所有老读者已离开。等一个宽限期即可安全 free。<strong>把"检测读者离开"转化为"观察 CPU 调度",不打扰读者。</strong></li>
+  <li>API:<code>rcu_read_lock/unlock</code>(读者,近乎空操作)、<code>rcu_assign_pointer</code>(切指针)、<code>synchronize_rcu</code>/<code>call_rcu</code>(等宽限期后回收)。</li>
+  <li>限制:读者可能读到<strong>旧值</strong>(非最新);写侧开销大(拷贝+宽限期);<strong>写-写仍需锁</strong>;适用"读多写少+容忍旧值+指针替换"。</li>
+  <li>应用:进程列表、路由表、dentry/fd 表等内核读热路径——多核可扩展性的关键。</li>
+  <li><strong>全卷同步谱系</strong>:普通锁 → 读写锁 → seqlock → RCU,读者代价递减、场景限制递增;工程的艺术在于<strong>按场景选对取舍</strong>。</li>
+</ul>
+
+<h2 id="s15">38.15 思维导图 / 课后题</h2>
+<pre><code>RCU (Read-Copy-Update)
+├─ 一、目标:读者零开销(不加锁不屏障), 针对读远多于写
+├─ 二、思想:写者拷贝副本改→原子切指针→新旧共存
+│      └─ 读者读到完整一致版本(旧读者读旧, 新读者读新)
+├─ 三、★核心难题:读者无痕, 写者何时能free旧数据?
+├─ 四、★宽限期grace period:
+│      读者临界区内不能切换 ⇒ 每CPU切换过一次 ⇒ 老读者全退出
+│      └─ 把"测读者离开"转成"观察CPU调度", 不打扰读者
+├─ 五、读侧:rcu_read_lock/unlock 近乎空操作 → 读≈无锁
+├─ 六、写侧:copy→rcu_assign_pointer→synchronize_rcu/call_rcu→free
+├─ 七、限制:读到旧值/写开销大/★写-写仍需锁
+├─ 八、适用:读多写少+容忍旧值+指针替换 (路由表/进程列表/dentry)
+└─ 九、★全卷谱系:普通锁→rwlock→seqlock→RCU (读代价↓, 限制↑)
+        工程 = 按场景选对取舍</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>画出 RCU 删除链表节点 B 的三阶段图(切指针前/后/宽限期后 free),标出各阶段新老读者看到什么。</li>
+  <li>用文字解释:为什么"每个 CPU 都上下文切换过一次"就能保证老读者都退出了?这依赖读者的什么规则?</li>
+  <li>对比 RCU 和读写锁在"64 核、读占 99%"场景下的差异,说明 RCU 为何扩展性更好(提示:Cache 行争抢,第14章)。</li>
+  <li><code>cat /proc/sys/kernel/</code> 及 <code>dmesg | grep -i rcu</code> 观察系统里的 RCU 信息;了解 <code>rcu_sched</code>/<code>rcu_preempt</code> 内核线程。</li>
+  <li>读内核 <code>Documentation/RCU/whatisRCU.rst</code> 和 <code>kernel/rcu/</code>,找到 <code>synchronize_rcu</code> 如何等待宽限期,对照 38.6。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>RCU 是什么?针对什么场景?核心思想?</li>
+  <li>RCU 读者为什么能不加锁?付出了什么代价、转嫁到哪?</li>
+  <li>什么是宽限期?写者靠它解决什么问题?怎么判断宽限期结束?</li>
+  <li>RCU 保证读到最新值吗?它保证什么?</li>
+  <li>RCU 解决写-写并发吗?写者之间怎么办?</li>
+  <li>RCU 的适用条件和限制?举内核里的应用。</li>
+  <li>把普通锁、读写锁、seqlock、RCU 排成谱系,说明取舍。</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第卅八章 完 · <strong>第五卷 Linux 内核 收官</strong> · 下一卷《第六卷 Linux 驱动开发》</p>
+<div class="nav">
+  <a href="第37章-Linux-并发同步.html">← 第卅七章</a>
+  <a href="index.html">目录</a>
+  <a href="第39章-驱动总览与字符设备.html">第三十九章 →</a>
+</div>
+
+</div>
+</body>
+</html>

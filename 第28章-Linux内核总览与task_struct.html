@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第廿八章 Linux 内核总览与 task_struct</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:28px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第27章-RTThread-内存FinSH与BSP.html">← 第廿七章</a>
+  <a href="index.html">目录</a>
+  <a href="第29章-Linux进程线程与fork.html">第廿九章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第五卷 · Linux 内核</div>
+  <h1>第廿八章 Linux 内核总览与 task_struct</h1>
+  <div class="sub">同一套骨架，放大到几千万行的复杂度</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">带着 RTOS 的认知看 Linux</a></li>
+    <li><a href="#s2">宏内核:Linux 的架构选择</a></li>
+    <li><a href="#s3">内核代码地图</a></li>
+    <li><a href="#s4">task_struct:进程/线程的化身</a></li>
+    <li><a href="#s5">和 TCB/rt_thread 的对照</a></li>
+    <li><a href="#s6">task_struct 的关键字段群</a></li>
+    <li><a href="#s7">进程状态</a></li>
+    <li><a href="#s8">PID 与进程关系</a></li>
+    <li><a href="#s9">内核栈与 thread_info</a></li>
+    <li><a href="#s10">current:如何找到当前进程</a></li>
+    <li><a href="#s11">进程的组织:链表与红黑树</a></li>
+    <li><a href="#s12">面试常问</a></li>
+    <li><a href="#s13">常见误区</a></li>
+    <li><a href="#s14">本章总结</a></li>
+    <li><a href="#s15">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：终于到 Linux 内核。别怕它的几千万行代码——<strong>它的骨架和你已经吃透的 FreeRTOS/RT-Thread 是同一套</strong>:进程就是"任务/线程"、task_struct 就是"TCB/rt_thread"、调度就是"选最高优先级"、切换就是"存恢复寄存器换栈"。这一章先建立全局地图,然后深入 <code>task_struct</code>——Linux 里"一个进程/线程"的化身,相当于放大版、字段多几百倍的 TCB。学完你要能对照着 RTOS 理解 Linux 进程的本质。源码基于 Linux 6.x。</p></blockquote>
+
+<h2 id="s1">28.1 带着 RTOS 的认知看 Linux</h2>
+<p>很多人学 Linux 内核直接懵，因为它太大。但你有别人没有的优势:<strong>你已经在 FreeRTOS/RT-Thread 里完整理解了一个操作系统内核的每个核心机制。</strong>Linux 只是把这些机制做得更复杂、更强大,以应对"通用、多核、多用户、跑海量不可信程序"的需求。核心概念的映射:</p>
+<table>
+<tr><th>RTOS 概念(你已懂)</th><th>Linux 对应</th><th>复杂在哪</th></tr>
+<tr><td>任务/线程 + TCB</td><td>进程/线程 + task_struct</td><td>+ 地址空间、文件、信号、命名空间...</td></tr>
+<tr><td>位图选最高优先级</td><td>CFS 红黑树 + 多调度类</td><td>为公平、多核负载均衡</td></tr>
+<tr><td>PendSV 上下文切换</td><td>switch_to / __switch_to</td><td>+ 切地址空间、TLB、FPU</td></tr>
+<tr><td>队列/信号量/互斥量</td><td>同名 + 管道/共享内存/socket</td><td>+ 跨进程、支持阻塞在 VFS</td></tr>
+<tr><td>关中断/挂起调度</td><td>自旋锁/RCU/内存屏障</td><td>多核并发</td></tr>
+<tr><td>heap/内存池</td><td>Buddy + SLAB</td><td>+ 虚拟内存、按需分页</td></tr>
+</table>
+<blockquote><p><strong>学习心法:每遇到一个 Linux 机制,先问"它对应 RTOS 的哪个?多解决了什么问题?"</strong>这样你就不是在学一堆陌生东西,而是在给已有的骨架"升级"。Linux 复杂性的来源就三个:<strong>①多核(需要精细的并发控制)②虚拟内存/隔离(MMU,第九、十章)③通用性(要照顾各种场景,不能像 RTOS 那样简单粗暴)。</strong>抓住这三点,Linux 的复杂就有了逻辑,不再是无序的细节。</p></blockquote>
+
+<h2 id="s2">28.2 宏内核：Linux 的架构选择</h2>
+<p>操作系统内核架构有两大流派,面试常问:</p>
+<table>
+<tr><th></th><th>宏内核(Monolithic)Linux</th><th>微内核(Microkernel)</th></tr>
+<tr><td>理念</td><td>所有核心服务(调度/内存/文件/驱动/网络)都在内核态,一个大程序</td><td>内核只留最核心(调度/IPC/内存),文件/驱动等放用户态服务进程</td></tr>
+<tr><td>性能</td><td>高(服务间直接函数调用)</td><td>较低(服务间要 IPC 通信,频繁陷入)</td></tr>
+<tr><td>可靠性</td><td>一个驱动崩溃可能拖垮内核</td><td>一个服务崩溃不影响内核(隔离)</td></tr>
+<tr><td>代表</td><td>Linux</td><td>QNX、seL4、Mach、部分 RT-Thread 配置</td></tr>
+</table>
+<p>Linux 选了<strong>宏内核</strong>(为性能),但用<strong>可加载内核模块(LKM)</strong>缓解了它的僵化——驱动可以动态加载/卸载(<code>insmod/rmmod</code>),不用重编内核。所以 Linux 是"带模块化的宏内核"。<strong>这个选择解释了很多:为什么 Linux 驱动跑在内核态(第六卷)、为什么一个坏驱动能搞崩系统(kernel panic)、为什么 Linux 性能好。</strong>这类做实时机器人的,有时会关注微内核(如 QNX)的可靠性优势,面试可能对比问。</p>
+
+<h2 id="s3">28.3 内核代码地图</h2>
+<p>Linux 源码目录,知道每块管什么(对应本卷章节):</p>
+<table>
+<tr><th>目录</th><th>管什么</th><th>本卷章节</th></tr>
+<tr><td><code>kernel/</code></td><td>核心:进程、调度、信号、时间</td><td>28-30、33 章</td></tr>
+<tr><td><code>kernel/sched/</code></td><td>调度器(CFS 等)</td><td>30 章</td></tr>
+<tr><td><code>mm/</code></td><td>内存管理(Buddy、SLAB、缺页)</td><td>31 章</td></tr>
+<tr><td><code>fs/</code></td><td>文件系统、VFS</td><td>32 章</td></tr>
+<tr><td><code>net/</code></td><td>网络协议栈、socket</td><td>34-35 章</td></tr>
+<tr><td><code>kernel/irq/</code>, <code>softirq</code></td><td>中断、软中断</td><td>36 章</td></tr>
+<tr><td><code>kernel/locking/</code>, <code>rcu/</code></td><td>锁、RCU、原子</td><td>37-38 章</td></tr>
+<tr><td><code>arch/arm64/</code></td><td>ARM64 架构相关(切换、异常入口)</td><td>贯穿(呼应第二卷)</td></tr>
+<tr><td><code>drivers/</code></td><td>设备驱动(占内核代码一半以上)</td><td>第六卷</td></tr>
+<tr><td><code>include/linux/</code></td><td>核心头文件(sched.h 里有 task_struct)</td><td>贯穿</td></tr>
+</table>
+
+<h2 id="s4">28.4 task_struct：进程/线程的化身</h2>
+<p>Linux 里"一个进程/线程"就是一个 <code>struct task_struct</code>(在 <code>include/linux/sched.h</code>)——相当于 FreeRTOS 的 TCB、RT-Thread 的 rt_thread,但<strong>大得多</strong>(有几百个字段,结构体本身几 KB)。第一章 1.12 惊鸿一瞥过它,现在正式深入。</p>
+<pre><code>/* include/linux/sched.h —— 极度精简, 只列灵魂字段 */
+struct task_struct {
+    /* ── 状态与调度 ── */
+    volatile long   __state;        /* 进程状态(运行/睡眠/僵尸...) */
+    void            *stack;         /* 指向内核栈 */
+    int             prio, static_prio, normal_prio;  /* 优先级(多个) */
+    const struct sched_class *sched_class;  /* ★调度类(CFS/RT/...) */
+    struct sched_entity   se;       /* CFS 调度实体(红黑树节点在里面) */
+
+    /* ── 内存 ── */
+    struct mm_struct  *mm;          /* ★地址空间(进程的虚拟内存, 第九/十章!) */
+    struct mm_struct  *active_mm;
+
+    /* ── 身份 ── */
+    pid_t             pid;          /* 进程ID(其实是线程ID) */
+    pid_t             tgid;         /* 线程组ID(用户看到的"进程ID") */
+
+    /* ── 进程关系 ── */
+    struct task_struct  *parent;        /* 父进程 */
+    struct list_head    children, sibling; /* 子进程/兄弟进程链表 */
+
+    /* ── 打开的文件 ── */
+    struct files_struct *files;     /* 打开的文件表(第32章) */
+    struct fs_struct    *fs;        /* 工作目录等 */
+
+    /* ── 信号 ── */
+    struct signal_struct  *signal;  /* 信号相关(第33章) */
+    struct sighand_struct *sighand;
+
+    /* ── 命名空间(容器的基础) ── */
+    struct nsproxy    *nsproxy;
+
+    char              comm[TASK_COMM_LEN];  /* 进程名(如"bash") */
+    /* ... 还有几百个字段 ... */
+};</code></pre>
+<p>别被字段数量吓到。<strong>它就是个"大号 TCB":TCB 有的(栈、优先级、状态、链表节点),它都有;它多出来的,全是 Linux 特有的复杂性——地址空间(mm)、打开的文件(files)、信号、命名空间等。</strong>这些"多出来的",正是第一章说的"Linux 比 RTOS 多做的隔离与通用性"的体现。</p>
+
+<h2 id="s5">28.5 和 TCB/rt_thread 的对照</h2>
+<p>直接对照三者的核心字段,你会豁然开朗——<strong>Linux 进程本质就是放大的 RTOS 任务</strong>:</p>
+<table>
+<tr><th>作用</th><th>FreeRTOS TCB</th><th>RT-Thread rt_thread</th><th>Linux task_struct</th></tr>
+<tr><td>栈</td><td>pxTopOfStack</td><td>sp</td><td>stack(内核栈)</td></tr>
+<tr><td>优先级</td><td>uxPriority</td><td>current_priority</td><td>prio + sched_class</td></tr>
+<tr><td>状态</td><td>(挂在哪个链表)</td><td>stat</td><td>__state</td></tr>
+<tr><td>就绪/等待链表节点</td><td>xStateListItem</td><td>tlist</td><td>se(CFS)/链表节点</td></tr>
+<tr><td>名字</td><td>pcTaskName</td><td>parent.name</td><td>comm</td></tr>
+<tr><td><strong>地址空间</strong></td><td>❌ 无</td><td>❌ 无</td><td>✅ mm(关键区别!)</td></tr>
+<tr><td>打开的文件</td><td>❌</td><td>❌</td><td>✅ files</td></tr>
+</table>
+<blockquote><p>第一章 1.12 那个洞察在这里完整验证了:<strong>Linux 的 task_struct 和 RTOS 的 TCB,最本质的区别就是那个 <code>mm</code> 字段(地址空间)。</strong>RTOS 任务共享一个地址空间(所以 TCB 没有 mm),Linux 进程各有独立地址空间(所以 task_struct 有 mm,指向独立的页表,第九章)。<strong>这一个字段,就是"进程 vs 任务""有 MMU vs 无 MMU""隔离 vs 不隔离"的全部分野。</strong>而 <code>files</code>、<code>signal</code>、<code>nsproxy</code> 等,是 Linux 作为通用多用户系统额外需要的。<strong>你带着 RTOS 的认知看,task_struct 就不再是几百个陌生字段,而是"TCB + 一堆 Linux 特有的东西"。</strong></p></blockquote>
+
+<h2 id="s6">28.6 task_struct 的关键字段群</h2>
+<p>把几百个字段按"功能群"归类,理解就有条理了。每个群对应内核的一个子系统:</p>
+<pre><code>task_struct 的字段群(每群对应一个子系统):
+
+  ┌─ 调度群: __state, prio, sched_class, se ──→ 第30章调度
+  ├─ 内存群: mm, active_mm ──────────────────→ 第31章内存
+  ├─ 文件群: files, fs ──────────────────────→ 第32章VFS
+  ├─ 信号群: signal, sighand, pending ────────→ 第33章信号
+  ├─ 身份群: pid, tgid, cred(权限) ──────────→ 本章+安全
+  ├─ 关系群: parent, children, sibling ───────→ 本章进程树
+  ├─ 命名空间群: nsproxy ────────────────────→ 容器(Docker基础)
+  └─ 时间统计群: utime, stime(用户/内核态耗时)→ top命令数据来源</code></pre>
+<p>看 task_struct 就像看一个人的完整档案:它的调度信息、拥有的内存、打开的文件、待处理的信号、身份、家庭关系(父子进程)……都记在这一个结构里。<strong>内核对进程的所有操作,归根结底都是在读写这个结构的某些字段。</strong>你后面每一章(调度、内存、文件、信号),其实都是在深入 task_struct 的某个字段群。<strong>task_struct 是整个 Linux 进程管理的中心枢纽,就像 TCB 是 FreeRTOS 的中心一样。</strong></p>
+
+<h2 id="s7">28.7 进程状态</h2>
+<p>Linux 进程状态(<code>__state</code>),比 RTOS 多几个,但核心一样:</p>
+<table>
+<tr><th>状态</th><th>含义</th><th>RTOS 对应</th></tr>
+<tr><td>TASK_RUNNING</td><td>就绪或正在运行(在运行队列里)</td><td>Ready/Running</td></tr>
+<tr><td>TASK_INTERRUPTIBLE</td><td>可中断睡眠(等事件,能被信号唤醒)</td><td>Blocked</td></tr>
+<tr><td>TASK_UNINTERRUPTIBLE</td><td>不可中断睡眠(等关键 IO,信号叫不醒)</td><td>Blocked(更强)</td></tr>
+<tr><td>__TASK_STOPPED</td><td>被停止(收到 SIGSTOP,如 Ctrl+Z)</td><td>Suspended</td></tr>
+<tr><td>EXIT_ZOMBIE</td><td>僵尸:进程死了但父进程还没回收它</td><td>(RTOS 无)</td></tr>
+<tr><td>EXIT_DEAD</td><td>最终死亡,即将被清理</td><td>(Deleted)</td></tr>
+</table>
+<blockquote><p>两个 Linux 特有的重要状态:</p>
+<p><strong>①可中断 vs 不可中断睡眠</strong>:可中断睡眠(等一般事件)能被信号打断唤醒;不可中断睡眠(如等磁盘 IO 的关键阶段)连信号都叫不醒——这就是为什么有时进程卡死、<code>kill -9</code> 都杀不掉(它在 TASK_UNINTERRUPTIBLE,俗称 "D 状态",<code>ps</code> 里显示 D)。</p>
+<p><strong>②僵尸进程(Zombie)</strong>:进程 exit 后,它的大部分资源被释放,但 task_struct 还留着(保留退出状态),等父进程调 <code>wait()</code> 来"收尸"读取退出码。如果父进程不 wait,就成了僵尸——占着 PID 不释放。这是 Linux 特有的、面试高频的概念(RTOS 没有,因为 RTOS 任务没有"父子关系"和"退出码回收"的语义)。</p></blockquote>
+
+<h2 id="s8">28.8 PID 与进程关系</h2>
+<p>Linux 进程有身份和家族关系,这是 RTOS 没有的:</p>
+<ul>
+  <li><strong>PID vs TGID</strong>:一个易混点。<code>pid</code> 其实是<strong>线程</strong>ID,<code>tgid</code>(线程组 ID)才是用户 <code>ps</code> 看到的"进程 ID"。一个多线程进程里,所有线程共享同一个 tgid(=主线程的 pid),但各有不同的 pid。<strong>在 Linux 内核眼里,线程就是"共享了地址空间等资源的进程"(第29章 clone)——所以内核用 task_struct 同时表示进程和线程,用 tgid 把同一进程的线程归组。</strong></li>
+  <li><strong>进程树</strong>:每个进程有父进程(<code>parent</code>)、子进程链表(<code>children</code>)。所有进程构成一棵树,根是 init/systemd(PID 1)。<code>fork</code> 创建子进程(第29章)。</li>
+  <li><strong>孤儿与僵尸</strong>:父进程先死,子进程成"孤儿",被 PID 1 收养;子进程先死父进程没收尸,成"僵尸"。</li>
+</ul>
+<blockquote><p><strong>"线程就是共享资源的进程"是 Linux 一个深刻而独特的设计。</strong>Windows 等系统把进程和线程做成两种不同的东西;Linux 则统一用 task_struct 表示,通过"创建时共享哪些资源"来区分:完全独立=进程,共享地址空间/文件等=线程。这就是为什么 Linux 的线程叫"轻量级进程(LWP)"。第29章讲 <code>clone</code> 时会看到,fork(建进程)和 pthread_create(建线程)底层都是同一个 <code>clone</code> 系统调用,只是参数(共享哪些资源)不同。<strong>这个"统一表示、参数区分"的设计极其优雅,是理解 Linux 进程/线程的钥匙。</strong></p></blockquote>
+
+<h2 id="s9">28.9 内核栈与 thread_info</h2>
+<p>每个进程有<strong>两个</strong>栈(RTOS 通常一个):</p>
+<ul>
+  <li><strong>用户栈</strong>:进程在用户态(EL0)运行时用的栈,在进程的虚拟地址空间里(第五、十章的栈)。</li>
+  <li><strong>内核栈</strong>:进程<strong>陷入内核态</strong>(系统调用、中断,第十二章)后用的栈,由内核分配(通常 8KB 或 16KB),<code>task_struct->stack</code> 指向它。</li>
+</ul>
+<p>为什么要两个栈?因为用户态和内核态是隔离的(第十二章 EL0/EL1)。进程通过系统调用进内核后,不能用用户栈(不安全、可能不够),要切到专属的内核栈。<strong>这对应第十二章 ARM64 的 SP_EL0(用户栈)/SP_EL1(内核栈),你已经懂了。</strong></p>
+<p>历史上,内核栈底部还放了个 <code>thread_info</code> 结构(存一些底层标志、指回 task_struct),用"栈指针对齐后取低位"就能快速找到它——这是个经典技巧。新版内核多把 thread_info 移进了 task_struct,但概念仍在。</p>
+
+<h2 id="s10">28.10 current：如何找到当前进程</h2>
+<p>内核代码里到处用 <code>current</code> 宏表示"当前正在运行的进程的 task_struct"——相当于 FreeRTOS 的 <code>pxCurrentTCB</code>、RT-Thread 的 <code>rt_current_thread</code>。但 Linux 的 <code>current</code> 实现更精巧:</p>
+<ul>
+  <li>老办法(x86 早期):内核栈是 8KB 对齐的,栈底放 thread_info,thread_info 里有指向 task_struct 的指针。用当前 SP<strong>掩掉低位</strong>就得到栈底、进而拿到 current。<strong>不用全局变量,靠"栈指针算出来"。</strong></li>
+  <li>现代(ARM64/x86-64):用一个<strong>专用寄存器</strong>存 current(ARM64 用 <code>sp_el0</code> 在内核态被复用来存 current;x86-64 用 per-CPU 变量 + <code>%gs</code> 寄存器)。<strong>每个 CPU 核有自己的 current</strong>(因为多核每核跑不同进程)。</li>
+</ul>
+<blockquote><p>对比 RTOS:FreeRTOS 单核,一个全局 <code>pxCurrentTCB</code> 就够。Linux 多核,<strong>每个 CPU 核都在跑不同的进程,所以 "current" 必须是 per-CPU 的</strong>——不能用一个全局变量。这是"多核"带来复杂性的一个小例子:RTOS 里理所当然的全局变量,到多核 Linux 就得变成 per-CPU。<strong>per-CPU 变量(每个核一份)是 Linux 内核处理多核的核心手法之一</strong>,你会在调度队列(每核一个 runqueue)、软中断、内存分配缓存里反复见到。记住这个从"单核全局"到"多核 per-CPU"的转变,是理解 Linux 多核设计的一把钥匙。</p></blockquote>
+
+<h2 id="s11">28.11 进程的组织：链表与红黑树</h2>
+<p>内核怎么管理成百上千个 task_struct?用多种数据结构,每种服务一个目的(和 RTOS 用链表管 TCB 同理,但更丰富):</p>
+<table>
+<tr><th>数据结构</th><th>组织什么</th><th>目的</th></tr>
+<tr><td>双向链表(task_list)</td><td>所有进程串起来</td><td>遍历所有进程(如 ps)</td></tr>
+<tr><td>红黑树(每个 CFS 运行队列一棵)</td><td>就绪进程按虚拟运行时间排序</td><td>O(log n) 选下一个跑谁(第30章)</td></tr>
+<tr><td>哈希表(pid hash)</td><td>PID → task_struct</td><td>按 PID 快速查找进程</td></tr>
+<tr><td>父子/兄弟链表</td><td>进程树</td><td>fork/wait/信号传递</td></tr>
+</table>
+<p>关键:<strong>同一个 task_struct 同时挂在多个数据结构上</strong>(通过内嵌的多个链表节点/树节点)——这正是第16章 FreeRTOS "侵入式链表、一个 TCB 挂多个列表"的放大版!<code>task_struct</code> 里有多个 <code>list_head</code>/<code>rb_node</code> 字段,分别把它挂进不同的组织结构。<strong>Linux 内核的 <code>list_head</code> 侵入式链表和 <code>container_of</code> 宏,就是你在 FreeRTOS/RT-Thread 见过的"侵入式链表 + 从节点反查宿主"技巧的正统实现。</strong>第25章 RT-Thread 的对象容器预习了这个,现在在 Linux 里见到全貌。</p>
+
+<h2 id="s12">28.12 面试常问问题</h2>
+<p><strong>Q1:Linux 的 task_struct 和 RTOS 的 TCB 有什么关系和区别?</strong><br>本质都是"进程/任务的控制块"。task_struct 是放大版,多了地址空间(mm)、打开文件(files)、信号、命名空间、进程关系等。最本质区别是 mm 字段——进程有独立地址空间,RTOS 任务共享。</p>
+<p><strong>Q2:Linux 里进程和线程的区别?内核怎么表示?</strong><br>内核用同一个 task_struct 表示两者;线程是"共享地址空间等资源的进程"(轻量级进程)。同进程的线程共享 tgid,各有独立 pid。fork 和 pthread_create 底层都是 clone,区别在共享哪些资源。</p>
+<p><strong>Q3:pid 和 tgid 的区别?</strong><br>pid 是线程 ID,tgid(线程组 ID)是用户看到的进程 ID。多线程进程里所有线程共享 tgid=主线程 pid,各有不同 pid。</p>
+<p><strong>Q4:什么是僵尸进程?怎么产生和避免?</strong><br>进程退出后 task_struct 还留着(保存退出状态)等父进程 wait 回收;父进程不 wait 就成僵尸,占 PID。避免:父进程 wait/waitpid,或用 SIGCHLD 处理,或双 fork。</p>
+<p><strong>Q5:可中断睡眠和不可中断睡眠的区别?</strong><br>可中断(TASK_INTERRUPTIBLE)等一般事件,能被信号唤醒;不可中断(D 状态)等关键 IO,信号叫不醒,kill -9 都杀不掉。</p>
+<p><strong>Q6:current 是什么?多核下怎么实现?</strong><br>当前运行进程的 task_struct(类比 pxCurrentTCB)。多核下是 per-CPU 的(每核一份),用专用寄存器或 per-CPU 变量实现,不能用全局变量。</p>
+<p><strong>Q7:宏内核和微内核的区别?Linux 是哪种?</strong><br>宏内核所有服务在内核态(性能高,一处崩溃可能拖垮全部);微内核只留核心,其余放用户态服务(隔离好,IPC 开销大)。Linux 是宏内核 + 可加载模块。</p>
+
+<h2 id="s13">28.13 常见误区</h2>
+<ol>
+  <li><strong>"Linux 内核和 RTOS 完全不同要重新学"</strong>——骨架相同,是放大升级,概念可迁移。</li>
+  <li><strong>"进程和线程是两种完全不同的东西"</strong>——Linux 内核用同一个 task_struct,线程是共享资源的进程。</li>
+  <li><strong>"pid 就是进程 ID"</strong>——pid 是线程 ID,tgid 才是用户看的进程 ID。</li>
+  <li><strong>"僵尸进程占大量内存"</strong>——主要占的是 PID 和一个 task_struct,危害是耗尽 PID,不是内存。</li>
+  <li><strong>"kill -9 能杀死任何进程"</strong>——不可中断睡眠(D 状态)的进程杀不掉,要等 IO 完成。</li>
+  <li><strong>"current 是全局变量"</strong>——是 per-CPU 的,多核每核一份。</li>
+  <li><strong>"task_struct 太复杂没法理解"</strong>——按字段群(对应各子系统)理解,就是"大号 TCB+Linux 特有字段"。</li>
+</ol>
+
+<h2 id="s14">28.14 本章总结</h2>
+<ul>
+  <li>带 RTOS 认知看 Linux:概念一一映射,复杂性来自<strong>多核、虚拟内存/隔离、通用性</strong>三点。</li>
+  <li>Linux 是<strong>宏内核 + 可加载模块</strong>(性能优先,驱动可动态加载)。</li>
+  <li><strong>task_struct</strong> = 放大版 TCB/rt_thread,几百字段,是进程/线程管理的中心枢纽。</li>
+  <li>与 TCB 最本质区别是 <strong><code>mm</code>(独立地址空间)</strong>字段——进程 vs 任务、隔离 vs 共享的分野。</li>
+  <li>字段按群理解:调度/内存/文件/信号/身份/关系/命名空间——每群对应一个子系统。</li>
+  <li>状态:RUNNING/可中断睡眠/不可中断睡眠(D)/停止/<strong>僵尸</strong>(Linux 特有)。</li>
+  <li><strong>线程=共享资源的进程</strong>;pid(线程)vs tgid(进程);fork 和 pthread_create 底层都是 clone。</li>
+  <li>两个栈:用户栈 + 内核栈(对应 SP_EL0/SP_EL1);<code>current</code> 是 <strong>per-CPU</strong> 的(多核关键)。</li>
+  <li>进程用<strong>链表(遍历)+ 红黑树(调度)+ 哈希(按PID查)+ 进程树</strong>组织,靠侵入式 list_head(FreeRTOS 侵入式链表的正统版)。</li>
+</ul>
+
+<h2 id="s15">28.15 思维导图 / 课后题</h2>
+<pre><code>Linux 内核总览与 task_struct
+├─ 一、带RTOS认知看Linux(概念映射);复杂性=多核/虚存/通用
+├─ 二、宏内核+可加载模块(vs微内核)
+├─ 三、代码地图:kernel/mm/fs/net/arch/drivers
+├─ 四、★task_struct=放大版TCB(几百字段)
+├─ 五、对照TCB:最本质区别是mm(独立地址空间)
+├─ 六、字段群=各子系统(调度/内存/文件/信号/身份/关系/ns)
+├─ 七、状态:RUNNING/可中断/不可中断(D)/停止/★僵尸
+├─ 八、★线程=共享资源的进程; pid(线程)vs tgid(进程)
+├─ 九、两个栈:用户栈+内核栈(SP_EL0/SP_EL1)
+├─ 十、current: per-CPU(多核每核一份, 非全局)
+└─ 十一、组织:链表/红黑树/哈希/进程树(侵入式list_head)</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>在 Linux 源码 <code>include/linux/sched.h</code> 找 struct task_struct,找出 __state、mm、pid、tgid、files、signal、comm 字段,对照本章字段群。</li>
+  <li>写多线程程序,用 <code>gettid()</code>(线程 pid)和 <code>getpid()</code>(tgid)打印,验证同进程线程 tgid 相同、pid 不同。</li>
+  <li>写一个 fork 后父进程不 wait 的程序,用 <code>ps aux | grep Z</code> 观察僵尸进程(状态 Z)。</li>
+  <li>制造一个 D 状态进程(如访问慢速/卡住的 IO),用 <code>ps</code> 看 D 状态,验证 kill -9 杀不掉。</li>
+  <li>用 <code>cat /proc/PID/status</code> 和 <code>/proc/PID/stat</code> 查看某进程的状态、PID、线程数等,这些数据就来自 task_struct。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>task_struct 和 TCB 的关系与最本质区别?</li>
+  <li>Linux 如何统一表示进程和线程?pid 和 tgid?</li>
+  <li>僵尸进程是什么?如何产生和避免?</li>
+  <li>可中断和不可中断睡眠的区别?D 状态为什么杀不掉?</li>
+  <li>current 是什么?多核下如何实现,为什么不能用全局变量?</li>
+  <li>宏内核 vs 微内核?Linux 的选择及其影响?</li>
+  <li>一个 task_struct 如何同时被多个数据结构组织?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第廿八章 完 · 下一章《第廿九章 进程、线程与 fork/exec/clone》</p>
+<div class="nav">
+  <a href="第27章-RTThread-内存FinSH与BSP.html">← 第廿七章</a>
+  <a href="index.html">目录</a>
+  <a href="第29章-Linux进程线程与fork.html">第廿九章 →</a>
+</div>
+
+</div>
+</body>
+</html>

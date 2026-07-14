@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第廿二章 EventGroup 事件组</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第21章-FreeRTOS-Mutex与优先级继承.html">← 第廿一章</a>
+  <a href="index.html">目录</a>
+  <a href="第23章-FreeRTOS-SoftwareTimer软件定时器.html">第廿三章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第三卷 · FreeRTOS 源码</div>
+  <h1>第廿二章 EventGroup 事件组</h1>
+  <div class="sub">用一个整数的每一位，等待多个事件的"与/或"组合</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">信号量不够用的场景</a></li>
+    <li><a href="#s2">生活类比：出发前的检查清单</a></li>
+    <li><a href="#s3">事件组的本质:一个位图</a></li>
+    <li><a href="#s4">数据结构</a></li>
+    <li><a href="#s5">等待:xEventGroupWaitBits 的与/或</a></li>
+    <li><a href="#s6">设置事件:xEventGroupSetBits</a></li>
+    <li><a href="#s7">清除位与"取走"语义</a></li>
+    <li><a href="#s8">任务同步:xEventGroupSync</a></li>
+    <li><a href="#s9">和信号量/队列的取舍</a></li>
+    <li><a href="#s10">面试常问</a></li>
+    <li><a href="#s11">常见误区</a></li>
+    <li><a href="#s12">本章总结</a></li>
+    <li><a href="#s13">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：信号量一次只能等"一个"事件。但现实里常要等"<strong>多个事件的组合</strong>"——比如"等 WiFi 连上<em>且</em>传感器就绪<em>且</em>配置加载完,才启动主逻辑"。这就是事件组(Event Group)。它用一个整数的每一位表示一个事件,支持等待"与(全部满足)/或(任一满足)"。学完你要能用事件组做多条件同步,理解它和信号量的区别。这一章相对短小。</p></blockquote>
+
+<h2 id="s1">22.1 信号量不够用的场景</h2>
+<p>信号量/队列一次只处理一个同步点。但看这个需求:一个任务要等<strong>三件事都完成</strong>才能启动:</p>
+<ul>
+  <li>WiFi 连接成功;</li>
+  <li>传感器初始化完成;</li>
+  <li>配置文件加载完毕。</li>
+</ul>
+<p>用信号量做?你得建 3 个信号量,任务里 <code>take</code> 三次——但这样代码笨重,且如果想"任一完成就先做点事"(或逻辑)就更难写。<strong>更本质的问题:信号量表达不了"等多个事件的组合关系"。</strong>事件组专门解决"多事件的与/或等待"——一个对象、一次调用,等一组事件的任意逻辑组合。</p>
+
+<h2 id="s2">22.2 生活类比：出发前的检查清单</h2>
+<p>事件组就像旅行出发前贴在门上的<strong>检查清单</strong>:</p>
+<ul>
+  <li>清单上有几项:☐带钥匙 ☐带钱包 ☐带手机 ☐锁门。</li>
+  <li>每完成一项就<strong>打个勾</strong>(设置对应的位)。</li>
+  <li>"全部打勾才能出发"= 等待<strong>所有位</strong>都置 1(逻辑与)。</li>
+  <li>"任一项完成就提醒我"= 等待<strong>任一位</strong>置 1(逻辑或)。</li>
+</ul>
+<p>这张"清单"就是一个整数,每一位是一个待办项(事件)。<strong>事件组 = 一个共享的位图 + 阻塞等待"某些位满足条件"的机制。</strong></p>
+
+<h2 id="s3">22.3 事件组的本质：一个位图</h2>
+<p>事件组的核心是一个整数(通常 24 个可用位,因为高 8 位内核保留):</p>
+<pre><code>事件组 = 一个整数, 每一位代表一个事件:
+
+  bit:  23 ...  3   2   1   0
+        ─  ... ─   1   0   1
+                   │   │   │
+              事件2已发生 │ 事件0已发生
+                    事件1未发生
+
+  设置事件 = 把某位置1(SetBits)
+  等待事件 = 阻塞直到某些位满足"与/或"条件(WaitBits)
+  清除事件 = 把某位清0(ClearBits)</code></pre>
+<p>每个位的含义由你自己定义(用宏起名,如 <code>#define WIFI_READY (1&lt;&lt;0)</code>)。<strong>多个任务/中断可以设置不同的位,一个或多个任务可以等待位的组合。</strong>这让"多方协调"变得简洁——每一方负责点亮自己那一位,等待方检查组合。</p>
+
+<h2 id="s4">22.4 数据结构</h2>
+<p><code>event_groups.c</code> 里的定义,出乎意料地简单:</p>
+<pre><code>typedef struct EventGroupDef_t
+{
+    EventBits_t      uxEventBits;        /* ★ 就是那个位图整数(事件标志) */
+    List_t           xTasksWaitingForBits; /* 等待事件的任务列表 */
+} EventGroup_t;
+
+/* EventBits_t 通常是 uint32_t(configUSE_16_BIT_TICKS=0时) */
+/* 24个可用位(bit0-23), 高8位内核保留用于控制 */</code></pre>
+<p>就两个字段:<strong>一个位图整数 + 一个等待任务列表</strong>。比队列/信号量还简单——因为它不传数据、不缓冲,只是一个共享的标志位集合 + 阻塞机制。等待任务同样用 TCB 的 <code>xEventListItem</code> 挂进 <code>xTasksWaitingForBits</code>(和队列一样的机制,第19章)。</p>
+
+<h2 id="s5">22.5 等待：xEventGroupWaitBits 的与/或</h2>
+<p>核心 API,支持"与/或"两种等待逻辑:</p>
+<pre><code>EventBits_t xEventGroupWaitBits(
+    EventGroupHandle_t xEventGroup,
+    const EventBits_t  uxBitsToWaitFor,   /* 关心哪些位(掩码) */
+    const BaseType_t   xClearOnExit,      /* 满足后是否自动清这些位 */
+    const BaseType_t   xWaitForAllBits,   /* pdTRUE=与(全满足), pdFALSE=或(任一满足) */
+    TickType_t         xTicksToWait );    /* 超时 */
+
+用法示例:
+  #define WIFI_READY    (1 << 0)
+  #define SENSOR_READY  (1 << 1)
+  #define CONFIG_READY  (1 << 2)
+
+  /* 等三个事件【都】发生(逻辑与) */
+  xEventGroupWaitBits( xEG,
+      WIFI_READY | SENSOR_READY | CONFIG_READY,  /* 关心这三位 */
+      pdTRUE,   /* 满足后清除这些位 */
+      pdTRUE,   /* ★与逻辑: 三位全为1才唤醒 */
+      portMAX_DELAY );
+  /* 到这里, 说明三件事都完成了 */</code></pre>
+<p>判断逻辑(简化源码):</p>
+<pre><code>/* 与逻辑: 关心的位【全部】置1 才满足 */
+if( xWaitForAllBits == pdTRUE )
+    满足 = ( ( uxCurrentEventBits & uxBitsToWaitFor ) == uxBitsToWaitFor );
+/* 或逻辑: 关心的位【任一】置1 就满足 */
+else
+    满足 = ( ( uxCurrentEventBits & uxBitsToWaitFor ) != 0 );
+
+if( 满足 )  return 立即返回(拿到当前位);
+else        阻塞, 挂进 xTasksWaitingForBits, 记下等待条件, 让出CPU;</code></pre>
+<p><strong>与逻辑</strong>:关心的位<strong>全部</strong>为 1(用 <code>(bits & mask) == mask</code> 判断);<strong>或逻辑</strong>:关心的位<strong>任一</strong>为 1(用 <code>(bits & mask) != 0</code>)。这就是位运算的经典用法——用掩码 <code>&</code> 检查特定位。不满足就阻塞,直到别人 SetBits 使条件满足。</p>
+
+<h2 id="s6">22.6 设置事件：xEventGroupSetBits</h2>
+<p>某个任务/中断完成了自己的事,就设置对应的位,并<strong>检查是否有等待任务的条件被满足</strong>:</p>
+<pre><code>EventBits_t xEventGroupSetBits( EventGroupHandle_t xEventGroup, const EventBits_t uxBitsToSet )
+{
+    /* ① 置位 */
+    pxEventBits->uxEventBits |= uxBitsToSet;
+
+    /* ② 遍历等待列表, 检查每个等待任务的条件是否现在满足 */
+    pxListItem = 等待列表头;
+    while( pxListItem != 列表尾 )
+    {
+        uxBitsWaitedFor = 该任务等待的位;
+        xWaitForAll     = 该任务是与还是或;
+
+        if( 该任务的条件现在满足(用上面的与/或判断) )
+        {
+            /* ★ 满足! 把这个任务从等待列表移回就绪列表(唤醒) */
+            vTaskRemoveFromUnorderedEventList( pxListItem, ... );
+        }
+        pxListItem = 下一个;
+    }
+    return uxEventBits;
+}</code></pre>
+<p>关键:<strong>SetBits 不是简单置个位,而是置位后<em>主动检查所有等待任务</em>——谁的条件被满足了就唤醒谁。</strong>因为一次 SetBits(可能同时置多个位)可能让多个等待任务(不同的与/或条件)同时满足。这就是为什么事件组的 SetBits 比信号量的 give 逻辑复杂——它要评估多个不同的等待条件。</p>
+<blockquote><p>注意一个重要限制:<strong><code>xEventGroupSetBitsFromISR</code>(中断版)不直接在 ISR 里做上面的遍历唤醒</strong>,因为遍历不确定长度、可能较久,不适合在中断里做。它把"设置位"这个动作<strong>推给定时器守护任务(timer daemon task)</strong>去执行(通过给定时器命令队列发消息)。这是第七章"中断里只做最少的事、把耗时推给任务"思想的又一次体现,也是为什么用事件组的 FromISR 版需要开启软件定时器(第23章)。</p></blockquote>
+
+<h2 id="s7">22.7 清除位与"取走"语义</h2>
+<p>事件满足后,那些位要不要清 0?由 <code>xClearOnExit</code> 参数控制,这决定了两种语义:</p>
+<ul>
+  <li><strong>xClearOnExit = pdTRUE(取走)</strong>:任务被唤醒后,自动把它等的那些位清 0。语义:"我把这个事件<em>消费</em>了"。类似信号量 take——事件是一次性的,处理完就没了。</li>
+  <li><strong>xClearOnExit = pdFALSE(不清)</strong>:位保持为 1。语义:"这个状态<em>持续</em>存在",别的任务也能看到。类似"标志位/状态"。</li>
+</ul>
+<p>还有单独的 <code>xEventGroupClearBits</code> 手动清位。<strong>"取走还是保留"取决于事件是"一次性动作"还是"持续状态"</strong>——比如"收到一个包"是一次性的(取走),"WiFi 处于连接状态"是持续的(保留)。选对语义,逻辑才正确。</p>
+
+<h2 id="s8">22.8 任务同步：xEventGroupSync</h2>
+<p>事件组有个特色 API <code>xEventGroupSync</code>,实现<strong>多任务集合点(rendezvous)</strong>——多个任务互相等待,都到齐了才一起继续:</p>
+<pre><code>场景: 三个任务要在某个点"会合", 都到了才一起往下走
+
+每个任务:
+  xEventGroupSync( xEG,
+      TASK_N_ARRIVED,        /* 我到了, 设置我的位 */
+      ALL_TASKS_ARRIVED,     /* 等待所有任务的位都置1 */
+      portMAX_DELAY );
+  /* 到这, 说明三个任务都到齐了, 一起继续 */
+
+xEventGroupSync = 原子地"设置自己的位 + 等待所有位" + 满足后自动清位</code></pre>
+<p>这在"多阶段并行处理、每阶段结束要同步"的场景很有用(比如三个任务各自算一部分,都算完才进入下一阶段)。<strong>它是"设置+等待+清除"三步的原子组合,保证多任务安全会合。</strong>普通的 SetBits+WaitBits 分开做会有竞态(可能错过别人的信号),Sync 把它们原子化了。</p>
+
+<h2 id="s9">22.9 和信号量/队列的取舍</h2>
+<p>什么时候用事件组?对比其他 IPC:</p>
+<table>
+<tr><th>需求</th><th>用什么</th></tr>
+<tr><td>等单个事件</td><td>信号量/任务通知(更轻)</td></tr>
+<tr><td>等多个事件的"与/或"组合</td><td><strong>事件组</strong>(专长)</td></tr>
+<tr><td>传数据</td><td>队列</td></tr>
+<tr><td>一个事件通知多个任务(广播)</td><td><strong>事件组</strong>(一次 SetBits 可唤醒多个等待者)</td></tr>
+<tr><td>需要计数事件次数</td><td>计数信号量(事件组的位只有0/1,不计数)</td></tr>
+</table>
+<blockquote><p>事件组的两个独门优势:<strong>①等多事件组合(与/或)②一对多广播(一次 SetBits 唤醒所有条件满足的任务)。</strong>信号量做不到这两点(信号量 give 只唤醒一个等待者)。但事件组的位<strong>不计数</strong>(只有 0/1),要计数用计数信号量。<strong>选型逻辑:等"多个条件的逻辑组合"或"广播"→事件组;等单个/要计数→信号量;传数据→队列。</strong>另外,任务通知也能模拟事件位(用其 32 位值当标志),在点对点场景更省——FreeRTOS 官方甚至建议优先考虑任务通知。</p></blockquote>
+
+<h2 id="s10">22.10 面试常问问题</h2>
+<p><strong>Q1:事件组解决什么信号量解决不了的问题?</strong><br>等待多个事件的"与/或"组合,以及一对多广播(一次设置位唤醒多个等待任务)。信号量只能等单个事件、只唤醒一个等待者。</p>
+<p><strong>Q2:事件组的本质是什么?</strong><br>一个整数位图(通常24可用位),每位一个事件 + 一个等待任务列表。SetBits 置位并检查唤醒满足条件的任务,WaitBits 阻塞等待位的与/或组合。</p>
+<p><strong>Q3:与逻辑和或逻辑怎么判断?</strong><br>与:(bits & mask)==mask(关心的位全为1);或:(bits & mask)!=0(任一为1)。位运算掩码检查。</p>
+<p><strong>Q4:xClearOnExit 的作用?</strong><br>决定条件满足后是否自动清除等待的位。清=消费一次性事件(类信号量take);不清=保留持续状态(类标志位)。</p>
+<p><strong>Q5:为什么 xEventGroupSetBitsFromISR 特殊?</strong><br>唤醒需遍历等待列表(不定长),不适合在中断做;它把设置位的动作推给定时器守护任务执行,需开启软件定时器。</p>
+<p><strong>Q6:事件组能计数吗?</strong><br>不能,位只有0/1。要计数事件次数用计数信号量。</p>
+
+<h2 id="s11">22.11 常见误区</h2>
+<ol>
+  <li><strong>"事件组的位能计数"</strong>——只有0/1,不计数;计数用计数信号量。</li>
+  <li><strong>"SetBits 只唤醒一个任务"</strong>——会唤醒所有条件被满足的等待任务(广播)。</li>
+  <li><strong>"WaitBits 默认是与逻辑"</strong>——由 xWaitForAllBits 参数决定,与/或都可以。</li>
+  <li><strong>"满足后位会自动清"</strong>——取决于 xClearOnExit;为 pdFALSE 时不清。</li>
+  <li><strong>"中断里可以随便 SetBits"</strong>——FromISR 版把工作推给定时器任务,需开软件定时器。</li>
+  <li><strong>"事件组能传数据"</strong>——不能,只传"事件发生了"的标志;传数据用队列。</li>
+</ol>
+
+<h2 id="s12">22.12 本章总结</h2>
+<ul>
+  <li>事件组解决信号量的短板:<strong>等待多个事件的与/或组合</strong> + <strong>一对多广播</strong>。</li>
+  <li>本质=<strong>一个位图整数(24可用位)+ 等待任务列表</strong>;每位一个事件,含义自定义。</li>
+  <li><code>xEventGroupWaitBits</code>:与(位全为1)/或(任一为1),不满足则阻塞。</li>
+  <li><code>xEventGroupSetBits</code>:置位后遍历等待列表,唤醒所有条件被满足的任务(可多个)。</li>
+  <li><code>xClearOnExit</code> 决定"取走(消费一次性事件)"还是"保留(持续状态)"。</li>
+  <li><code>xEventGroupSync</code>:多任务会合点(原子的设置+等待+清除)。</li>
+  <li>FromISR 版把工作推给定时器守护任务,需开软件定时器。</li>
+  <li>选型:多条件组合/广播→事件组;单事件/计数→信号量;传数据→队列。</li>
+</ul>
+
+<h2 id="s13">22.13 思维导图 / 课后题</h2>
+<pre><code>EventGroup 事件组
+├─ 一、需求:等多个事件的组合(信号量做不到)
+├─ 二、类比:出发检查清单(每项打勾)
+├─ 三、本质:位图整数(24可用位), 每位一事件
+├─ 四、数据结构:uxEventBits + 等待任务列表(超简单)
+├─ 五、WaitBits:与(&mask==mask)/或(&mask!=0)
+├─ 六、SetBits:置位+遍历唤醒所有满足的任务(广播)
+├─ 七、xClearOnExit:取走(消费) vs 保留(状态)
+├─ 八、xEventGroupSync:多任务会合(原子设置+等待+清)
+├─ 九、FromISR推给定时器任务(需软件定时器)
+└─ 十、选型:组合/广播→事件组; 单/计数→信号量; 数据→队列</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>在 <code>event_groups.c</code> 找 EventGroup_t、xEventGroupWaitBits、xEventGroupSetBits,对照本章读与/或判断和遍历唤醒逻辑。</li>
+  <li>建三个"初始化"任务分别设置 bit0/1/2,一个主任务用与逻辑等三位全置,验证三者都完成才启动。</li>
+  <li>把等待改成或逻辑,验证任一完成就唤醒;对比与/或行为。</li>
+  <li>用 xClearOnExit 的 true/false 各跑一次,观察位是否被自动清除,理解一次性事件 vs 持续状态。</li>
+  <li>用 xEventGroupSync 实现三任务会合点,验证都到齐才一起继续。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>事件组相比信号量的独特能力是什么?</li>
+  <li>与逻辑/或逻辑在源码里如何用位运算判断?</li>
+  <li>SetBits 为什么可能唤醒多个任务?</li>
+  <li>xClearOnExit 的两种语义分别对应什么场景?</li>
+  <li>为什么事件组的 FromISR 版要借助定时器任务?</li>
+  <li>什么时候该用事件组,什么时候用信号量或队列?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第廿二章 完 · 下一章《第廿三章 SoftwareTimer 软件定时器》</p>
+<div class="nav">
+  <a href="第21章-FreeRTOS-Mutex与优先级继承.html">← 第廿一章</a>
+  <a href="index.html">目录</a>
+  <a href="第23章-FreeRTOS-SoftwareTimer软件定时器.html">第廿三章 →</a>
+</div>
+
+</div>
+</body>
+</html>

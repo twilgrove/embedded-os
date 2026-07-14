@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第廿一章 Mutex 与优先级继承</title>
+<style>
+  :root{--bg:#f7f8fa;--fg:#1f2328;--muted:#57606a;--card:#fff;--border:#d0d7de;
+    --accent:#2f6feb;--accent-soft:#ddeafd;--code-bg:#f6f8fa;--pre-bg:#0d1117;--pre-fg:#c9d1d9;--quote:#fff8e6;--quote-b:#e3b341;}
+  @media (prefers-color-scheme: dark){
+    :root{--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--border:#30363d;
+      --accent:#4f93ff;--accent-soft:#16304f;--code-bg:#1b222c;--pre-bg:#010409;--pre-fg:#c9d1d9;--quote:#241d0f;--quote-b:#9e7a17;}}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:17px;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 22px 120px;}
+  header.book{text-align:center;padding:40px 0 24px;border-bottom:1px solid var(--border);margin-bottom:28px;}
+  header.book .vol{color:var(--accent);font-weight:600;letter-spacing:2px;font-size:14px;}
+  header.book h1{font-size:30px;margin:10px 0 6px;}
+  header.book .sub{color:var(--muted);font-size:15px;}
+  h2{font-size:24px;margin:44px 0 14px;padding-top:10px;border-top:2px solid var(--accent-soft);}
+  h3{font-size:20px;margin:30px 0 10px;color:var(--accent);}
+  h4{font-size:17px;margin:22px 0 8px;}
+  p{margin:12px 0;}
+  code{background:var(--code-bg);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:14px;}
+  pre{background:var(--pre-bg);color:var(--pre-fg);border-radius:10px;padding:16px 18px;overflow-x:auto;font-family:"JetBrains Mono","SF Mono",Consolas,monospace;font-size:13px;line-height:1.55;}
+  pre code{background:none;border:none;padding:0;color:inherit;font-size:inherit;}
+  blockquote{background:var(--quote);border-left:4px solid var(--quote-b);border-radius:0 8px 8px 0;margin:18px 0;padding:12px 18px;}
+  blockquote p{margin:6px 0;}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:15px;display:block;overflow-x:auto;}
+  th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;}
+  th{background:var(--accent-soft);}
+  hr{border:none;border-top:1px solid var(--border);margin:34px 0;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 26px;margin-bottom:30px;}
+  .toc h2{border:none;margin:0 0 10px;padding:0;font-size:18px;}
+  .toc ol{margin:0;padding-left:22px;columns:2;column-gap:30px;font-size:14.5px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  ul,ol{padding-left:24px;} li{margin:5px 0;} a{color:var(--accent);}
+  .nav{display:flex;justify-content:space-between;margin-bottom:20px;font-size:14px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="nav">
+  <a href="第20章-FreeRTOS-Semaphore信号量.html">← 第二十章</a>
+  <a href="index.html">目录</a>
+  <a href="第22章-FreeRTOS-EventGroup事件组.html">第廿二章 →</a>
+</div>
+<header class="book">
+  <div class="vol">第三卷 · FreeRTOS 源码</div>
+  <h1>第廿一章 Mutex 与优先级继承</h1>
+  <div class="sub">火星探测器差点因它失败——优先级反转与互斥量的诞生</div>
+</header>
+
+<nav class="toc">
+  <h2>本章目录</h2>
+  <ol>
+    <li><a href="#s1">互斥量 vs 信号量:一字之差的鸿沟</a></li>
+    <li><a href="#s2">互斥要保护的:临界区</a></li>
+    <li><a href="#s3">火星探路者的故事</a></li>
+    <li><a href="#s4">优先级反转:问题的精确定义</a></li>
+    <li><a href="#s5">优先级继承:解决之道</a></li>
+    <li><a href="#s6">互斥量的数据结构:多出的两个字段</a></li>
+    <li><a href="#s7">take 源码:记录所有者 + 继承</a></li>
+    <li><a href="#s8">give 源码:归还 + 恢复优先级</a></li>
+    <li><a href="#s9">递归互斥量</a></li>
+    <li><a href="#s10">互斥量的使用禁忌</a></li>
+    <li><a href="#s11">优先级天花板(对比方案)</a></li>
+    <li><a href="#s12">死锁:互斥的另一个陷阱</a></li>
+    <li><a href="#s13">面试常问</a></li>
+    <li><a href="#s14">常见误区</a></li>
+    <li><a href="#s15">本章总结</a></li>
+    <li><a href="#s16">思维导图 / 课后题</a></li>
+  </ol>
+</nav>
+
+<blockquote><p><strong>本章目标</strong>：第20章说"互斥用互斥量,别用信号量",这一章讲清为什么。核心是<strong>优先级反转(Priority Inversion)</strong>——一个曾让火星探测器险些失败的经典问题,以及互斥量的<strong>优先级继承</strong>解决方案。这是 RTOS 最重要、面试最爱考的知识点之一,也是第七卷"实时系统"的核心前哨。学完你要能画出优先级反转的时序、讲清优先级继承怎么破解、读懂互斥量 give/take 的源码。</p></blockquote>
+
+<h2 id="s1">21.1 互斥量 vs 信号量：一字之差的鸿沟</h2>
+<p>互斥量(Mutex,Mutual Exclusion 互斥)和二值信号量,底层都是长度 1 的队列,长得几乎一样。但设计意图截然不同:</p>
+<table>
+<tr><th></th><th>二值信号量(Binary Semaphore)</th><th>互斥量(Mutex)</th></tr>
+<tr><td>用途</td><td>同步(通知)</td><td>互斥(保护共享资源)</td></tr>
+<tr><td>所有权</td><td>无:谁都能 give</td><td>有:谁 take 谁 give(谁加锁谁解锁)</td></tr>
+<tr><td>优先级继承</td><td>无</td><td>★有(防优先级反转)</td></tr>
+<tr><td>典型场景</td><td>中断通知任务</td><td>多任务访问同一外设/全局数据</td></tr>
+<tr><td>初始状态</td><td>0(无信号)</td><td>1(可用/未锁)</td></tr>
+</table>
+<p>一句话记忆:<strong>信号量是"我给你一个信号"(跨主体的通知,方向性),互斥量是"我借用一下这个资源,用完还"(同一主体借还,有所有权)。</strong>互斥量多的那两样——所有权和优先级继承——正是为了解决信号量做互斥时的两大问题(第20.8),而优先级继承是重中之重。</p>
+
+<h2 id="s2">21.2 互斥要保护的：临界区</h2>
+<p>先明确互斥量保护什么。当多个任务要访问<strong>同一个不可同时使用的资源</strong>时,就需要互斥:</p>
+<ul>
+  <li>一个 I2C 总线/SPI 外设:两个任务同时发数据会互相干扰,乱套。</li>
+  <li>一个全局链表/数据结构:A 改到一半被 B 抢占也来改,结构损坏(第七、十九章讲过)。</li>
+  <li>一个 printf/串口:两个任务同时打印,输出交错成乱码。</li>
+</ul>
+<p>这段"同一时刻只能一个任务进入"的代码,就是<strong>临界区(Critical Section)</strong>。互斥量的用法:</p>
+<pre><code>xMutex = xSemaphoreCreateMutex();   // 创建互斥量(初始"未锁")
+
+任务访问共享资源:
+  xSemaphoreTake(xMutex, 等待);   // 加锁(拿到才能进, 否则等)
+  访问共享资源;                    // ← 临界区, 保证独占
+  xSemaphoreGive(xMutex);          // 解锁(用完归还)</code></pre>
+<p>效果:任何时刻最多一个任务持有互斥量、进入临界区,别的任务想进就阻塞等待,直到持有者归还。<strong>这保证了共享资源的独占访问。</strong>看起来和第20.8 用信号量做锁一样——问题就藏在"如果持有锁的是低优先级任务"这个情况里。</p>
+
+<h2 id="s3">21.3 火星探路者的故事</h2>
+<p>1997 年,NASA 的火星探路者(Mars Pathfinder)成功登陆火星,但很快出现诡异故障:<strong>系统频繁自动重启</strong>,险些让整个任务失败。工程师远程调试后发现,罪魁祸首正是<strong>优先级反转</strong>。</p>
+<p>探测器上跑着 VxWorks 实时系统,有三个相关任务:</p>
+<ul>
+  <li><strong>高优先级</strong>:数据总线管理任务(要频繁访问共享总线)。</li>
+  <li><strong>中优先级</strong>:通信任务(耗时长,不用总线)。</li>
+  <li><strong>低优先级</strong>:气象数据采集任务(也要访问共享总线)。</li>
+</ul>
+<p>高优先级任务和低优先级任务共享一个用<strong>互斥量保护的总线</strong>。故障场景:低优先级任务拿着总线锁时,被中优先级的通信任务抢占(合理,通信优先级更高),而通信任务一跑就是很久;此时高优先级任务想用总线,却拿不到锁(锁在低优先级手里),只能干等——<strong>等到一个"看门狗"超时,以为系统卡死了,就重启!</strong></p>
+<blockquote><p>这个真实事故是<strong>优先级反转致命性的最佳教材</strong>:一个价值几亿美元的火星任务,差点毁于一个调度问题。NASA 的解决方案就是打开 VxWorks 互斥量的<strong>优先级继承</strong>——远程改了个配置,故障消失。<strong>它说明:实时系统里,优先级反转不是"性能问题",而是"正确性/安全问题",可能导致系统彻底失败。</strong>的飞控、汽车的控制器同样是硬实时系统,这就是为什么这个知识点在这类公司面试中分量极重。</p></blockquote>
+
+<h2 id="s4">21.4 优先级反转：问题的精确定义</h2>
+<p>把火星探路者的问题抽象成精确的时序。三个任务:高 H、中 M、低 L(优先级 H>M>L)。H 和 L 共享一个互斥量:</p>
+<pre><code>时间 →
+
+L: ──[拿到锁]──▓▓▓──(被H抢占)      (M抢占,L挂起)              ──▓[释放锁]──
+                    │                                          ▲
+H:                  └[想拿锁,拿不到!]═══════阻塞等待═══════════┘[终于拿到]
+                                        ▲
+M:                                      └──────[M运行很久]──────┘
+
+图解:
+① L 拿到锁, 进入临界区
+② H 就绪, 抢占 L(H优先级高), H 想拿锁 → 拿不到(在L手里) → H阻塞
+③ 此时 M 就绪, 抢占 L(M > L) → M 开始跑
+④ M 跑很久, 期间 L 无法运行(被M压着) → L 无法释放锁 → H 一直等
+⑤ 直到 M 跑完, L 才能继续 → L 释放锁 → H 终于拿到锁运行
+
+结果: 最高优先级的 H, 实际上被【中优先级的 M】拖了很久
+      → "优先级被反转了": M 变相地优先于 H 运行了!</code></pre>
+<p>精确定义:<strong>优先级反转 = 一个高优先级任务,因为等待被低优先级任务持有的锁,而间接地被与该锁无关的中优先级任务阻塞,导致高优先级任务的执行被不合理地推迟。</strong></p>
+<blockquote><p>关键在于:H 等 L 释放锁是合理的(短暂),但 <strong>M 插进来把 L 压住、让 L 迟迟不能释放锁,才是问题</strong>。M 和这个锁毫无关系,却间接地让 H 等了很久——高优先级的 H 竟然要等中优先级的 M,优先级"反转"了。<strong>最可怕的是:如果有多个中优先级任务轮番插队,H 可能被无限期推迟(unbounded priority inversion),这在硬实时系统里就是灾难(火星探路者的看门狗超时重启)。</strong></p></blockquote>
+
+<h2 id="s5">21.5 优先级继承：解决之道</h2>
+<p>FreeRTOS 的互斥量用<strong>优先级继承(Priority Inheritance)</strong>解决优先级反转。核心思想极其精妙:</p>
+<blockquote><p><strong>当高优先级任务 H 因为等锁而阻塞时,让持有锁的低优先级任务 L <em>临时继承</em> H 的高优先级。</strong>这样 L 就不会被中优先级 M 抢占了(L 现在"暂时是高优先级"),L 能尽快跑完临界区、释放锁,H 就能尽快拿到锁。L 释放锁后,优先级恢复原样。</p></blockquote>
+<p>用继承后重看时序:</p>
+<pre><code>时间 →
+
+L: ──[拿到锁]──▓▓(H来了,L继承H的优先级!)▓▓[释放锁,优先级恢复]──
+                    │                        │
+H:                  └[想拿锁,阻塞]═══════════┘[立即拿到锁]──运行
+                                             ▲
+M:                          [M就绪但拿不到CPU!因为L现在是高优先级]
+
+图解:
+① L 拿到锁
+② H 就绪抢占, H 想拿锁 → 拿不到 → H 阻塞
+   ★ 此时 L 继承 H 的优先级(临时变成和H一样高)
+③ M 就绪, 但 M < L(继承后的) → M 抢不了L! → M 等着
+④ L(高优先级)快速跑完临界区 → 释放锁 → L 优先级恢复原样
+⑤ H 立即拿到锁, 运行
+
+结果: H 只等了 L 临界区那一小段(可控!), M 没能插队捣乱。
+      优先级反转被限制在"L临界区长度"内(bounded), 不再无限期。</code></pre>
+<p>优先级继承把优先级反转从"<strong>可能无限期</strong>"(灾难)变成"<strong>最多等一个临界区长度</strong>"(可控)。虽然没有完全消除反转(H 还是等了 L 一小会),但让它<strong>有界、可预测</strong>——这对实时系统足够了(第七卷会讲 WCET 最坏执行时间分析要用到这个"有界"性质)。</p>
+
+<h2 id="s6">21.6 互斥量的数据结构：多出的两个字段</h2>
+<p>互斥量复用队列结构(第19章),但要实现继承和所有权,得记两样东西。回看第19章 Queue_t 里那几个"为互斥量准备"的字段:</p>
+<pre><code>Queue_t 里, 当它被用作互斥量时:
+
+  /* union 里的这个成员被启用(替代 pcReadFrom) */
+  UBaseType_t uxRecursiveCallCount;  /* 递归计数(21.9) */
+
+  /* 队列结构里, 互斥量专用: */
+  void *pxMutexHolder;   /* ★所有者: 指向当前持有此互斥量的任务TCB */
+
+  /* TCB 里(第16章)配合的字段: */
+  UBaseType_t uxBasePriority;  /* ★任务的"原始优先级"(继承前的) */
+  UBaseType_t uxMutexesHeld;   /* 该任务当前持有几个互斥量 */</code></pre>
+<p>两个关键:</p>
+<ul>
+  <li><strong><code>pxMutexHolder</code></strong>(在队列结构里):记录"谁现在持有这把锁"——这就是互斥量的<strong>所有权</strong>。信号量没有这个字段,所以谁都能 give;互斥量有它,才能实现"谁 take 谁 give"和优先级继承(知道要给谁提升优先级)。</li>
+  <li><strong><code>uxBasePriority</code></strong>(在 TCB 里):记录任务被继承提升<strong>之前</strong>的原始优先级。因为继承会临时改高 <code>uxPriority</code>,释放锁后要恢复到 <code>uxBasePriority</code>——所以必须把原值存起来。</li>
+</ul>
+<blockquote><p>你现在理解第16章 TCB 里 <code>uxBasePriority</code> 和 <code>uxMutexesHeld</code> 两个字段的用途了——它们就是为优先级继承准备的。<strong>uxPriority 是"当前有效优先级"(可能被继承抬高),uxBasePriority 是"本来的优先级"。</strong>调度器用 uxPriority 调度,释放锁时用 uxBasePriority 恢复。<code>uxMutexesHeld</code> 计数是因为一个任务可能同时持有多个互斥量,要都释放且优先级正确恢复,逻辑会更复杂(取所有等待者中最高的)。前面章节埋的字段,在这里全部激活。</p></blockquote>
+
+<h2 id="s7">21.7 take 源码：记录所有者 + 继承</h2>
+<p>互斥量的 take(加锁)比信号量多做两件事:记录所有者、必要时触发优先级继承。看 <code>xQueueSemaphoreTake</code> 里互斥量相关的逻辑:</p>
+<pre><code>BaseType_t xQueueSemaphoreTake( QueueHandle_t xQueue, TickType_t xTicksToWait )
+{
+    for( ;; )
+    {
+        taskENTER_CRITICAL();
+        {
+            if( pxQueue->uxMessagesWaiting > 0 )   /* 锁可用 */
+            {
+                pxQueue->uxMessagesWaiting--;
+
+                /* ★ 如果是互斥量: 记录"我"成为持有者 */
+                if( pxQueue->uxQueueType == queueQUEUE_IS_MUTEX )
+                {
+                    pxQueue->u.xSemaphore.xMutexHolder = pvTaskIncrementMutexHeldCount();
+                    /* 记下当前任务为持有者, 并给该任务的uxMutexesHeld+1 */
+                }
+                taskEXIT_CRITICAL();
+                return pdPASS;
+            }
+            else   /* 锁被别人持有 */
+            {
+                if( xTicksToWait == 0 ) { taskEXIT_CRITICAL(); return errQUEUE_EMPTY; }
+            }
+        }
+        taskEXIT_CRITICAL();
+
+        vTaskSuspendAll();
+        prvLockQueue( pxQueue );
+        {
+            /* ★★ 关键: 触发优先级继承 —— 让持有者继承我(申请者)的优先级 */
+            if( pxQueue->uxQueueType == queueQUEUE_IS_MUTEX )
+            {
+                taskENTER_CRITICAL();
+                vTaskPriorityInherit( pxQueue->u.xSemaphore.xMutexHolder );
+                taskEXIT_CRITICAL();
+            }
+            /* 然后把自己挂进等待列表, 阻塞 */
+            vTaskPlaceOnEventList( &( pxQueue->xTasksWaitingToReceive ), xTicksToWait );
+        }
+        ...
+    }
+}</code></pre>
+<p>核心是 <code>vTaskPriorityInherit</code>,看它的逻辑:</p>
+<pre><code>void vTaskPriorityInherit( TaskHandle_t const pxMutexHolder )
+{
+    TCB_t * const pxTCB = pxMutexHolder;   /* 持有锁的低优先级任务 */
+
+    /* 如果持有者优先级 < 当前(申请锁的)任务优先级, 才需要提升 */
+    if( pxTCB->uxPriority < pxCurrentTCB->uxPriority )
+    {
+        /* ★ 把持有者的优先级提升到和申请者一样高 */
+        /* (uxBasePriority 保持不变, 记着原始值) */
+        pxTCB->uxPriority = pxCurrentTCB->uxPriority;
+
+        /* 如果持有者在就绪列表, 要把它移到新优先级的就绪链表 */
+        if( 持有者在就绪列表 )
+        {
+            移动到 pxReadyTasksLists[新优先级];
+        }
+    }
+}</code></pre>
+<p>清晰:<strong>当高优先级任务申请一个被低优先级任务持有的锁,就把持有者的 <code>uxPriority</code> 提升到申请者的水平(但 <code>uxBasePriority</code> 不变,记着原值)。</strong>这样持有者暂时"变高",能优先跑完临界区。这就是继承的源码。</p>
+
+<h2 id="s8">21.8 give 源码：归还 + 恢复优先级</h2>
+<p>give(解锁)时,对称地要<strong>把继承来的优先级还回去</strong>。看 <code>xQueueGenericSend</code> 里互斥量的处理(通过 <code>prvCopyDataToQueue</code> 里的钩子):</p>
+<pre><code>/* 释放互斥量时调用, 恢复优先级 */
+BaseType_t xTaskPriorityDisinherit( TaskHandle_t const pxMutexHolder )
+{
+    TCB_t * const pxTCB = pxMutexHolder;
+
+    pxTCB->uxMutexesHeld--;   /* 持有的互斥量数-1 */
+
+    /* 如果当前优先级 != 原始优先级(说明被继承提升过) */
+    if( pxTCB->uxPriority != pxTCB->uxBasePriority )
+    {
+        /* 且没有再持有别的互斥量了 */
+        if( pxTCB->uxMutexesHeld == 0 )
+        {
+            /* ★ 恢复到原始优先级 */
+            pxTCB->uxPriority = pxTCB->uxBasePriority;
+            /* 移回原优先级的就绪链表 */
+            移动到 pxReadyTasksLists[uxBasePriority];
+            return pdTRUE;   /* 需要重新调度 */
+        }
+    }
+}</code></pre>
+<p>逻辑对称:<strong>释放锁时,若之前被继承提升过(<code>uxPriority != uxBasePriority</code>)且不再持有其他互斥量,就把 <code>uxPriority</code> 恢复成 <code>uxBasePriority</code>,并移回原优先级就绪链表。</strong>然后唤醒等锁的高优先级任务,它立即拿到锁运行。一次完整的"继承-恢复"闭环。</p>
+<blockquote><p>注意 <code>uxMutexesHeld == 0</code> 这个判断:如果任务同时持有多把锁,释放一把时不能立刻恢复(可能因另一把锁还在被更高优先级等待)。这是嵌套持锁的正确处理——细节比"提升一次恢复一次"复杂,但思想不变:<strong>只有当任务不再因任何互斥量而背负"继承的高优先级"时,才恢复原始优先级。</strong>FreeRTOS 这里的实现是简化版(完整的多锁优先级恢复要取所有持有锁的最高等待者优先级),但对绝大多数场景够用。这也是为什么"一个任务尽量别同时持有多把锁"是好实践。</p></blockquote>
+
+<h2 id="s9">21.9 递归互斥量</h2>
+<p>普通互斥量有个坑:<strong>同一个任务不能重复 take 自己已持有的互斥量,否则死锁</strong>(自己等自己释放)。但有时函数 A 持锁后调用了函数 B,B 里又要拿同一把锁——这就需要<strong>递归互斥量(Recursive Mutex)</strong>。</p>
+<pre><code>xMutex = xSemaphoreCreateRecursiveMutex();
+
+任务:
+  xSemaphoreTakeRecursive(xMutex, 等待);   // 第1次拿, 计数=1
+    funcA() {
+      xSemaphoreTakeRecursive(xMutex, 等待); // 同一任务再拿, 计数=2(不死锁!)
+      ...
+      xSemaphoreGiveRecursive(xMutex);       // 计数=1
+    }
+  xSemaphoreGiveRecursive(xMutex);           // 计数=0, 真正释放</code></pre>
+<p>实现:用第19章那个 <code>union</code> 里的 <code>uxRecursiveCallCount</code>。<strong>同一个持有者可以重复 take,每次计数+1;必须 give 相同次数(计数归 0)才真正释放锁。</strong>只有持有者本人能递归 take(靠 <code>pxMutexHolder</code> 判断)。这就是第19章那个 union 里 <code>uxRecursiveCallCount</code> 的用途——普通队列用读指针,递归互斥量用它当递归计数,共用内存。<strong>前面埋的每个字段,到这里全部有了着落。</strong></p>
+
+<h2 id="s10">21.10 互斥量的使用禁忌</h2>
+<p>互斥量威力大,但有严格使用规则,违反会出严重 bug:</p>
+<ul>
+  <li><strong>绝不能在中断里用!</strong>互斥量有所有权(持有者是某个任务),而中断不属于任何任务(第七章),没有"持有者"概念,谈不上优先级继承。所以<strong>互斥量没有 FromISR 版本</strong>。中断里要同步用信号量。</li>
+  <li><strong>持锁时间要短</strong>:临界区越长,继承持续越久、别的任务被压得越久。锁里别做耗时操作、别阻塞在别的东西上。</li>
+  <li><strong>谁 take 谁 give</strong>:别让 A 加锁 B 解锁(那是信号量的用法),破坏所有权语义。</li>
+  <li><strong>避免嵌套多把锁</strong>:容易死锁(21.12)。</li>
+</ul>
+
+<h2 id="s11">21.11 优先级天花板（对比方案）</h2>
+<p>解决优先级反转,除了优先级继承,还有另一个经典方案<strong>优先级天花板(Priority Ceiling)</strong>,面试可能对比问:</p>
+<table>
+<tr><th></th><th>优先级继承(FreeRTOS 用)</th><th>优先级天花板</th></tr>
+<tr><td>机制</td><td>持锁者被高优先级等待时,临时继承其优先级</td><td>任务一拿到锁,就立即提升到"该锁的天花板优先级"(=所有可能用此锁的任务中最高的)</td></tr>
+<tr><td>时机</td><td>被动:有人来等才提升</td><td>主动:一拿锁就提升</td></tr>
+<tr><td>优点</td><td>只在必要时提升,开销小</td><td>能防死锁、更可预测</td></tr>
+<tr><td>缺点</td><td>不防死锁</td><td>要预先知道每把锁的天花板,不灵活;可能过度提升</td></tr>
+</table>
+<p>FreeRTOS 用继承(简单、开销小);一些更严格的实时系统(如某些汽车 OSEK/AUTOSAR)用天花板(可预测性更好、能防死锁)。<strong>两者都把优先级反转限制在有界范围内,选择是"简单灵活 vs 严格可预测"的权衡。</strong>第七卷会深入实时调度理论时再对比。</p>
+
+<h2 id="s12">21.12 死锁：互斥的另一个陷阱</h2>
+<p>互斥量还有个经典问题——<strong>死锁(Deadlock)</strong>:两个任务各持一把锁,又互相等对方的锁,永远僵住。</p>
+<pre><code>任务A:                    任务B:
+  Take(锁1) ✓              Take(锁2) ✓
+  Take(锁2) ← 等B释放      Take(锁1) ← 等A释放
+     ↓                        ↓
+  永远等待 ←──── 死锁 ────→ 永远等待</code></pre>
+<p>死锁的四个必要条件(缺一不可,面试常考):<strong>①互斥(资源不可共享)②持有并等待(拿着一个还要另一个)③不可剥夺(不能强抢)④循环等待(A等B、B等A形成环)。</strong>破坏任一条件即可避免。最常用的破坏方法:<strong>规定所有任务按固定顺序获取多把锁</strong>(破坏"循环等待")——比如永远先拿锁1再拿锁2,就不会有 A、B 反向获取形成环。</p>
+<blockquote><p>死锁 vs 优先级反转:<strong>优先级反转是"高优先级等太久但最终能跑",死锁是"永远僵住谁也跑不了"。</strong>都是互斥引入的问题。工程实践中避免死锁的黄金法则:<strong>①尽量少用多把锁 ②必须用多把时,全局统一加锁顺序 ③持锁时间尽量短 ④别在持锁时阻塞在其他事件上。</strong>第五卷讲 Linux 时,会看到内核有专门的死锁检测工具(lockdep),就是帮你抓这类循环等待。面试常把优先级反转和死锁一起考,能区分清楚是加分项。</p></blockquote>
+
+<h2 id="s13">21.13 面试常问问题</h2>
+<p><strong>Q1:互斥量和二值信号量的区别?</strong><br>都是长度1的队列,但互斥量有<strong>所有权</strong>(谁take谁give)和<strong>优先级继承</strong>(防优先级反转);信号量无,且用于同步而非互斥。互斥量初始"可用",信号量初始"无信号"。</p>
+<p><strong>Q2:什么是优先级反转?画出时序。</strong><br>高优先级任务等低优先级持有的锁时,被无关的中优先级任务插队拖延,导致高优先级被间接推迟(甚至无限期)。见 21.4 时序。火星探路者的真实事故。</p>
+<p><strong>Q3:优先级继承如何解决优先级反转?</strong><br>当高优先级任务因等锁阻塞,让持锁的低优先级任务临时继承其高优先级,使其不被中优先级抢占、尽快释放锁;释放后恢复原优先级。把反转限制在临界区长度内(有界)。</p>
+<p><strong>Q4:优先级继承在源码里怎么实现?涉及哪些字段?</strong><br>队列的 pxMutexHolder 记持有者;TCB 的 uxBasePriority 存原始优先级、uxPriority 是当前(可被提升)优先级。take 时 vTaskPriorityInherit 提升持有者;give 时 xTaskPriorityDisinherit 恢复。</p>
+<p><strong>Q5:互斥量能在中断里用吗?为什么?</strong><br>不能。互斥量有所有权(持有者是任务),中断不属于任何任务,无法优先级继承。没有 FromISR 版。中断同步用信号量。</p>
+<p><strong>Q6:什么是死锁?怎么避免?</strong><br>多任务互相持锁又等对方的锁,僵死。四条件:互斥/持有并等待/不可剥夺/循环等待。破坏任一即可,最常用是全局统一加锁顺序破坏循环等待。</p>
+<p><strong>Q7:优先级继承和优先级天花板的区别?</strong><br>继承是被动的(有人等才提升),天花板是主动的(一拿锁就提升到预设最高)。天花板能防死锁、更可预测,但要预知天花板值。FreeRTOS 用继承。</p>
+
+<h2 id="s14">21.14 常见误区</h2>
+<ol>
+  <li><strong>"互斥量和二值信号量一样"</strong>——底层像,但互斥量有所有权和优先级继承,信号量没有。</li>
+  <li><strong>"优先级继承能完全消除优先级反转"</strong>——不能,只是把它限制在有界(一个临界区长度)内。</li>
+  <li><strong>"互斥量可以在中断里用"</strong>——不能,无所有权概念,没有 FromISR 版。</li>
+  <li><strong>"A 加锁可以 B 解锁"</strong>——互斥量必须谁 take 谁 give;那样用是信号量。</li>
+  <li><strong>"同一任务可以重复 take 普通互斥量"</strong>——会死锁,要用递归互斥量。</li>
+  <li><strong>"死锁和优先级反转是一回事"</strong>——反转是等太久最终能跑,死锁是永远僵住。</li>
+  <li><strong>"用了互斥量就不会死锁"</strong>——多把锁乱序获取照样死锁,要统一加锁顺序。</li>
+</ol>
+
+<h2 id="s15">21.15 本章总结</h2>
+<ul>
+  <li>互斥量 vs 二值信号量:底层都是长度1队列,但互斥量有<strong>所有权</strong>(谁take谁give)和<strong>优先级继承</strong>,用于互斥(保护共享资源)。</li>
+  <li><strong>优先级反转</strong>:高优先级任务等低优先级持有的锁时,被无关中优先级任务插队拖延(可能无限期)——火星探路者真实事故。</li>
+  <li><strong>优先级继承</strong>:持锁的低优先级任务临时继承等待者的高优先级,尽快释放锁,把反转限制在有界范围;释放后恢复。</li>
+  <li>数据结构:队列 <code>pxMutexHolder</code>(所有者)+ TCB <code>uxBasePriority</code>(原始优先级)/<code>uxPriority</code>(当前可被提升)/<code>uxMutexesHeld</code>。</li>
+  <li>take → <code>vTaskPriorityInherit</code> 提升持有者;give → <code>xTaskPriorityDisinherit</code> 恢复原优先级。</li>
+  <li><strong>递归互斥量</strong>:同一任务可重复 take(用 union 里 uxRecursiveCallCount 计数),give 同样次数才真释放。</li>
+  <li>禁忌:<strong>不能在中断用</strong>(无所有权)、持锁要短、谁take谁give、避免嵌套多锁。</li>
+  <li>对比方案:<strong>优先级天花板</strong>(主动提升,防死锁,更可预测)vs 继承(被动,简单)。</li>
+  <li><strong>死锁</strong>:多任务互相持锁等对方,四条件(互斥/持有等待/不可剥夺/循环等待),破坏循环等待(统一加锁顺序)避免。</li>
+</ul>
+
+<h2 id="s16">21.16 思维导图 / 课后题</h2>
+<pre><code>Mutex 与优先级继承
+├─ 一、互斥量 vs 信号量:所有权 + 优先级继承(互斥 vs 同步)
+├─ 二、保护临界区(共享外设/全局数据/串口)
+├─ 三、火星探路者:优先级反转导致重启的真实事故
+├─ 四、★优先级反转时序
+│  └─ H等L的锁, M插队压住L, H被间接拖延(可能无限期)
+├─ 五、★优先级继承
+│  └─ 持锁的L临时继承H的优先级→尽快释放→反转有界
+├─ 六、数据结构
+│  ├─ pxMutexHolder(所有者)
+│  └─ TCB: uxBasePriority(原始)/uxPriority(当前)/uxMutexesHeld
+├─ 七、take: vTaskPriorityInherit 提升持有者
+├─ 八、give: xTaskPriorityDisinherit 恢复(uxMutexesHeld==0时)
+├─ 九、递归互斥量(uxRecursiveCallCount计数)
+├─ 十、禁忌:不能中断用/持锁短/谁take谁give/避免嵌套
+├─ 十一、对比:优先级天花板(主动,防死锁) vs 继承(被动,简单)
+└─ 十二、死锁:四条件, 破坏循环等待(统一加锁顺序)</code></pre>
+<h3>课后练习</h3>
+<ol>
+  <li>在 tasks.c 找到 <code>vTaskPriorityInherit</code> 和 <code>xTaskPriorityDisinherit</code>,对照 21.7/21.8 读;在 queue.c 找互斥量 take/give 里调用它们的地方。</li>
+  <li><strong>复现优先级反转</strong>:建高/中/低三任务,高和低共享一个互斥量,低任务持锁时故意长时间运行,中任务插入长循环,用 GPIO+逻辑分析仪观察高任务被拖延;这是最经典的 RTOS 实验。</li>
+  <li>把上题的互斥量换成关闭优先级继承 vs 打开,对比高任务的最坏等待时间,亲眼看到继承的效果。</li>
+  <li>写递归函数用递归互斥量,验证同一任务能重复 take;换成普通互斥量,观察死锁。</li>
+  <li>故意制造两把锁的死锁(A 拿1等2,B 拿2等1),观察系统卡死;再改成统一加锁顺序,验证解决。</li>
+</ol>
+<h3>课后面试题</h3>
+<ol>
+  <li>互斥量和二值信号量的本质区别?</li>
+  <li>什么是优先级反转?画时序图并说明危害。</li>
+  <li>优先级继承如何工作?在源码/数据结构上如何实现?</li>
+  <li>为什么互斥量不能在中断里使用?</li>
+  <li>递归互斥量解决什么问题?怎么实现?</li>
+  <li>死锁的四个必要条件?如何避免?</li>
+  <li>优先级继承和优先级天花板的对比?</li>
+</ol>
+
+<hr>
+<p style="text-align:center;color:var(--muted);font-size:14px;">第廿一章 完 · 下一章《第廿二章 EventGroup 事件组》</p>
+<div class="nav">
+  <a href="第20章-FreeRTOS-Semaphore信号量.html">← 第二十章</a>
+  <a href="index.html">目录</a>
+  <a href="第22章-FreeRTOS-EventGroup事件组.html">第廿二章 →</a>
+</div>
+
+</div>
+</body>
+</html>
